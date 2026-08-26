@@ -35,7 +35,15 @@ from powercontext.builtin.persistence.sqlite import SQLiteConfig
 from powercontext.builtin.runtime import InferenceConfig
 from powercontext.builtin.sources import ContentSource
 from powercontext.client import PowerContextClient
-from powercontext.http import FlushMemoryRequest, ListMemoryEntriesRequest, RememberMemoryRequest
+from powercontext.http import (
+    ApproveArtifactCandidateRequest,
+    CaptureContentSourceRequest,
+    ExperienceProposal,
+    FlushMemoryRequest,
+    ListMemoryEntriesRequest,
+    ProposeExperienceRequest,
+    RememberMemoryRequest,
+)
 from powercontext.server.factory import create_server_app
 from powercontext.server.settings import McpConfig, ServerSettings
 
@@ -43,6 +51,7 @@ SCOPE = "project:langchain-middleware-test"
 MEMORY_TEXT = "Run database migrations before deploying the application."
 FINAL_ANSWER = "Apply the migrations first, then deploy the application."
 UNTRUSTED_LABEL = "untrusted historical evidence"
+EXPERIENCE_MARKER = "coralblueprint"
 
 
 class _ContentCandidatePipeline:
@@ -117,6 +126,66 @@ def test_middleware_injects_recall_without_persisting_it(tmp_path: Path) -> None
         assert UNTRUSTED_LABEL in system_texts[0]
         assert MEMORY_TEXT in system_texts[0]
         assert _system_texts(result["messages"]) == []
+
+    _run(app, scenario)
+
+
+def test_middleware_injects_only_approved_experience(tmp_path: Path) -> None:
+    model = _RecordingModel()
+    agent = create_agent(
+        model,
+        tools=[],
+        middleware=[PowerContextMiddleware(auto_capture=False)],
+        context_schema=PowerContextScope,
+    )
+    app = _server_app(tmp_path)
+    query = f"What deployment order does {EXPERIENCE_MARKER} require?"
+
+    async def scenario(client: PowerContextClient) -> None:
+        source = await client.capture_content_source(
+            CaptureContentSourceRequest(
+                scope_id=SCOPE,
+                source_id="approved-experience-evidence",
+                content="The migration-first deployment completed without schema errors.",
+            )
+        )
+        candidate = await client.propose_experience(
+            ProposeExperienceRequest(
+                scope_id=SCOPE,
+                proposal=ExperienceProposal(
+                    situation=f"A {EXPERIENCE_MARKER} deployment includes schema changes.",
+                    action="Apply database migrations before deploying the application.",
+                    outcome="The application starts against the expected schema.",
+                    lesson="Migrate the database before rolling out application code.",
+                ),
+                source_refs=[source.source],
+                artifact_refs=[],
+            )
+        )
+        scope = PowerContextScope(scope_id=SCOPE)
+
+        pending_result = await agent.ainvoke({"messages": [HumanMessage(content=query)]}, context=scope)
+
+        assert _system_texts(model.inputs[-1]) == []
+        assert _system_texts(pending_result["messages"]) == []
+
+        await client.approve_artifact_candidate(
+            ApproveArtifactCandidateRequest(
+                scope_id=SCOPE,
+                candidate_id=candidate.candidate_id,
+                expected_version=candidate.version,
+            )
+        )
+
+        approved_result = await agent.ainvoke({"messages": [HumanMessage(content=query)]}, context=scope)
+
+        system_texts = _system_texts(model.inputs[-1])
+        assert len(system_texts) == 1
+        assert UNTRUSTED_LABEL in system_texts[0]
+        assert EXPERIENCE_MARKER in system_texts[0]
+        assert '"kind":"experience"' in system_texts[0]
+        assert '"artifact_ref"' in system_texts[0]
+        assert _system_texts(approved_result["messages"]) == []
 
     _run(app, scenario)
 
