@@ -11,6 +11,7 @@ description: 在 Codex 和 Claude Code 插件、DeepSeek Harness 插件、Pi pac
 | --- | --- | --- |
 | Codex 插件 | 在 Codex 中跨会话恢复和显式维护 Memory | `powercontext setup codex` |
 | DeepSeek Harness 插件 | 在 DeepSeek Harness 中跨会话恢复和显式维护 Memory | `powercontext setup dsh` |
+| LangChain middleware | 在 `create_agent` 中提供有界召回和完成轮次 Source 采集 | `powercontext-langchain` |
 | LangGraph 适配器 | 在 LangGraph 图中提供 Memory 工具和有界召回 | `powercontext-langgraph` |
 | Pi package | 在 Pi 中跨会话恢复、使用原生 Memory/Handoff 工具和 skill | `powercontext setup pi` |
 | CLI | 配置、诊断、Server 控制、能力检查和人工 Candidate 审核 | `powercontext[cli,server]` |
@@ -77,6 +78,14 @@ Codex、Claude Code 和 DeepSeek Harness 插件使用的 `POWERCONTEXT_*_AUTHORI
 Server 不可用时图仍能到达终点，工具返回一段简短的不可用字符串。本次发布只覆盖 Memory 读写和有界召回；自动采集、
 checkpointing 和 Handoff 不在范围内。适配器有意不实现 `BaseStore`——Memory 模型不提供其所需的按 key 读取、upsert
 和删除操作。它不会启动或内嵌 Server。
+
+## LangChain middleware
+
+`PowerContextMiddleware` 使用 LangChain 的 `AgentMiddleware` API。它在不修改 agent state 的前提下，把一份有界
+PreparedContext 注入每个当前模型请求；运行成功后，再把最新用户消息和最终回答采集为 Content Source 证据。
+Source-to-Memory 激活仍由 Server 负责。应用已经自行管理 transcript 采集时，可以传入 `auto_capture=False`。召回和
+采集都会失败开放，且都不会启动或内嵌 Server。它由独立的 `powercontext-langchain` 包分发；LangGraph 适配器仍是
+单独的节点与工具集成。
 
 ## Pi package
 
