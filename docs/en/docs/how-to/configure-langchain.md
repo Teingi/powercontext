@@ -6,8 +6,8 @@ description: Add bounded PowerContext recall and completed-turn Source capture t
 # Configure LangChain middleware
 
 `PowerContextMiddleware` connects a LangChain `create_agent` agent to a separately running PowerContext Server. Before
-each model call it requests one bounded `PreparedContext` for the latest user message. After a successful agent run it
-captures the latest user message and final assistant response as one Content Source.
+each model call it requests one bounded `PreparedContext` for the latest user message. With automatic capture enabled,
+it captures the latest user message and final assistant response as one Content Source after a successful agent run.
 
 The middleware uses LangChain's public `AgentMiddleware` API. Recalled content modifies only the current
 `ModelRequest`; it never enters agent state or a checkpointer.
@@ -17,11 +17,18 @@ The middleware uses LangChain's public `AgentMiddleware` API. Recalled content m
 The middleware ships in the standalone `powercontext-langchain` distribution and requires LangChain 1.3 or later:
 
 ```bash
-uv pip install "powercontext-langchain @ git+https://github.com/oceanbase/powercontext.git#subdirectory=integrations/langchain"
+uv tool install "powercontext[cli,server]==0.0.2"
 powercontext server run
 ```
 
-From a repository checkout, install it with `uv pip install ./integrations/langchain`.
+Keep the Server running, then install the middleware in the LangChain application's environment:
+
+```bash
+uv pip install "powercontext-langchain @ git+https://github.com/oceanbase/powercontext.git#subdirectory=integrations/langchain"
+```
+
+Skip the Server installation when the application already connects to a separately managed Server. From a repository
+checkout, install the middleware with `uv pip install ./integrations/langchain`.
 
 The package owns its Scope, Settings, Client wiring, and Middleware implementation. It does not import or depend on
 the separate `powercontext-langgraph` adapter. LangChain itself uses LangGraph internally, so LangGraph can still
@@ -63,19 +70,21 @@ during the same run. The override is local to each model request and cannot accu
 
 ## Completed-turn capture
 
-`PowerContextMiddleware()` enables `auto_capture` by default. Once an agent completes successfully, it captures the
-latest user message and final non-empty assistant response through `/v1/sources/content`. It does not store the recalled
-system block, tool outputs, or intermediate tool-calling model messages.
+`PowerContextMiddleware()` disables `auto_capture` by default because user and model content can contain credentials or
+other sensitive data. Enable it only when the application's transcript policy permits durable storage:
+
+```python
+middleware = PowerContextMiddleware(auto_capture=True)
+```
+
+Once enabled, a successful agent run captures the latest user message and final non-empty assistant response through
+`/v1/sources/content`. A successful structured result is serialized from LangChain's `structured_response`. Capture does
+not store the recalled system block, tool outputs, or intermediate tool-calling model messages.
 
 Capture creates Source evidence, not an inferred Memory entry. The configured scheduler or an explicit
 `flush_memory` operation performs the normal Source-to-Memory extraction later. This keeps lineage intact and avoids
-treating raw model output as an already reviewed durable fact.
-
-Disable capture when the application has its own transcript policy:
-
-```python
-middleware = PowerContextMiddleware(auto_capture=False)
-```
+treating raw model output as an already reviewed durable fact. Captured content is bounded but is not guaranteed to be
+free of secrets, so applications must apply their own input and output policy before opting in.
 
 LangChain does not run `after_agent` when a model or tool aborts the run, so a failed run without a final response is
 not captured.

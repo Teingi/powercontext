@@ -93,9 +93,9 @@ starts or embeds the Server.
 ## LangChain middleware
 
 `PowerContextMiddleware` uses LangChain's `AgentMiddleware` API. It injects one bounded PreparedContext into each
-current model request without changing agent state, then captures the latest user message and final answer as Content
-Source evidence after a successful run. Source-to-Memory activation remains a Server responsibility. Pass
-`auto_capture=False` when the application already owns transcript capture. Recall and capture fail open, and neither
+current model request without changing agent state. Automatic capture is disabled by default; pass `auto_capture=True`
+to capture the latest user message and final plain-text or structured answer as Content Source evidence after a
+successful run. Source-to-Memory activation remains a Server responsibility. Recall and capture fail open, and neither
 path starts or embeds the Server. It ships independently as `powercontext-langchain`; the LangGraph adapter remains a
 separate node-and-tool integration.
 

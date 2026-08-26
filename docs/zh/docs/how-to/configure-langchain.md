@@ -6,8 +6,8 @@ description: 为 LangChain agent 增加有界 PowerContext 召回和完成轮次
 # 配置 LangChain middleware
 
 `PowerContextMiddleware` 把 LangChain `create_agent` agent 连接到单独运行的 PowerContext Server。每次模型调用前，
-它会根据最新用户消息请求一份有界 `PreparedContext`；agent 成功结束后，再把最新用户消息和最终回答采集为一个 Content
-Source。
+它会根据最新用户消息请求一份有界 `PreparedContext`；显式开启自动采集后，agent 成功结束时会把最新用户消息和最终回答
+采集为一个 Content Source。
 
 该实现只使用 LangChain 公开的 `AgentMiddleware` API。召回内容只修改当前 `ModelRequest`，不会进入 agent state 或
 checkpointer。
@@ -17,11 +17,18 @@ checkpointer。
 middleware 由独立的 `powercontext-langchain` 包分发，要求 LangChain 1.3 或更高版本：
 
 ```bash
-uv pip install "powercontext-langchain @ git+https://github.com/oceanbase/powercontext.git#subdirectory=integrations/langchain"
+uv tool install "powercontext[cli,server]==0.0.2"
 powercontext server run
 ```
 
-在仓库 checkout 中可以运行 `uv pip install ./integrations/langchain`。
+保持 Server 运行，然后在 LangChain 应用自己的环境中安装 middleware：
+
+```bash
+uv pip install "powercontext-langchain @ git+https://github.com/oceanbase/powercontext.git#subdirectory=integrations/langchain"
+```
+
+应用已经连接到单独管理的 Server 时，可以跳过 Server 安装。在仓库 checkout 中可使用
+`uv pip install ./integrations/langchain` 安装 middleware。
 
 该包自己持有 Scope、Settings、Client 连接逻辑和 Middleware 实现，不导入、也不依赖独立的
 `powercontext-langgraph` 适配器。LangChain 自身内部使用 LangGraph，因此安装 LangChain 时仍可能传递安装 LangGraph。
@@ -62,17 +69,19 @@ middleware 本身支持同步 `invoke` 和 `stream`；异步应用应直接使�
 
 ## 完成轮次采集
 
-`PowerContextMiddleware()` 默认开启 `auto_capture`。agent 成功结束后，它通过 `/v1/sources/content` 采集最新用户消息和
-最终的非空回答，不采集召回 system block、工具输出或中间的 tool-calling 模型消息。
-
-采集结果是 Source 证据，不是推断完成的 Memory entry。配置的 scheduler 或显式 `flush_memory` 操作随后执行标准的
-Source-to-Memory 抽取。这样既保留 lineage，也不会把未经处理的模型输出直接当成已经审核的持久事实。
-
-应用已有自己的 transcript 策略时，可以关闭自动采集：
+用户和模型内容可能包含凭据或其他敏感数据，因此 `PowerContextMiddleware()` 默认关闭 `auto_capture`。只有应用的
+transcript 策略允许持久化这些内容时，才应显式开启：
 
 ```python
-middleware = PowerContextMiddleware(auto_capture=False)
+middleware = PowerContextMiddleware(auto_capture=True)
 ```
+
+开启后，agent 成功结束时会通过 `/v1/sources/content` 采集最新用户消息和最终的非空回答。成功的 structured result 会从
+LangChain 的 `structured_response` 序列化。采集不包含召回 system block、工具输出或中间的 tool-calling 模型消息。
+
+采集结果是 Source 证据，不是推断完成的 Memory entry。配置的 scheduler 或显式 `flush_memory` 操作随后执行标准的
+Source-to-Memory 抽取。这样既保留 lineage，也不会把未经处理的模型输出直接当成已经审核的持久事实。采集内容有长度
+上限，但不保证一定不含 secret；应用必须先执行自己的输入和输出策略，再选择开启。
 
 模型或工具中止运行时，LangChain 不会执行 `after_agent`；因此，没有最终回答的失败运行不会被采集。
 

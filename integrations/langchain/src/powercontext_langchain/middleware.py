@@ -24,7 +24,7 @@ from typing import Any, TypeVar
 
 from langchain.agents.middleware.types import AgentMiddleware, AgentState, ModelRequest, ModelResponse, ResponseT
 from langchain_core.messages import BaseMessage, SystemMessage
-from pydantic import ValidationError
+from pydantic import TypeAdapter, ValidationError
 from typing_extensions import override
 
 from powercontext.client import ClientError, ServerResponseError
@@ -58,7 +58,7 @@ class PowerContextMiddleware(AgentMiddleware[AgentState[ResponseT], PowerContext
     response.
     """
 
-    def __init__(self, *, auto_capture: bool = True) -> None:
+    def __init__(self, *, auto_capture: bool = False) -> None:
         super().__init__()
         self.auto_capture = auto_capture
         self._configuration_error_logged = False
@@ -105,7 +105,7 @@ class PowerContextMiddleware(AgentMiddleware[AgentState[ResponseT], PowerContext
     ) -> None:
         if not self.auto_capture:
             return None
-        turn = _completed_turn(state.get("messages", []))
+        turn = _completed_turn(state)
         if turn is None:
             return None
         user_text, assistant_text = turn
@@ -123,7 +123,7 @@ class PowerContextMiddleware(AgentMiddleware[AgentState[ResponseT], PowerContext
     ) -> None:
         if not self.auto_capture:
             return None
-        turn = _completed_turn(state.get("messages", []))
+        turn = _completed_turn(state)
         if turn is None:
             return None
         user_text, assistant_text = turn
@@ -225,12 +225,23 @@ def _latest_message_text(messages: Sequence[BaseMessage], *, message_type: str) 
     return ""
 
 
-def _completed_turn(messages: Sequence[BaseMessage]) -> tuple[str, str] | None:
-    assistant_text = _final_assistant_text(messages)
+def _completed_turn(state: AgentState[Any]) -> tuple[str, str] | None:
+    messages = state.get("messages", [])
+    assistant_text = _structured_response_text(state.get("structured_response")) or _final_assistant_text(messages)
     user_text = _latest_message_text(messages, message_type="human")
     if not user_text or not assistant_text:
         return None
     return user_text, assistant_text
+
+
+def _structured_response_text(response: Any | None) -> str:
+    if response is None:
+        return ""
+    try:
+        return TypeAdapter(type(response)).dump_json(response, fallback=str).decode("utf-8")
+    except Exception:
+        _LOGGER.debug("PowerContext LangChain capture skipped an unserializable structured response.", exc_info=True)
+        return ""
 
 
 def _final_assistant_text(messages: Sequence[BaseMessage]) -> str:

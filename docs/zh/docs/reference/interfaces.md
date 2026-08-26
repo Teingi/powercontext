@@ -82,10 +82,10 @@ checkpointing 和 Handoff 不在范围内。适配器有意不实现 `BaseStore`
 ## LangChain middleware
 
 `PowerContextMiddleware` 使用 LangChain 的 `AgentMiddleware` API。它在不修改 agent state 的前提下，把一份有界
-PreparedContext 注入每个当前模型请求；运行成功后，再把最新用户消息和最终回答采集为 Content Source 证据。
-Source-to-Memory 激活仍由 Server 负责。应用已经自行管理 transcript 采集时，可以传入 `auto_capture=False`。召回和
-采集都会失败开放，且都不会启动或内嵌 Server。它由独立的 `powercontext-langchain` 包分发；LangGraph 适配器仍是
-单独的节点与工具集成。
+PreparedContext 注入每个当前模型请求。自动采集默认关闭；显式传入 `auto_capture=True` 后，运行成功时会把最新用户消息
+和最终的纯文本或 structured answer 采集为 Content Source 证据。Source-to-Memory 激活仍由 Server 负责。召回和采集
+都会失败开放，且都不会启动或内嵌 Server。它由独立的 `powercontext-langchain` 包分发；LangGraph 适配器仍是单独的
+节点与工具集成。
 
 ## Pi package
 

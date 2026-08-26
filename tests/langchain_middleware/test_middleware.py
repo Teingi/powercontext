@@ -17,18 +17,23 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 from pathlib import Path
+from typing import Any
 
 import httpx
 from fastapi import FastAPI
 from langchain.agents import create_agent
+from langchain.agents.structured_output import ToolStrategy
 from langchain_core.language_models import BaseChatModel
+from langchain_core.language_models.base import LanguageModelInput
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
 from langchain_core.outputs import ChatGeneration, ChatResult
+from langchain_core.runnables import Runnable
+from langchain_core.tools import BaseTool
 from powercontext_langchain import PowerContextMiddleware, PowerContextScope
 from powercontext_langchain.client import shared_http_client
-from pydantic import Field
+from pydantic import BaseModel, Field
 
 from powercontext.builtin.artifacts.memory import MemoryCandidateRequest, MemoryEntryInput
 from powercontext.builtin.persistence.sqlite import SQLiteConfig
@@ -52,6 +57,7 @@ MEMORY_TEXT = "Run database migrations before deploying the application."
 FINAL_ANSWER = "Apply the migrations first, then deploy the application."
 UNTRUSTED_LABEL = "untrusted historical evidence"
 EXPERIENCE_MARKER = "coralblueprint"
+STRUCTURED_ORDER = "migrate-first"
 
 
 class _ContentCandidatePipeline:
@@ -73,6 +79,36 @@ class _RecordingModel(BaseChatModel):
     @property
     def _llm_type(self) -> str:
         return "recording"
+
+
+class _DeploymentPlan(BaseModel):
+    order: str
+
+
+class _StructuredRecordingModel(_RecordingModel):
+    def _generate(self, messages, stop=None, run_manager=None, **kwargs) -> ChatResult:  # type: ignore[no-untyped-def]
+        self.inputs.append(list(messages))
+        message = AIMessage(
+            content="",
+            tool_calls=[
+                {
+                    "name": _DeploymentPlan.__name__,
+                    "args": {"order": STRUCTURED_ORDER},
+                    "id": "deployment-plan-call",
+                    "type": "tool_call",
+                }
+            ],
+        )
+        return ChatResult(generations=[ChatGeneration(message=message)])
+
+    def bind_tools(
+        self,
+        tools: Sequence[dict[str, Any] | type | Callable[..., Any] | BaseTool],
+        *,
+        tool_choice: str | None = None,
+        **kwargs: Any,
+    ) -> Runnable[LanguageModelInput, AIMessage]:
+        return self
 
 
 def _server_app(tmp_path: Path) -> FastAPI:
@@ -190,12 +226,37 @@ def test_middleware_injects_only_approved_experience(tmp_path: Path) -> None:
     _run(app, scenario)
 
 
-def test_middleware_captures_completed_turn_as_source(tmp_path: Path) -> None:
+def test_middleware_does_not_capture_completed_turn_by_default(tmp_path: Path) -> None:
     model = _RecordingModel()
     agent = create_agent(
         model,
         tools=[],
         middleware=[PowerContextMiddleware()],
+        context_schema=PowerContextScope,
+    )
+    app = _server_app(tmp_path)
+
+    async def scenario(client: PowerContextClient) -> None:
+        await agent.ainvoke(
+            {"messages": [HumanMessage(content="Use api_key=sk-probe-default-capture-disabled.")]},
+            context=PowerContextScope(scope_id=SCOPE),
+        )
+
+        flushed = await client.flush_memory(FlushMemoryRequest(scope_id=SCOPE))
+        entries = await client.list_memory_entries(ListMemoryEntriesRequest(scope_id=SCOPE))
+
+        assert flushed.memory is None
+        assert entries.entries == []
+
+    _run(app, scenario)
+
+
+def test_middleware_captures_completed_turn_when_enabled(tmp_path: Path) -> None:
+    model = _RecordingModel()
+    agent = create_agent(
+        model,
+        tools=[],
+        middleware=[PowerContextMiddleware(auto_capture=True)],
         context_schema=PowerContextScope,
     )
     app = _server_app(tmp_path)
@@ -217,6 +278,35 @@ def test_middleware_captures_completed_turn_as_source(tmp_path: Path) -> None:
         assert len(captured.source_refs) == 1
         assert captured.source_refs[0].source_id.startswith("langchain-agent-turn-")
         assert UNTRUSTED_LABEL not in captured.text
+
+    _run(app, scenario)
+
+
+def test_middleware_captures_tool_strategy_structured_response(tmp_path: Path) -> None:
+    model = _StructuredRecordingModel()
+    agent = create_agent(
+        model,
+        tools=[],
+        middleware=[PowerContextMiddleware(auto_capture=True)],
+        context_schema=PowerContextScope,
+        response_format=ToolStrategy(_DeploymentPlan),
+    )
+    app = _server_app(tmp_path)
+    user_text = "Return the deployment plan."
+
+    async def scenario(client: PowerContextClient) -> None:
+        result = await agent.ainvoke(
+            {"messages": [HumanMessage(content=user_text)]},
+            context=PowerContextScope(scope_id=SCOPE),
+        )
+
+        flushed = await client.flush_memory(FlushMemoryRequest(scope_id=SCOPE))
+        entries = await client.list_memory_entries(ListMemoryEntriesRequest(scope_id=SCOPE))
+
+        assert result["structured_response"] == _DeploymentPlan(order=STRUCTURED_ORDER)
+        assert flushed.memory is not None
+        assert len(entries.entries) == 1
+        assert entries.entries[0].text == (f'User:\n{user_text}\n\nAssistant:\n{{"order":"{STRUCTURED_ORDER}"}}')
 
     _run(app, scenario)
 
