@@ -110,8 +110,10 @@ Pi transcript。召回、采集和边界 flush 都会正常降级；显式持久
 
 ```text
 powercontext setup <host> --source oceanbase/powercontext --ref master
+powercontext setup select --host codex --host dsh --source oceanbase/powercontext --ref master
 powercontext doctor
 powercontext doctor <host>
+powercontext doctor integrations
 powercontext server run
 powercontext ready
 powercontext capabilities
@@ -132,8 +134,13 @@ powercontext external-skill import --scope-id project:example --fingerprint SHA2
 中创建第二套内容 profile。
 
 `<host>` 可以是 `codex`、`claude-code`、`dsh`、`hermes`、`openclaw`、`opencode`、`pi` 或
-`workbuddy`。`powercontext doctor` 检查安装包和 Server，不要求任何集成；`powercontext doctor <host>` 还会检查
-该宿主的 CLI 和 PowerContext 安装。
+`workbuddy`。`setup select` 和 `doctor integrations` 使用的一级宿主目录包含上述除 WorkBuddy 外的所有宿主；
+WorkBuddy 仍可通过显式的 `setup workbuddy` 和 `doctor workbuddy` 命令使用。
+
+`powercontext doctor` 检查安装包和 Server，不要求任何集成。`powercontext doctor integrations` 打印全部一级宿主的只读矩阵；
+CLI 不在 PATH 上时该行是 `missing`，不会让整条命令失败。各个 `powercontext doctor <host>` 命令在对应 CLI
+缺失时仍会失败。矩阵保留每个宿主专有的全部集成检查，包括 OpenCode 独立的 `plugin` 与 `skill` 结果。
+DSH 检查 `dump-config` 是否列出 `powercontext-dsh`；Pi 检查 CLI 是否列出 PowerContext package。
 
 `candidate` 命令组提供面向人工的 Review Inbox。列出、检查、修订、批准和拒绝的操作步骤见
 [审核 Candidate](../how-to/review-candidates.md)。

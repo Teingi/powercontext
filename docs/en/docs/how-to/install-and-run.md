@@ -24,9 +24,21 @@ To install a tested branch or tag, replace `master` after the final `@`. Use the
 powercontext setup codex --source oceanbase/powercontext --ref <ref>
 ```
 
-Replace `codex` with the host you use. Setup supports `codex`, `claude-code`, `dsh`, `hermes`, `openclaw`, `opencode`,
-`pi`, and `workbuddy`; run `powercontext setup --help` to see the current list. The integration guides in the site
-navigation describe host-specific prerequisites and behavior.
+Per-host commands remain the explicit path. The first-class catalog contains `codex`, `claude-code`, `dsh`,
+`openclaw`, `opencode`, `pi`, and `hermes`. To install more than one in one run, pass `--host` repeatedly, or omit
+`--host` on a TTY to choose from the catalog. `powercontext setup` with no subcommand still prints help:
+
+```bash
+powercontext setup select --host codex --host dsh --source oceanbase/powercontext --ref <ref>
+```
+
+Without `--server-url`, Claude Code and OpenClaw keep their `http://127.0.0.1:8000` defaults. An explicit
+`--server-url` overrides both selected hosts. OpenClaw's `--scope-mode` defaults to `agent`. Selected Codex, DSH,
+OpenCode, Pi, and Hermes integrations pass their existing post-install diagnostics before they are reported as
+installed. After installing Hermes, run `hermes memory setup` and select PowerContext before starting Hermes.
+
+WorkBuddy remains available through `powercontext setup workbuddy`, but it is not part of `setup select`. The
+integration guides in the site navigation describe host-specific prerequisites, options, and behavior.
 
 ## Run the local Server
 
@@ -87,6 +99,15 @@ powercontext capabilities
 
 ```bash
 powercontext doctor
+powercontext doctor integrations
+powercontext doctor codex
+powercontext doctor claude-code
+powercontext doctor dsh
+powercontext doctor openclaw
+powercontext doctor opencode
+powercontext doctor pi
+powercontext doctor hermes
+powercontext doctor workbuddy
 powercontext ready
 powercontext capabilities
 ```
@@ -94,9 +115,12 @@ powercontext capabilities
 `doctor` checks the installed package, Server liveness, and Server readiness without requiring an integration. Server
 readiness covers the database and each configured inference provider. Runtime or database failures return
 `not_ready`; an inference failure returns `degraded` without removing database-backed operations from traffic.
-Run `powercontext doctor <host>` to check a configured Agent host as well. The supported host names match `setup`.
-`ready` and `capabilities` show the readiness and enabled capabilities of the running service. For status definitions
-and recovery steps, see [Troubleshoot](troubleshoot.md).
+`doctor integrations` is an optional read-only overview of every first-class host; a missing CLI does not fail that
+command. The individual `doctor <host>` commands check one optional host CLI and all of its PowerContext integration
+items. WorkBuddy has an individual `doctor workbuddy` command but is not included in the first-class overview. The
+content commands exercise the public HTTP SDK path. `ready` and `capabilities` show the readiness and enabled
+capabilities of the running service. For complete status definitions and recovery steps, see
+[Troubleshoot](troubleshoot.md).
 
 For a long-running process, Docker, authentication, or remote access, continue with
 [Deploy the Server](deploy-server.md).

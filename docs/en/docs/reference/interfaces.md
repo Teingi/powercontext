@@ -124,8 +124,10 @@ boundary flushing fail open; explicit durable writes require interactive confirm
 
 ```text
 powercontext setup <host> --source oceanbase/powercontext --ref master
+powercontext setup select --host codex --host dsh --source oceanbase/powercontext --ref master
 powercontext doctor
 powercontext doctor <host>
+powercontext doctor integrations
 powercontext server run
 powercontext ready
 powercontext capabilities
@@ -146,8 +148,14 @@ All content commands call the configured Server. The optional `server` role adds
 not create a second content profile inside the CLI.
 
 Use `codex`, `claude-code`, `dsh`, `hermes`, `openclaw`, `opencode`, `pi`, or `workbuddy` for `<host>`.
-`powercontext doctor` checks the package and Server without requiring an integration; `powercontext doctor <host>`
-also checks that host's CLI and PowerContext installation.
+The first-class catalog used by `setup select` and `doctor integrations` contains every listed host except WorkBuddy.
+WorkBuddy remains available through the explicit `setup workbuddy` and `doctor workbuddy` commands.
+
+`powercontext doctor` checks the package and Server without requiring an integration. `powercontext doctor integrations`
+prints a read-only matrix for every first-class host; a missing CLI is `missing` and does not fail the command.
+Each `powercontext doctor <host>` command still fails when that host CLI is missing. The matrix preserves every
+host-specific integration check, including OpenCode's separate `plugin` and `skill` results. DSH checks that
+`dump-config` lists `powercontext-dsh`; Pi checks that the CLI lists the PowerContext package.
 
 The `candidate` command group exposes the human Review Inbox. See [Review Candidates](../how-to/review-candidates.md)
 for the ordered workflow to list, inspect, revise, approve, or reject Candidates.

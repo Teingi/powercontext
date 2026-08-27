@@ -23,9 +23,21 @@ uv tool install "powercontext[cli,server] @ git+https://github.com/oceanbase/pow
 powercontext setup codex --source oceanbase/powercontext --ref <ref>
 ```
 
-请把 `codex` 换成实际使用的宿主。Setup 支持 `codex`、`claude-code`、`dsh`、`hermes`、`openclaw`、
-`opencode`、`pi` 和 `workbuddy`；当前列表可通过 `powercontext setup --help` 查看。站点导航中的集成指南说明了各
-宿主的前置条件和行为。
+单宿主命令仍是显式路径。一级宿主目录包含 `codex`、`claude-code`、`dsh`、`openclaw`、`opencode`、`pi`
+和 `hermes`。若要一次安装多个宿主，可重复传入 `--host`；在 TTY 上省略 `--host` 则从目录中选择。不带子命令的
+`powercontext setup` 仍然只打印帮助：
+
+```bash
+powercontext setup select --host codex --host dsh --source oceanbase/powercontext --ref <ref>
+```
+
+未传入 `--server-url` 时，Claude Code 和 OpenClaw 保留 `http://127.0.0.1:8000` 默认值；显式传入该选项时会覆盖
+两个被选中宿主的地址。OpenClaw 的 `--scope-mode` 默认值为 `agent`。Codex、DSH、OpenCode、Pi 和 Hermes 只有在
+通过现有安装后诊断后才会报告为 installed。安装 Hermes 后，还需运行 `hermes memory setup` 并选择 PowerContext，
+然后再启动 Hermes。
+
+WorkBuddy 仍可通过 `powercontext setup workbuddy` 安装，但不在 `setup select` 中。站点导航中的集成指南说明了
+各宿主的前置条件、专有选项和行为。
 
 ## 运行本地 Server
 
@@ -83,14 +95,25 @@ powercontext capabilities
 
 ```bash
 powercontext doctor
+powercontext doctor integrations
+powercontext doctor codex
+powercontext doctor claude-code
+powercontext doctor dsh
+powercontext doctor openclaw
+powercontext doctor opencode
+powercontext doctor pi
+powercontext doctor hermes
+powercontext doctor workbuddy
 powercontext ready
 powercontext capabilities
 ```
 
 `doctor` 检查已安装的包、Server 存活状态和 Server 就绪状态，不要求安装集成。Server 就绪检查涵盖数据库和
 每个已配置的推理服务。Runtime 或数据库故障返回 `not_ready`；推理服务故障返回 `degraded`，不会使数据库
-操作退出流量。还可以使用 `powercontext doctor <host>` 检查已配置的 Agent 宿主；宿主名称与 `setup` 相同。
-`ready` 和 `capabilities` 用于查看运行中服务的就绪状态和已启用能力。完整状态解释和恢复步骤见
+操作退出流量。`doctor integrations` 是可选的一级宿主只读总览，缺失 CLI 不会让该命令失败。
+各个 `doctor <host>` 命令分别检查一个可选宿主 CLI 及其全部 PowerContext 集成项。WorkBuddy 提供独立的
+`doctor workbuddy` 命令，但不出现在一级宿主总览中。内容命令会经过公开 HTTP SDK 路径。`ready` 和
+`capabilities` 用于查看运行中服务的就绪状态和已启用能力。完整的状态解释和恢复步骤见
 [排查问题](troubleshoot.md)。
 
 需要长期运行进程、使用 Docker、启用鉴权或允许远程访问时，请继续阅读[部署 Server](deploy-server.md)。
