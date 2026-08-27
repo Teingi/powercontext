@@ -27,6 +27,7 @@ powercontext setup claude-code --source oceanbase/powercontext --ref master
 powercontext setup dsh --source oceanbase/powercontext --ref master
 powercontext setup hermes --source oceanbase/powercontext --ref master
 powercontext setup openclaw --source oceanbase/powercontext --ref master
+powercontext setup opencode --source oceanbase/powercontext --ref master
 ```
 
 最初のコマンドは現在の `master` revision をビルドし、隔離された環境に CLI とローカル Server をインストールします。

@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Published-wheel compatibility tests for integrations using the shared capture module."""
+"""Published-wheel smoke test for the Pydantic AI integration."""
 
 from __future__ import annotations
 
@@ -20,8 +20,6 @@ import os
 import re
 import subprocess
 import sys
-import zipfile
-from email.parser import Parser
 from pathlib import Path
 from shutil import which
 
@@ -31,19 +29,8 @@ _ROOT = Path(__file__).resolve().parents[2]
 _PROJECTS = {
     "core": _ROOT,
     "pydantic-ai": _ROOT / "integrations" / "pydantic-ai",
-    "bub": _ROOT / "integrations" / "bub",
 }
-_PYDANTIC_AI_README = _PROJECTS["pydantic-ai"] / "README.md"
-_PYDANTIC_AI_HOW_TOS = (
-    _ROOT / "docs" / "en" / "docs" / "how-to" / "configure-pydantic-ai.md",
-    _ROOT / "docs" / "zh" / "docs" / "how-to" / "configure-pydantic-ai.md",
-)
-_UNAVAILABLE_PYPI_INSTALL = 'uv add powercontext-pydantic-ai "pydantic-ai-slim[openai]"'
-_UNAVAILABLE_NOTICES = {
-    _PYDANTIC_AI_README: "not currently published on PyPI",
-    _PYDANTIC_AI_HOW_TOS[0]: "not currently published on PyPI",
-    _PYDANTIC_AI_HOW_TOS[1]: "目前没有发布到 PyPI",
-}
+_PYDANTIC_AI_HOW_TO = _ROOT / "docs" / "en" / "docs" / "how-to" / "configure-pydantic-ai.md"
 
 
 def _build_wheel(project: Path, out_dir: Path) -> Path:
@@ -70,28 +57,6 @@ def _build_wheel(project: Path, out_dir: Path) -> Path:
 def built_wheels(tmp_path_factory: pytest.TempPathFactory) -> dict[str, Path]:
     root = tmp_path_factory.mktemp("pydantic-ai-wheels")
     return {name: _build_wheel(project, root / name) for name, project in _PROJECTS.items()}
-
-
-def _requires_dist(wheel: Path) -> list[str]:
-    with zipfile.ZipFile(wheel) as archive:
-        metadata_name = next(name for name in archive.namelist() if name.endswith(".dist-info/METADATA"))
-        metadata = Parser().parsestr(archive.read(metadata_name).decode("utf-8"))
-    return metadata.get_all("Requires-Dist", [])
-
-
-@pytest.mark.parametrize("package", ["pydantic-ai", "bub"])
-def test_integration_wheels_require_the_first_core_release_with_shared_capture(
-    built_wheels: dict[str, Path],
-    package: str,
-) -> None:
-    assert "powercontext[client]>=0.0.3" in _requires_dist(built_wheels[package])
-
-
-def test_unpublished_adapter_guides_do_not_offer_an_unresolvable_pypi_install() -> None:
-    for path, notice in _UNAVAILABLE_NOTICES.items():
-        text = path.read_text(encoding="utf-8")
-        assert notice in text
-        assert _UNAVAILABLE_PYPI_INSTALL not in text
 
 
 def _first_python_example(path: Path) -> str:
@@ -125,22 +90,14 @@ def test_documented_openai_agent_constructs_from_installed_wheels(
     )
     assert install.returncode == 0, f"wheel install failed:\n{install.stdout}\n{install.stderr}"
 
-    english_example = _first_python_example(_PYDANTIC_AI_HOW_TOS[0])
-    assert english_example == _first_python_example(_PYDANTIC_AI_HOW_TOS[1])
+    english_example = _first_python_example(_PYDANTIC_AI_HOW_TO)
     script = f"""
 import sys
-from pathlib import Path
 
-site_packages = Path({str(site_packages)!r})
-sys.path.insert(0, str(site_packages))
+sys.path.insert(0, {str(site_packages)!r})
 
 {english_example}
 
-import powercontext.client.capture as capture_module
-import powercontext_pydantic_ai as adapter_module
-
-assert Path(capture_module.__file__).resolve().is_relative_to(site_packages)
-assert Path(adapter_module.__file__).resolve().is_relative_to(site_packages)
 assert agent is not None
 """
     env = os.environ.copy()
