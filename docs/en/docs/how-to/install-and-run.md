@@ -61,6 +61,10 @@ disable the Dashboard explicitly.
 
 `Ctrl-C` performs a clean shutdown. Restarting the command reopens the same database.
 
+This minimal launch does not enable model-backed extraction or vector search. To generate and validate one explicit
+environment file for those capabilities, continue with the
+[Full-capability Quick Start](full-capability-runtime.md).
+
 ## Use embedded seekDB
 
 Embedded seekDB is available on Linux and macOS when a compatible `pylibseekdb` wheel is available. Windows does not
@@ -79,8 +83,8 @@ export POWERCONTEXT_SERVER_DATABASE_KIND=seekdb
 powercontext server run
 ```
 
-The CLI does not load a `.env` file automatically. Export these values in the shell, or configure them in the process
-manager or container that starts the Server.
+The CLI does not search for a `.env` file automatically. Export these values in the shell, configure them in the
+process manager or container, or pass a specific file with `powercontext server run --env-file <path>`.
 
 PowerContext always uses seekDB's built-in `test` database. Leave `POWERCONTEXT_SERVER_DATABASE_PATH` unset to store
 the instance in the `seekdb` subdirectory of the PowerContext user data directory. If `POWERCONTEXT_HOME` is set, the

@@ -135,10 +135,14 @@ boundary flushing fail open; explicit durable writes require interactive confirm
 ```text
 powercontext setup <host> --source oceanbase/powercontext --ref master
 powercontext setup select --host codex --host dsh --source oceanbase/powercontext --ref master
+powercontext config init --output .env
+powercontext config show --env-file .env
+powercontext config validate --env-file .env
 powercontext doctor
 powercontext doctor <host>
 powercontext doctor integrations
 powercontext server run
+powercontext server run --env-file .env
 powercontext ready
 powercontext capabilities
 powercontext experience generate --scope-id project:example --source-ref content/SOURCE_ID
@@ -156,6 +160,10 @@ powercontext external-skill import --scope-id project:example --fingerprint SHA2
 
 All content commands call the configured Server. The optional `server` role adds `powercontext server run`; it does
 not create a second content profile inside the CLI.
+
+The `config` group creates, redacts, and validates an explicit environment file. The CLI never searches for that file
+implicitly; pass it to `config show`, `config validate`, or `server run` with `--env-file`. See
+[Configuration](configuration.md) for precedence and credential-handling rules.
 
 Use `codex`, `claude-code`, `dsh`, `hermes`, `openclaw`, `opencode`, `pi`, or `workbuddy` for `<host>`.
 The first-class catalog used by `setup select` and `doctor integrations` contains every listed host except WorkBuddy.

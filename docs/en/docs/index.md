@@ -30,6 +30,9 @@ overview:
     - title: Understand and operate
       description: Decide what persists, configure the Server, or resolve a broken setup.
       cards:
+        - title: Full-capability Quick Start
+          description: Generate one validated configuration and verify extraction, vector search, and an Agent loop.
+          href: en/docs/how-to/full-capability-runtime/
         - title: Core concepts
           description: Understand scopes, evidence, revisioned Artifacts, prepared context, and work continuity.
           href: en/docs/explanation/core-concepts/

@@ -5,8 +5,24 @@ description: PowerContext 路径、Server、Client、推理和 Agent 集成环�
 
 # 配置
 
-PowerContext 进程启动时从环境变量读取配置。CLI 不会自动查找或加载 `.env` 文件；请在 shell 中导出变量，或由
-服务管理器、容器提供。Agent 宿主可能会按照自身规则加载自己的环境文件。
+PowerContext 进程启动时从环境变量读取配置。CLI 不会自动搜索 `.env` 文件；请在 shell 中导出变量、由服务管理器
+或容器提供，或者向支持 `--env-file` 的命令显式传入文件。Agent 宿主可能会按照自身规则加载自己的环境文件。
+
+## 显式环境文件
+
+通过引导生成配置，在不显示凭据的情况下检查内容，并在启动前完成校验：
+
+```bash
+powercontext config init --output .env
+powercontext config show --env-file .env
+powercontext config validate --env-file .env
+powercontext server run --env-file .env
+```
+
+`config init` 会以 `0600` 权限写入文件。`server run` 收到 `--env-file` 后，文件中的赋值会覆盖进程中的同名值；
+文件中不存在的旧 `POWERCONTEXT_SERVER_*` 进程变量会被忽略，因此校验和启动使用同一份 Server 配置。
+`config show` 会隐藏已识别及生成器记录的凭据，但仍应把原文件当作可能含有秘密的部署文件保护。完整的引导与验证流程见
+[完整功能 Quick Start](../how-to/full-capability-runtime.md)。
 
 ## 用户数据
 

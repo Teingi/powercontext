@@ -120,10 +120,14 @@ Pi transcript。召回、采集和边界 flush 都会正常降级；显式持久
 ```text
 powercontext setup <host> --source oceanbase/powercontext --ref master
 powercontext setup select --host codex --host dsh --source oceanbase/powercontext --ref master
+powercontext config init --output .env
+powercontext config show --env-file .env
+powercontext config validate --env-file .env
 powercontext doctor
 powercontext doctor <host>
 powercontext doctor integrations
 powercontext server run
+powercontext server run --env-file .env
 powercontext ready
 powercontext capabilities
 powercontext experience generate --scope-id project:example --source-ref content/SOURCE_ID
@@ -141,6 +145,9 @@ powercontext external-skill import --scope-id project:example --fingerprint SHA2
 
 所有内容命令都调用已配置的 Server。可选的 `server` role 会增加 `powercontext server run`，但不会在 CLI
 中创建第二套内容 profile。
+
+`config` 命令组用于生成、脱敏显示和校验显式环境文件。CLI 不会隐式搜索该文件；使用 `config show`、
+`config validate` 或 `server run` 时需要通过 `--env-file` 传入。配置优先级和凭据处理规则见[配置](configuration.md)。
 
 `<host>` 可以是 `codex`、`claude-code`、`dsh`、`hermes`、`openclaw`、`opencode`、`pi` 或
 `workbuddy`。`setup select` 和 `doctor integrations` 使用的一级宿主目录包含上述除 WorkBuddy 外的所有宿主；

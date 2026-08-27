@@ -59,6 +59,9 @@ powercontext server run
 
 按 `Ctrl-C` 可正常关闭。再次运行该命令会打开同一个数据库。
 
+这种最小启动方式不会启用依赖模型的抽取或向量搜索。如需生成并校验一份显式环境文件以启用这些能力，请继续阅读
+[完整功能 Quick Start](full-capability-runtime.md)。
+
 ## 使用嵌入式 seekDB
 
 在有兼容 `pylibseekdb` wheel 的 Linux 和 macOS 系统上可以使用嵌入式 seekDB；Windows 不支持该嵌入式
@@ -77,7 +80,8 @@ export POWERCONTEXT_SERVER_DATABASE_KIND=seekdb
 powercontext server run
 ```
 
-CLI 不会自动加载 `.env` 文件。请在 shell 中导出这些值，或在启动 Server 的进程管理器、容器中配置。
+CLI 不会自动搜索 `.env` 文件。请在 shell 中导出这些值、在启动 Server 的进程管理器或容器中配置，或者通过
+`powercontext server run --env-file <path>` 显式传入文件。
 
 PowerContext 固定使用 seekDB 内置的 `test` 数据库。未设置 `POWERCONTEXT_SERVER_DATABASE_PATH` 时，实例保存在
 PowerContext 用户数据目录的 `seekdb` 子目录中；如果设置了 `POWERCONTEXT_HOME`，默认路径为

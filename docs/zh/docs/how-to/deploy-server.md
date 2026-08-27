@@ -34,7 +34,16 @@ powercontext server run
 运行进程必须能创建和更新该目录。默认 SQLite 数据库和 scheduler 状态都保存在这里。服务管理器每次重启进程时都应
 提供相同的环境变量。
 
-PowerContext 不会自动加载 `.env` 文件。请先导出环境变量，或在服务管理器、容器平台中配置它们。
+PowerContext 不会自动搜索 `.env` 文件。可以导出变量、由服务管理器或容器平台提供，或者显式传入一个文件：
+
+```bash
+powercontext config validate --env-file /etc/powercontext/powercontext.env
+powercontext server run --env-file /etc/powercontext/powercontext.env
+```
+
+文件可能包含 Provider 凭据或 Bearer token，因此只能允许 Server 运维者读取。文件中的值会覆盖进程中的同名值；
+文件中不存在的旧 `POWERCONTEXT_SERVER_*` 进程变量会被忽略。需要交互式生成并校验配置文件时，请阅读
+[完整功能 Quick Start](full-capability-runtime.md)。
 
 ## 使用 Docker 运行
 

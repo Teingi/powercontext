@@ -30,6 +30,9 @@ overview:
     - title: 理解与运行
       description: 判断什么需要保留，配置 Server，或排查无法工作的环境。
       cards:
+        - title: 完整功能 Quick Start
+          description: 生成一份经过校验的配置，并验证抽取、向量搜索和 Agent 闭环。
+          href: zh/docs/how-to/full-capability-runtime/
         - title: 核心概念
           description: 理解 scope、证据、带 Revision 的 Artifact、prepared context 和工作连续性。
           href: zh/docs/explanation/core-concepts/

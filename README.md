@@ -21,18 +21,14 @@ host.
 ```bash
 uv tool install --force "powercontext[cli,server] @ git+https://github.com/oceanbase/powercontext.git@master"
 
-# Choose one or more integrations.
-powercontext setup codex --source oceanbase/powercontext --ref master
-powercontext setup claude-code --source oceanbase/powercontext --ref master
-powercontext setup dsh --source oceanbase/powercontext --ref master
-powercontext setup hermes --source oceanbase/powercontext --ref master
-powercontext setup openclaw --source oceanbase/powercontext --ref master
-powercontext setup opencode --source oceanbase/powercontext --ref master
+# Choose one or more integrations interactively.
+powercontext setup select --source oceanbase/powercontext --ref master
 ```
 
 The first command builds the current `master` revision and installs the CLI and local Server in an isolated
-environment. The setup commands install integrations from the same repository revision. Run the install and setup
-commands again to refresh an existing installation.
+environment. The setup command installs integrations from the same repository revision. Run the install and setup
+commands again to refresh an existing installation. WorkBuddy is not in the interactive selector; install it with
+`powercontext setup workbuddy --source oceanbase/powercontext --ref master`.
 
 ### 2. Start and verify the local Server
 
@@ -46,7 +42,8 @@ In another terminal, verify the service and plugin:
 
 ```bash
 powercontext doctor
-powercontext doctor codex  # or: claude-code / dsh / hermes / openclaw
+powercontext doctor integrations
+powercontext doctor codex  # Replace codex with the host you installed.
 ```
 
 By default, the Server listens on `127.0.0.1:8000`, exposes Streamable HTTP MCP at `/mcp`, and persists data in a

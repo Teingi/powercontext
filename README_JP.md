@@ -21,18 +21,14 @@ macOS または Linux、Python 3.11 以降、[`uv`](https://docs.astral.sh/uv/)�
 ```bash
 uv tool install --force "powercontext[cli,server] @ git+https://github.com/oceanbase/powercontext.git@master"
 
-# 1 つ以上のインテグレーションを選択します。
-powercontext setup codex --source oceanbase/powercontext --ref master
-powercontext setup claude-code --source oceanbase/powercontext --ref master
-powercontext setup dsh --source oceanbase/powercontext --ref master
-powercontext setup hermes --source oceanbase/powercontext --ref master
-powercontext setup openclaw --source oceanbase/powercontext --ref master
-powercontext setup opencode --source oceanbase/powercontext --ref master
+# 対話画面で 1 つ以上のインテグレーションを選択します。
+powercontext setup select --source oceanbase/powercontext --ref master
 ```
 
 最初のコマンドは現在の `master` revision をビルドし、隔離された環境に CLI とローカル Server をインストールします。
 setup コマンドは、同じリポジトリ revision からインテグレーションをインストールします。既存のインストールを更新する
-には、install と setup の各コマンドをもう一度実行してください。
+には、install と setup の各コマンドをもう一度実行してください。WorkBuddy は対話式セレクターに含まれないため、
+`powercontext setup workbuddy --source oceanbase/powercontext --ref master` でインストールします。
 
 ### 2. ローカル Server を起動して検証する
 
@@ -46,7 +42,8 @@ powercontext server run
 
 ```bash
 powercontext doctor
-powercontext doctor codex  # または: claude-code / dsh / hermes / openclaw
+powercontext doctor integrations
+powercontext doctor codex  # codex をインストールした Host 名に置き換えてください。
 ```
 
 デフォルトでは、Server は `127.0.0.1:8000` で待ち受け、`/mcp` で Streamable HTTP MCP を公開し、
@@ -80,9 +77,10 @@ powercontext doctor codex  # または: claude-code / dsh / hermes / openclaw
 
 ## インテグレーション
 
-PowerContext は Codex、Claude Code、DeepSeek Harness、Hermes Agent、Pi Coding Agent、OpenClaw、WorkBuddy 向けの公式インテグレーションと
-インストールガイドを提供します。これらのインテグレーションは、PowerContext Server を通じて同じスコープ付きデータと
-履歴を保持する契約を使用します。ホストインテグレーションが Server を自動的に起動したり、組み込んだりすることはありません。
+PowerContext は Codex、Claude Code、DeepSeek Harness、Hermes Agent、Pi Coding Agent、OpenClaw、OpenCode、
+WorkBuddy 向けの公式インテグレーションとインストールガイドを提供します。これらのインテグレーションは、
+PowerContext Server を通じて同じスコープ付きデータと履歴を保持する契約を使用します。ホストインテグレーションが
+Server を自動的に起動したり、組み込んだりすることはありません。
 
 ### 公式インテグレーション
 
@@ -94,6 +92,7 @@ PowerContext は Codex、Claude Code、DeepSeek Harness、Hermes Agent、Pi Codi
 <td align="center" width="120"><a href="integrations/hermes/README.md"><img src="https://github.com/NousResearch/hermes-agent/blob/main/website/static/img/logo.png?raw=true&size=120" alt="Hermes Agent" width="48" height="48" /><br /><sub><b>Hermes Agent</b></sub></a></td>
 <td align="center" width="120"><a href="docs/en/docs/how-to/configure-pi.md"><img src="https://github.com/earendil-works.png?size=120" alt="Pi Coding Agent" width="48" height="48" /><br /><sub><b>Pi Coding Agent</b></sub></a></td>
 <td align="center" width="120"><a href="docs/en/docs/how-to/configure-openclaw.md"><img src="https://github.com/openclaw.png?size=120" alt="OpenClaw" width="48" height="48" /><br /><sub><b>OpenClaw</b></sub></a></td>
+<td align="center" width="120"><a href="docs/en/docs/how-to/configure-opencode.md"><img src="https://github.com/anomalyco.png?size=120" alt="OpenCode" width="48" height="48" /><br /><sub><b>OpenCode</b></sub></a></td>
 <td align="center" width="120"><a href="integrations/workbuddy/README.md"><img src="docs/assets/workbuddy.svg" alt="WorkBuddy" width="48" height="48" /><br /><sub><b>WorkBuddy</b></sub></a></td>
 </tr>
 </table>

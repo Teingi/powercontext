@@ -5,9 +5,27 @@ description: PowerContext paths, Server, Client, inference, and Agent integratio
 
 # Configuration
 
-PowerContext reads configuration from environment variables when each process starts. The CLI does not search for or
-load a `.env` file automatically. Export values in the shell, or have the service manager or container supply them.
-An Agent host may load its own environment file according to that host's rules.
+PowerContext reads configuration from environment variables when each process starts. The CLI does not search for a
+`.env` file automatically. Export values in the shell, have the service manager or container supply them, or pass an
+explicit file to a command that accepts `--env-file`. An Agent host may load its own environment file according to
+that host's rules.
+
+## Explicit environment files
+
+Create a guided configuration, inspect it without printing credentials, and validate it before launch:
+
+```bash
+powercontext config init --output .env
+powercontext config show --env-file .env
+powercontext config validate --env-file .env
+powercontext server run --env-file .env
+```
+
+`config init` writes the file with mode `0600`. When `server run` receives `--env-file`, assignments in that file
+override same-named process values. Inherited `POWERCONTEXT_SERVER_*` values that are missing from the file are
+ignored, so validation and launch use the same Server configuration. `config show` redacts recognized and
+generator-recorded credentials; still treat the file itself as a secret-bearing deployment artifact. See the
+[Full-capability Quick Start](../how-to/full-capability-runtime.md) for the guided setup and verification flow.
 
 ## User data
 

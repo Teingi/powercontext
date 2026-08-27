@@ -34,8 +34,18 @@ powercontext server run
 The process must be able to create and update this directory. The default SQLite database and scheduler state are
 stored below it. Supply the same environment variables whenever your service manager restarts the process.
 
-PowerContext does not load a `.env` file automatically. Export the variables first, or configure them in the service
-manager or container platform.
+PowerContext does not search for a `.env` file automatically. Export the variables, configure them in the service
+manager or container platform, or pass one explicit file:
+
+```bash
+powercontext config validate --env-file /etc/powercontext/powercontext.env
+powercontext server run --env-file /etc/powercontext/powercontext.env
+```
+
+The file may contain provider credentials or a bearer token, so restrict it to the Server operator. Values in the
+file override same-named process values; inherited `POWERCONTEXT_SERVER_*` variables that are absent from the file
+are ignored. See the [Full-capability Quick Start](full-capability-runtime.md) to generate a validated file
+interactively.
 
 ## Run with Docker
 

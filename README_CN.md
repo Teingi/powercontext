@@ -19,17 +19,13 @@ PowerContext 是 [PowerMem](https://www.powermem.ai/) 的升级版本，也是�
 ```bash
 uv tool install --force "powercontext[cli,server] @ git+https://github.com/oceanbase/powercontext.git@master"
 
-# 选择一个或多个集成。
-powercontext setup codex --source oceanbase/powercontext --ref master
-powercontext setup claude-code --source oceanbase/powercontext --ref master
-powercontext setup dsh --source oceanbase/powercontext --ref master
-powercontext setup hermes --source oceanbase/powercontext --ref master
-powercontext setup openclaw --source oceanbase/powercontext --ref master
-powercontext setup opencode --source oceanbase/powercontext --ref master
+# 通过交互界面选择一个或多个集成。
+powercontext setup select --source oceanbase/powercontext --ref master
 ```
 
 第一条命令会构建当前 `master` revision，并在隔离环境中安装 CLI 和本地 Server。setup 命令会从同一个仓库
-revision 安装集成。如需刷新现有安装，请再次运行 install 和 setup 命令。
+revision 安装集成。如需刷新现有安装，请再次运行 install 和 setup 命令。WorkBuddy 不在交互式选择器中；请使用
+`powercontext setup workbuddy --source oceanbase/powercontext --ref master` 安装。
 
 ### 2. 启动并验证本地 Server
 
@@ -43,7 +39,8 @@ powercontext server run
 
 ```bash
 powercontext doctor
-powercontext doctor codex  # or: claude-code / dsh / hermes / openclaw
+powercontext doctor integrations
+powercontext doctor codex  # 请把 codex 换成已安装的宿主。
 ```
 
 默认情况下，Server 监听 `127.0.0.1:8000`，在 `/mcp` 提供 Streamable HTTP MCP，并将数据持久化到本地

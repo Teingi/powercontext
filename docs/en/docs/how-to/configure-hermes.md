@@ -1,13 +1,14 @@
 ---
 title: Configure Hermes
-description: Install the Hermes MemoryProvider and connect it to a running PowerContext Server.
+description: Install the Hermes MemoryProvider and slash-command companion, then connect them to PowerContext Server.
 ---
 
 # Configure Hermes
 
-The integration is a standard Hermes `MemoryProvider`. Hermes remains responsible for the conversation and memory
-lifecycle; the provider sends recall, capture, and explicit Memory operations to a separately running PowerContext
-Server. Backend failures do not interrupt the Hermes conversation.
+The integration contains a standard Hermes `MemoryProvider` and a standalone slash-command plugin. Hermes remains
+responsible for the conversation and memory lifecycle; the provider sends recall, capture, and explicit operations to
+a separately running PowerContext Server. The companion registers `/pc` and `/powercontext` before the provider is
+activated. Backend failures do not interrupt the Hermes conversation.
 
 ## Prerequisites
 
@@ -20,17 +21,18 @@ uv tool install --force "powercontext[cli,server] @ git+https://github.com/ocean
 powercontext server run
 ```
 
-## Install the provider
+## Install both plugins
 
-In another terminal, install or refresh the matching provider:
+In another terminal, install or refresh both plugins from the matching revision:
 
 ```bash
 powercontext setup hermes --source oceanbase/powercontext --ref master
 powercontext doctor hermes
 ```
 
-The setup command copies the provider to `$HERMES_HOME/plugins/powercontext`. It does not start the Server or select
-the provider in Hermes.
+The setup command copies the provider to `$HERMES_HOME/plugins/powercontext`, installs
+`$HERMES_HOME/plugins/powercontext-command`, and enables the companion without granting built-in tool override
+permissions. It does not start the Server or select the provider in Hermes.
 
 Run the Hermes memory setup wizard and select `PowerContext`:
 
@@ -49,9 +51,15 @@ hermes powercontext remember preference "The user prefers uv"
 hermes powercontext search "Python package manager"
 ```
 
-The provider uses `http://127.0.0.1:8000` by default. It derives a scope from the active Hermes profile and gateway
-user identifier. For a local CLI session without a user identifier, it derives a stable value from `HERMES_HOME`.
-Set an explicit scope only when you intend to share or isolate Memory differently.
+Inside an interactive Hermes session, `/pc status` should reach the same active provider. Use `/pc ` followed by
+Tab/Down to inspect the available Memory, Handoff, Experience, Skill, review, statistics, trace, and Workstream
+commands. Hermes 0.20.4 does not provide enough invocation context to route gateway slash commands safely, so the
+companion rejects gateway invocations; use the provider's Hermes tools in gateway sessions.
+
+The provider uses `http://127.0.0.1:8000` by default. In a Git workspace, Workstream persistence first reads the
+shared `.git/powercontext/codex-workspace.json` scope binding. An explicit scope configuration takes precedence.
+Without either value, the provider derives a scope from the active Hermes profile and gateway user identifier; for a
+local CLI session without a user identifier, it derives a stable value from `HERMES_HOME`.
 
 ## Configure the connection
 
@@ -60,6 +68,7 @@ the file:
 
 | Variable | Purpose |
 | --- | --- |
+| `POWERCONTEXT_HERMES_CONFIG` | Config file path; defaults to `$HERMES_HOME/powercontext/config.json` |
 | `POWERCONTEXT_HERMES_BASE_URL` | PowerContext Server URL |
 | `POWERCONTEXT_HERMES_AUTHORIZATION` | Complete authorization header, such as `Bearer <token>` |
 | `POWERCONTEXT_HERMES_TOKEN` | Bare-token shorthand used when `AUTHORIZATION` is absent |
@@ -68,10 +77,15 @@ the file:
 | `POWERCONTEXT_HERMES_TIMEOUT` | HTTP request timeout in seconds |
 | `POWERCONTEXT_HERMES_CAPTURE_TURNS` | Capture completed turns as Sources |
 | `POWERCONTEXT_HERMES_FLUSH_ON_SESSION_END` | Run Memory extraction at session end |
+| `POWERCONTEXT_HERMES_CAPTURE_PRE_COMPRESS` | Capture filtered new turns before compression; disabled by default |
+| `POWERCONTEXT_HERMES_EVALUATION_TRACE` | Record recalled context in sensitive local JSONL traces; disabled by default |
+| `POWERCONTEXT_HERMES_EVALUATION_TRACE_PATH` | Override the evaluation trace directory |
+| `POWERCONTEXT_HERMES_WORKSTREAM` | Read the shared Git-private Workstream binding; enabled by default |
 
 Let the Hermes wizard store authorization in its protected `.env` secret store; do not put the token in
 `config.json`. Use plain HTTP only for a loopback Server. See [Deploy the Server](deploy-server.md) before connecting
-to a remote deployment.
+to a remote deployment. Evaluation traces contain prompts and recalled context; keep them local and protect them as
+sensitive data.
 
 ## Enable automatic extraction only when needed
 
