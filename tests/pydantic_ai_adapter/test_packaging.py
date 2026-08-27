@@ -38,7 +38,12 @@ _PYDANTIC_AI_HOW_TOS = (
     _ROOT / "docs" / "en" / "docs" / "how-to" / "configure-pydantic-ai.md",
     _ROOT / "docs" / "zh" / "docs" / "how-to" / "configure-pydantic-ai.md",
 )
-_OPENAI_INSTALL = 'uv add powercontext-pydantic-ai "pydantic-ai-slim[openai]"'
+_UNAVAILABLE_PYPI_INSTALL = 'uv add powercontext-pydantic-ai "pydantic-ai-slim[openai]"'
+_UNAVAILABLE_NOTICES = {
+    _PYDANTIC_AI_README: "not currently published on PyPI",
+    _PYDANTIC_AI_HOW_TOS[0]: "not currently published on PyPI",
+    _PYDANTIC_AI_HOW_TOS[1]: "目前没有发布到 PyPI",
+}
 
 
 def _build_wheel(project: Path, out_dir: Path) -> Path:
@@ -82,9 +87,11 @@ def test_integration_wheels_require_the_first_core_release_with_shared_capture(
     assert "powercontext[client]>=0.0.3" in _requires_dist(built_wheels[package])
 
 
-def test_openai_install_command_is_consistent_across_public_guides() -> None:
-    for path in (_PYDANTIC_AI_README, *_PYDANTIC_AI_HOW_TOS):
-        assert _OPENAI_INSTALL in path.read_text(encoding="utf-8")
+def test_unpublished_adapter_guides_do_not_offer_an_unresolvable_pypi_install() -> None:
+    for path, notice in _UNAVAILABLE_NOTICES.items():
+        text = path.read_text(encoding="utf-8")
+        assert notice in text
+        assert _UNAVAILABLE_PYPI_INSTALL not in text
 
 
 def _first_python_example(path: Path) -> str:

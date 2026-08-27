@@ -11,10 +11,9 @@ which the current public root package and the development version from `master` 
 PyPI command or a direct Git subdirectory install; both fail dependency resolution. Repository contributors can run
 the adapter tests through the root development environment.
 
-The example below documents the preview API for development and review. It is not a supported installation path.
-
-The example below uses OpenAI. For another provider, install the matching `pydantic-ai-slim` provider extra and
-change the model string.
+The remaining sections document the preview API for development and review; they are not a supported installation
+path. The example uses OpenAI. For another provider, use the matching `pydantic-ai-slim` provider extra and change the
+model string after compatible packages are released.
 
 ```python
 from pydantic_ai import Agent
