@@ -19,23 +19,19 @@ macOS または Linux、Python 3.11 以降、[`uv`](https://docs.astral.sh/uv/)�
 ### 1. PowerContext とインテグレーションをインストールする
 
 ```bash
-uv tool install "powercontext[cli,server]==0.0.2"
+uv tool install --force "powercontext[cli,server] @ git+https://github.com/oceanbase/powercontext.git@master"
 
 # 1 つ以上のインテグレーションを選択します。
-powercontext setup codex --source oceanbase/powercontext --ref v0.0.2
-powercontext setup claude-code --source oceanbase/powercontext --ref v0.0.2
-powercontext setup dsh --source oceanbase/powercontext --ref v0.0.2
-powercontext setup hermes --source oceanbase/powercontext --ref v0.0.2
-
-# OpenClaw は現在、master から対応する CLI とインテグレーションをインストールする必要があります。
-uv tool install --force "powercontext[cli,server] @ git+https://github.com/oceanbase/powercontext.git@master"
+powercontext setup codex --source oceanbase/powercontext --ref master
+powercontext setup claude-code --source oceanbase/powercontext --ref master
+powercontext setup dsh --source oceanbase/powercontext --ref master
+powercontext setup hermes --source oceanbase/powercontext --ref master
 powercontext setup openclaw --source oceanbase/powercontext --ref master
 ```
 
-最初のコマンドは、隔離された環境に最新リリースの CLI とローカル Server をインストールします。リリース版の setup
-コマンドは、対応するリポジトリの tag から各インテグレーションをインストールします。OpenClaw がリリースに含まれる
-までは、追加の `uv tool install` コマンドによって CLI、Server、インテグレーションを同じ `master` revision に
-そろえます。既存のインストールを更新するには、setup をもう一度実行してください。
+最初のコマンドは現在の `master` revision をビルドし、隔離された環境に CLI とローカル Server をインストールします。
+setup コマンドは、同じリポジトリ revision からインテグレーションをインストールします。既存のインストールを更新する
+には、install と setup の各コマンドをもう一度実行してください。
 
 ### 2. ローカル Server を起動して検証する
 

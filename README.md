@@ -19,24 +19,20 @@ host.
 ### 1. Install PowerContext and integrations
 
 ```bash
-uv tool install "powercontext[cli,server]==0.0.2"
+uv tool install --force "powercontext[cli,server] @ git+https://github.com/oceanbase/powercontext.git@master"
 
 # Choose one or more integrations.
-powercontext setup codex --source oceanbase/powercontext --ref v0.0.2
-powercontext setup claude-code --source oceanbase/powercontext --ref v0.0.2
-powercontext setup dsh --source oceanbase/powercontext --ref v0.0.2
-powercontext setup hermes --source oceanbase/powercontext --ref v0.0.2
-
-# OpenClaw and OpenCode currently require the matching CLI and integrations from master.
-uv tool install --force "powercontext[cli,server] @ git+https://github.com/oceanbase/powercontext.git@master"
+powercontext setup codex --source oceanbase/powercontext --ref master
+powercontext setup claude-code --source oceanbase/powercontext --ref master
+powercontext setup dsh --source oceanbase/powercontext --ref master
+powercontext setup hermes --source oceanbase/powercontext --ref master
 powercontext setup openclaw --source oceanbase/powercontext --ref master
 powercontext setup opencode --source oceanbase/powercontext --ref master
 ```
 
-The first command installs the latest released CLI and local Server in an isolated environment. The release setup
-commands install their integrations from the matching repository tag. Until OpenClaw and OpenCode are included in a
-release, the extra `uv tool install` command keeps the CLI, Server, and integrations on the same `master` revision.
-Run setup again to refresh an existing integration.
+The first command builds the current `master` revision and installs the CLI and local Server in an isolated
+environment. The setup commands install integrations from the same repository revision. Run the install and setup
+commands again to refresh an existing installation.
 
 ### 2. Start and verify the local Server
 

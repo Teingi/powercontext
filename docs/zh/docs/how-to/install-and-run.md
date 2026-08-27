@@ -7,24 +7,25 @@ description: 从 Git 安装 PowerContext，并运行本地 Server。
 
 ## 安装应用
 
-先安装 `uv`，再从指定 Git ref 直接安装 PowerContext：
+需要在 macOS 或 Linux 上准备 Python 3.11 或更新版本、Git 和
+[`uv`](https://docs.astral.sh/uv/)，然后从指定 Git ref 直接安装 PowerContext：
 
 ```bash
 uv tool install "powercontext[cli,server] @ git+https://github.com/oceanbase/powercontext.git@master"
 ```
 
-该方式支持 macOS 和 Linux，不需要用户自行管理仓库工作副本。Git 会沿用本机的凭据配置，包括 credential
-helper 和 SSH 设置。如需使用 SSH，请把 HTTPS URL 换成当前环境允许的 Git URL。
+该命令不会留下需要自行管理的仓库工作副本。Git 会沿用本机的凭据配置，包括 credential helper 和 SSH 设置。
+如需使用 SSH，请把 HTTPS URL 换成当前环境允许的 Git URL。
 
 安装指定分支或 tag 时，替换最后一个 `@` 后的 `master`。配置集成时应使用同一个 ref：
 
 ```bash
 powercontext setup codex --source oceanbase/powercontext --ref <ref>
-powercontext setup dsh --source oceanbase/powercontext --ref <ref>
-powercontext setup pi --source oceanbase/powercontext --ref <ref>
 ```
 
-宿主专有选项见[配置 Codex](configure-codex.md)和[配置 DeepSeek Harness](configure-dsh.md)。
+请把 `codex` 换成实际使用的宿主。Setup 支持 `codex`、`claude-code`、`dsh`、`hermes`、`openclaw`、
+`opencode`、`pi` 和 `workbuddy`；当前列表可通过 `powercontext setup --help` 查看。站点导航中的集成指南说明了各
+宿主的前置条件和行为。
 
 ## 运行本地 Server
 
@@ -55,16 +56,16 @@ powercontext server run
 uv tool install --force "powercontext[cli,server,seekdb] @ git+https://github.com/oceanbase/powercontext.git@master"
 ```
 
-从 SQLite 切换时，需要从 `.env` 中删除 `POWERCONTEXT_SERVER_DATABASE_URL` 和
-`POWERCONTEXT_SERVER_DATABASE_VEC1_EXTENSION`，或在 shell 中取消这两个变量；seekDB 不接受这些配置。
-然后选择 seekDB 后端并启动 Server：
+从 SQLite 切换时，需要从 Server 进程环境中删除 `POWERCONTEXT_SERVER_DATABASE_URL`；seekDB 不接受显式的
+SQLAlchemy 数据库 URL。然后选择 seekDB 后端并启动 Server：
 
 ```bash
 unset POWERCONTEXT_SERVER_DATABASE_URL
-unset POWERCONTEXT_SERVER_DATABASE_VEC1_EXTENSION
 export POWERCONTEXT_SERVER_DATABASE_KIND=seekdb
 powercontext server run
 ```
+
+CLI 不会自动加载 `.env` 文件。请在 shell 中导出这些值，或在启动 Server 的进程管理器、容器中配置。
 
 PowerContext 固定使用 seekDB 内置的 `test` 数据库。未设置 `POWERCONTEXT_SERVER_DATABASE_PATH` 时，实例保存在
 PowerContext 用户数据目录的 `seekdb` 子目录中；如果设置了 `POWERCONTEXT_HOME`，默认路径为
@@ -82,17 +83,17 @@ powercontext capabilities
 
 ```bash
 powercontext doctor
-powercontext doctor codex
-powercontext doctor dsh
-powercontext doctor pi
 powercontext ready
 powercontext capabilities
 ```
 
 `doctor` 检查已安装的包、Server 存活状态和 Server 就绪状态，不要求安装集成。Server 就绪检查涵盖数据库和
 每个已配置的推理服务。Runtime 或数据库故障返回 `not_ready`；推理服务故障返回 `degraded`，不会使数据库
-操作退出流量。`doctor codex`、`doctor dsh` 和 `doctor pi` 分别检查对应的可选宿主 CLI 与 PowerContext 集成。内容命令会经过公开 HTTP SDK
-路径。`ready` 和 `capabilities` 用于查看运行中服务的就绪状态和已启用能力。完整的状态解释和恢复步骤见[排查问题](troubleshoot.md)。
+操作退出流量。还可以使用 `powercontext doctor <host>` 检查已配置的 Agent 宿主；宿主名称与 `setup` 相同。
+`ready` 和 `capabilities` 用于查看运行中服务的就绪状态和已启用能力。完整状态解释和恢复步骤见
+[排查问题](troubleshoot.md)。
+
+需要长期运行进程、使用 Docker、启用鉴权或允许远程访问时，请继续阅读[部署 Server](deploy-server.md)。
 
 ## 更新或替换安装
 
@@ -101,12 +102,10 @@ powercontext capabilities
 ```bash
 uv tool install --force "powercontext[cli,server] @ git+https://github.com/oceanbase/powercontext.git@<ref>"
 powercontext setup codex --source oceanbase/powercontext --ref <ref>
-powercontext setup dsh --source oceanbase/powercontext --ref <ref>
-powercontext setup pi --source oceanbase/powercontext --ref <ref>
 ```
 
-更新后重启 Server，并开启新的宿主会话。只要没有修改 `POWERCONTEXT_HOME` 或数据库 URL，现有 SQLite
-数据会继续保留。
+对每个已安装宿主重复 setup 命令，并使用同一个 ref。更新后重启 Server，再开启新的宿主会话。只要没有修改
+`POWERCONTEXT_HOME` 或数据库 URL，现有 SQLite 数据会继续保留。
 
 ## 为 Python 项目安装角色
 

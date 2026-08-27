@@ -17,23 +17,19 @@ PowerContext 是 [PowerMem](https://www.powermem.ai/) 的升级版本，也是�
 ### 1. 安装 PowerContext 和集成
 
 ```bash
-uv tool install "powercontext[cli,server]==0.0.2"
+uv tool install --force "powercontext[cli,server] @ git+https://github.com/oceanbase/powercontext.git@master"
 
 # 选择一个或多个集成。
-powercontext setup codex --source oceanbase/powercontext --ref v0.0.2
-powercontext setup claude-code --source oceanbase/powercontext --ref v0.0.2
-powercontext setup dsh --source oceanbase/powercontext --ref v0.0.2
-powercontext setup hermes --source oceanbase/powercontext --ref v0.0.2
-
-# OpenClaw 和 OpenCode 当前需要从 master 安装匹配的 CLI 和集成。
-uv tool install --force "powercontext[cli,server] @ git+https://github.com/oceanbase/powercontext.git@master"
+powercontext setup codex --source oceanbase/powercontext --ref master
+powercontext setup claude-code --source oceanbase/powercontext --ref master
+powercontext setup dsh --source oceanbase/powercontext --ref master
+powercontext setup hermes --source oceanbase/powercontext --ref master
 powercontext setup openclaw --source oceanbase/powercontext --ref master
 powercontext setup opencode --source oceanbase/powercontext --ref master
 ```
 
-第一条命令会在隔离环境中安装最新发布的 CLI 和本地 Server；发布版的 setup 命令会从匹配的仓库 tag
-安装对应集成。在 OpenClaw 和 OpenCode 进入正式发布版之前，额外的 `uv tool install` 命令会让 CLI、Server
-和集成使用同一个 `master` revision。如需刷新现有集成，请再次运行 setup。
+第一条命令会构建当前 `master` revision，并在隔离环境中安装 CLI 和本地 Server。setup 命令会从同一个仓库
+revision 安装集成。如需刷新现有安装，请再次运行 install 和 setup 命令。
 
 ### 2. 启动并验证本地 Server
 
