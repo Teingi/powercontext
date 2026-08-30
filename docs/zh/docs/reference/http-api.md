@@ -84,11 +84,45 @@ curl --fail \
   "$POWERCONTEXT_URL/v1/memory/search"
 ```
 
+## 把一个精确 Handoff 授予接收者
+
+`scope_id` 本身从不授予权限。管理员通过创建 Binding，把一个精确的 committed Handoff 授予接收者已经认证的
+Principal：
+
+```bash
+curl --fail \
+  --request POST \
+  --header 'Content-Type: application/json' \
+  --header "$POWERCONTEXT_AUTH_HEADER" \
+  --data '{
+    "subject": {"type": "user", "issuer": "https://id.example", "id": "user-b"},
+    "resource": {
+      "type": "handoff",
+      "scope_id": "project:example",
+      "family": "handoff",
+      "artifact_id": "handoff-42",
+      "revision": 3
+    },
+    "role": "handoff.receiver",
+    "idempotency_key": "handoff-42-r3-to-user-b"
+  }' \
+  "$POWERCONTEXT_URL/v1/access/bindings/create"
+```
+
+接收者只能读取证据并确认这个 Revision；除非另有 scope role，否则不能发现 latest Handoff、读取其他 Handoff，
+也不能访问父 scope 的 Memory。用 `/v1/access/me` 确认部署建立的 Principal，用 `/v1/access/check` 检查一个决策，
+用 `/v1/access/resources/list` 非发现式地列出已经可见的资源。创建操作按授权者与幂等键保证幂等；撤销时必须提交
+`binding_id` 和 `expected_version`。Server 管理员可通过 `/v1/access/audit/list` 查看关系变更与决策事件。
+
+内置静态 token 只代表一个本地管理员，无法表达不同的 A/B 用户。真正的多用户部署必须把每个调用者认证为不同的
+Principal，并注入 Authorization Provider。HTTP 与 MCP 使用同一个策略执行点；MCP tool 可见不等于有权限。
+
 ## 查找操作
 
 | 领域 | 主要路径 | 用途 |
 | --- | --- | --- |
 | 健康与能力 | `/health/*`、`/v1/capabilities` | 探测部署状态并查看已启用的 Runtime 行为 |
+| Access Control | `/v1/access/*` | 查看身份、检查决策，并管理 role、Binding 和审计事件 |
 | Source 与 Context | `/v1/sources/content`、`/v1/context/prepare` | 采集证据并准备有界 Context |
 | 工作连续性 | `/v1/work/*` | 创建 Work Contract、准备或确认 Handoff、记录 Outcome |
 | 底层 Handoff | `/v1/handoff/*` | activate、prepare、finalize、commit 或 continue Handoff |
@@ -120,6 +154,7 @@ curl --fail \
 | 状态码 | 含义 |
 | --- | --- |
 | `401` | Server 要求有效的 Bearer token |
+| `403` | 已认证 Principal 无权对目标资源执行请求的 action |
 | `404` | 请求的不可变值不存在 |
 | `409` | 请求与当前不可变状态或 expected version 冲突 |
 | `413` | 选中的 Handoff Report 超过输出限制 |

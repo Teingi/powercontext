@@ -55,6 +55,8 @@ Server settings use the `POWERCONTEXT_SERVER_` prefix.
 | `POWERCONTEXT_SERVER_MCP_PATH` | `/mcp` | MCP path |
 | `POWERCONTEXT_SERVER_AUTH_ENABLED` | `false` | Require one static bearer token for HTTP and MCP |
 | `POWERCONTEXT_SERVER_AUTH_TOKEN` | unset | Static bearer token; required when authentication is enabled |
+| `POWERCONTEXT_SERVER_ACCESS_MODE` | `legacy-static-admin` | Authorization rollout: `disabled`, `legacy-static-admin`, or `enforced` |
+| `POWERCONTEXT_SERVER_ACCESS_BOOTSTRAP_STATIC_PRINCIPAL` | `true` | Treat the deployment-local static-token Principal as a bootstrap Server administrator |
 | `POWERCONTEXT_SERVER_ALLOW_UNAUTHENTICATED_NON_LOOPBACK` | `false` | Opt in to a non-loopback bind while authentication is disabled |
 | `POWERCONTEXT_SERVER_DASHBOARD_ENABLED` | `true` | Enable the Dashboard at the Server root path `/` |
 | `POWERCONTEXT_SERVER_DASHBOARD_SCOPES` | `[]` | JSON array of selectable Dashboard scopes |
@@ -92,6 +94,20 @@ non-loopback address while authentication is disabled; either enable authenticat
 when TLS is terminated upstream or the network is otherwise controlled, set
 `POWERCONTEXT_SERVER_ALLOW_UNAUTHENTICATED_NON_LOOPBACK=true` to opt in explicitly. Use TLS before exposing an
 authenticated Server over a network.
+
+Authentication establishes a Principal; Access Control decides what that Principal may do. The built-in static token
+always represents one deployment-local service Principal, so it cannot distinguish user A from user B. The default
+`legacy-static-admin` mode maps that Principal to a bootstrap Server administrator and preserves the single-user local
+deployment. `enforced` enables the same policy enforcement point and persistent Binding/audit store for an injected
+multi-user authentication and Authorization Provider. Set `bootstrap_static_principal=false` after another
+administrator relationship is available. `disabled` bypasses authorization decisions and is intended only for an
+explicit compatibility rollback inside an already trusted network boundary.
+
+The built-in Access schema uses the configured SQLite, seekDB, or OceanBase backend, but remains Server-owned rather
+than becoming a Runtime domain. A custom deployment can inject an `AccessControlService` into `create_server_app` and
+implement the `AuthorizationProvider` and `RelationshipWriter` protocols with OpenFGA, Casbin, Oso, or another policy
+system. Its authentication middleware must bind an opaque `PrincipalRef`; `scope_id` is only a resource partition and
+never establishes identity.
 
 The Python Client and CLI apply the matching rule for outbound requests: a configured unencrypted `http://` Server
 URL is accepted only for loopback hosts. The Client refuses to send any request, authenticated or not, over

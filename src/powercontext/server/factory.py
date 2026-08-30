@@ -19,7 +19,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import AsyncIterator, Sequence
-from contextlib import asynccontextmanager
+from contextlib import AsyncExitStack, asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, Response
@@ -41,6 +41,8 @@ from powercontext.http import Capabilities, MemorySearchMode, PreparedContextSch
 from powercontext.paths import default_scheduler_path
 from powercontext.server.access import HttpAccessLogMiddleware
 from powercontext.server.app import create_app
+from powercontext.server.authz import AccessControlService, PrincipalRef
+from powercontext.server.authz.composition import open_builtin_access_control
 from powercontext.server.mcp import mount_mcp
 from powercontext.server.metrics import CONTENT_TYPE_LATEST, HttpMetricsMiddleware, ServerMetrics
 from powercontext.server.middleware import StaticBearerMiddleware
@@ -64,6 +66,7 @@ def create_server_app(
     embedding_model: EmbeddingModel | None = None,
     middleware: Sequence[Middleware] = (),
     tracing: ServerTracing | None = None,
+    access_control: AccessControlService | None = None,
 ) -> FastAPI:
     """Build the Server process and mount MCP when configured."""
 
@@ -80,28 +83,43 @@ def create_server_app(
     if metrics is not None:
         metrics.set_ready(False)
     readiness_probe = _ServerReadinessProbe(metrics, tracing=resolved_tracing)
+    static_principal = PrincipalRef(type="service", issuer="powercontext:static", id="server-token")
+    configured_access_control = None if resolved.access.mode == "disabled" else access_control
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         _log_lifecycle("server.starting", "PowerContext Server is starting")
         if isinstance(config.database, SQLiteConfig) and config.database.is_in_memory:
             _log_in_memory_database_warning()
-        async with open_builtin_runtime(
-            config,
-            scheduler_path=default_scheduler_path() if scheduler_path is None else scheduler_path,
-            candidate_pipeline=candidate_pipeline,
-            experience_pipeline=experience_pipeline,
-            experience_generator=experience_generator,
-            skill_generator=skill_generator,
-            external_skill_provider=external_skill_provider,
-            handoff_pipeline=handoff_pipeline,
-            embedding_model=embedding_model,
-            instrumentation=resolved_tracing.instrumentation,
-            scope_cache_observer=None if metrics is None else metrics.set_runtime_scopes,
-            tracing=resolved_tracing,
-        ) as runtime:
+        async with AsyncExitStack() as resources:
+            runtime = await resources.enter_async_context(
+                open_builtin_runtime(
+                    config,
+                    scheduler_path=default_scheduler_path() if scheduler_path is None else scheduler_path,
+                    candidate_pipeline=candidate_pipeline,
+                    experience_pipeline=experience_pipeline,
+                    experience_generator=experience_generator,
+                    skill_generator=skill_generator,
+                    external_skill_provider=external_skill_provider,
+                    handoff_pipeline=handoff_pipeline,
+                    embedding_model=embedding_model,
+                    instrumentation=resolved_tracing.instrumentation,
+                    scope_cache_observer=None if metrics is None else metrics.set_runtime_scopes,
+                    tracing=resolved_tracing,
+                )
+            )
+            active_access_control = configured_access_control
+            if active_access_control is None and resolved.auth.enabled and resolved.access.mode != "disabled":
+                administrators = (static_principal,) if resolved.access.bootstrap_static_principal else ()
+                active_access_control = await resources.enter_async_context(
+                    open_builtin_access_control(
+                        resolved.database,
+                        bootstrap_administrators=administrators,
+                    )
+                )
             readiness_probe.bind(runtime)
             app.state.application = runtime
+            app.state.access_control = active_access_control
             app.state.capabilities = await _server_capabilities(runtime)
             await readiness_probe()
             try:
@@ -110,6 +128,7 @@ def create_server_app(
                 _log_lifecycle("server.stopping", "PowerContext Server is stopping")
                 readiness_probe.unbind()
                 app.state.application = None
+                app.state.access_control = configured_access_control
                 app.state.capabilities = Capabilities(
                     source_types=[],
                     artifact_families=[],
@@ -128,7 +147,11 @@ def create_server_app(
     if resolved.auth.enabled and auth_token is not None:
         configured_middleware.insert(
             0,
-            Middleware(StaticBearerMiddleware, token=auth_token.get_secret_value()),
+            Middleware(
+                StaticBearerMiddleware,
+                token=auth_token.get_secret_value(),
+                principal=static_principal,
+            ),
         )
 
     app = create_app(
@@ -138,6 +161,7 @@ def create_server_app(
         metrics=metrics,
         tracing=resolved_tracing,
         handoff_report_enabled=resolved.handoff_report.enabled,
+        access_control=configured_access_control,
     )
     _mount_optional_web_ui(app, resolved)
     if metrics is not None:

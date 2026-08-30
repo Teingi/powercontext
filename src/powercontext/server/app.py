@@ -19,7 +19,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from contextlib import suppress
 from copy import deepcopy
 from datetime import UTC, datetime
@@ -214,6 +214,19 @@ from powercontext.errors import (
     SourceConflictError,
 )
 from powercontext.http import (
+    AccessAction as TransportAccessAction,
+)
+from powercontext.http import (
+    AccessAuditEvent as TransportAccessAuditEvent,
+)
+from powercontext.http import (
+    AccessAuditPage,
+    AccessBindingPage,
+    AccessCheckBatchRequest,
+    AccessCheckBatchResponse,
+    AccessCheckRequest,
+    AccessResourcePage,
+    AccessRolePage,
     AcknowledgeHandoffRequest,
     ActivateHandoffRequest,
     ApproveArtifactCandidateRequest,
@@ -226,6 +239,7 @@ from powercontext.http import (
     CommitHandoffRequest,
     CommittedHandoff,
     ContinueHandoffRequest,
+    CreateAccessBindingRequest,
     CreateHandoffReportProjectRequest,
     CreateWorkContractRequest,
     DetachHandoffReportWorkspaceRequest,
@@ -258,6 +272,10 @@ from powercontext.http import (
     ImportExternalSkillRequest,
     KnownHandoffScope,
     KnownHandoffScopePage,
+    ListAccessAuditRequest,
+    ListAccessBindingsRequest,
+    ListAccessResourcesRequest,
+    ListAccessRolesRequest,
     ListArtifactCandidatesRequest,
     ListExternalSkillsRequest,
     ListExternalSkillsResponse,
@@ -292,6 +310,7 @@ from powercontext.http import (
     RetireMemoryEntryRequest,
     ReviseArtifactCandidateRequest,
     ReviseMemoryEntryRequest,
+    RevokeAccessBindingRequest,
     ScanExternalSkillsRequest,
     ScanExternalSkillsResponse,
     ScopedStats,
@@ -304,6 +323,30 @@ from powercontext.http import (
     WorkSourceReceipt,
     WorkstreamDescriptor,
     WorkstreamPage,
+)
+from powercontext.http import (
+    AccessBinding as TransportAccessBinding,
+)
+from powercontext.http import (
+    AccessBindingState as TransportAccessBindingState,
+)
+from powercontext.http import (
+    AccessDecision as TransportAccessDecision,
+)
+from powercontext.http import (
+    AccessPrincipal as TransportAccessPrincipal,
+)
+from powercontext.http import (
+    AccessResource as TransportAccessResource,
+)
+from powercontext.http import (
+    AccessResourceType as TransportAccessResourceType,
+)
+from powercontext.http import (
+    AccessRole as TransportAccessRole,
+)
+from powercontext.http import (
+    AccessRoleDescriptor as TransportAccessRoleDescriptor,
 )
 from powercontext.http import (
     HandoffActivation as TransportHandoffActivation,
@@ -326,8 +369,11 @@ from powercontext.http._generated.operations import (
     APPROVE_ARTIFACT_CANDIDATE,
     ATTACH_HANDOFF_REPORT_WORKSPACE,
     CAPTURE_CONTENT_SOURCE,
+    CHECK_ACCESS,
+    CHECK_ACCESS_BATCH,
     COMMIT_HANDOFF,
     CONTINUE_HANDOFF,
+    CREATE_ACCESS_BINDING,
     CREATE_HANDOFF_REPORT_PROJECT,
     CREATE_WORK_CONTRACT,
     DETACH_HANDOFF_REPORT_WORKSPACE,
@@ -335,6 +381,7 @@ from powercontext.http._generated.operations import (
     FLUSH_MEMORY,
     GENERATE_EXPERIENCE,
     GENERATE_SKILL,
+    GET_ACCESS_PRINCIPAL,
     GET_ARTIFACT_CANDIDATE,
     GET_CAPABILITIES,
     GET_EXPERIENCE,
@@ -348,6 +395,10 @@ from powercontext.http._generated.operations import (
     GET_STATS,
     HANDOFF_CURRENT_WORK,
     IMPORT_EXTERNAL_SKILL,
+    LIST_ACCESS_AUDIT,
+    LIST_ACCESS_BINDINGS,
+    LIST_ACCESS_RESOURCES,
+    LIST_ACCESS_ROLES,
     LIST_ARTIFACT_CANDIDATES,
     LIST_EXTERNAL_SKILLS,
     LIST_HANDOFF_REPORT_ACTIVITIES,
@@ -371,17 +422,40 @@ from powercontext.http._generated.operations import (
     RETIRE_MEMORY_ENTRY,
     REVISE_ARTIFACT_CANDIDATE,
     REVISE_MEMORY_ENTRY,
+    REVOKE_ACCESS_BINDING,
     SCAN_EXTERNAL_SKILLS,
     SEARCH_MEMORY,
     UPDATE_HANDOFF_REPORT_PROJECT,
     UPDATE_HANDOFF_REPORT_WORKSTREAM,
+    AccessRequirement,
     Operation,
 )
 from powercontext.http._generated.schema import OPENAPI_SCHEMA
 from powercontext.server import mapping
+from powercontext.server.authz import (
+    AccessAction,
+    AccessAuditContext,
+    AccessAuditEvent,
+    AccessBinding,
+    AccessConflictError,
+    AccessControlService,
+    AccessDecision,
+    AccessDeniedError,
+    AccessIdentityRequiredError,
+    AccessInvalidRequestError,
+    AccessResourceType,
+    AccessRole,
+    AccessUnavailableError,
+    CreateBinding,
+    PrincipalRef,
+    ResourceRef,
+)
+from powercontext.server.authz.models import ROLE_ACTIONS, ROLE_RESOURCE_TYPES
 from powercontext.server.context import (
     bind_request_id,
+    current_principal,
     current_request_id,
+    is_internal_bridge,
     reset_request_id,
 )
 from powercontext.server.tracing import request_id_from_span
@@ -564,6 +638,7 @@ def create_app(
     metrics: ServerMetrics | None = None,
     tracing: ServerTracing | None = None,
     handoff_report_enabled: bool = False,
+    access_control: AccessControlService | None = None,
 ) -> FastAPI:
     """Build the HTTP adapter around an optional Runtime application binding."""
 
@@ -578,6 +653,7 @@ def create_app(
     app.state.application = application
     app.state.capability_provider = capability_provider
     app.state.readiness_probe = readiness_probe
+    app.state.access_control = access_control
     app.state.metrics = metrics
     app.state.tracing = tracing
     app.state.capabilities = Capabilities(
@@ -636,6 +712,15 @@ def create_app(
     _add_route(app, GET_READINESS, get_readiness)
     _add_route(app, GET_CAPABILITIES, get_capabilities)
     _add_route(app, GET_STATS, get_stats)
+    _add_route(app, GET_ACCESS_PRINCIPAL, get_access_principal)
+    _add_route(app, CHECK_ACCESS, check_access)
+    _add_route(app, CHECK_ACCESS_BATCH, check_access_batch)
+    _add_route(app, LIST_ACCESS_RESOURCES, list_access_resources)
+    _add_route(app, LIST_ACCESS_ROLES, list_access_roles)
+    _add_route(app, LIST_ACCESS_BINDINGS, list_access_bindings)
+    _add_route(app, CREATE_ACCESS_BINDING, create_access_binding)
+    _add_route(app, REVOKE_ACCESS_BINDING, revoke_access_binding)
+    _add_route(app, LIST_ACCESS_AUDIT, list_access_audit)
     if handoff_report_enabled:
         _add_route(app, CREATE_HANDOFF_REPORT_PROJECT, create_handoff_report_project)
         _add_route(app, GET_HANDOFF_REPORT_PROJECT, get_handoff_report_project)
@@ -721,6 +806,122 @@ async def get_capabilities(request: Request) -> Capabilities:
     if capability_provider is not None:
         return capability_provider()
     return request.app.state.capabilities
+
+
+async def get_access_principal(request: Request) -> TransportAccessPrincipal:
+    _require_access_control(request)
+    return _access_principal_response(_require_principal())
+
+
+async def check_access(payload: AccessCheckRequest, request: Request) -> TransportAccessDecision:
+    access = _require_access_control(request)
+    decision = await access.check(
+        _require_principal(),
+        AccessAction(payload.action.value),
+        _access_resource(payload.resource),
+        context=_access_audit_context(CHECK_ACCESS.operation_id),
+    )
+    return _access_decision_response(decision)
+
+
+async def check_access_batch(payload: AccessCheckBatchRequest, request: Request) -> AccessCheckBatchResponse:
+    access = _require_access_control(request)
+    checks = tuple((AccessAction(check.action.value), _access_resource(check.resource)) for check in payload.checks)
+    decisions = await access.check_batch(
+        _require_principal(),
+        checks,
+        context=_access_audit_context(CHECK_ACCESS_BATCH.operation_id),
+    )
+    return AccessCheckBatchResponse(decisions=[_access_decision_response(decision) for decision in decisions])
+
+
+async def list_access_resources(payload: ListAccessResourcesRequest, request: Request) -> AccessResourcePage:
+    access = _require_access_control(request)
+    page = await access.list_resources(
+        _require_principal(),
+        action=AccessAction(payload.action.value),
+        resource_type=AccessResourceType(payload.resource_type.value),
+        cursor=payload.cursor,
+        limit=payload.limit,
+    )
+    return AccessResourcePage(
+        items=[_access_resource_response(resource) for resource in page.items],
+        next_cursor=page.next_cursor,
+    )
+
+
+async def list_access_roles(payload: ListAccessRolesRequest, request: Request) -> AccessRolePage:
+    _require_access_control(request)
+    resource_type = None if payload.resource_type is None else AccessResourceType(payload.resource_type.value)
+    roles = [role for role in AccessRole if resource_type is None or ROLE_RESOURCE_TYPES[role] is resource_type]
+    return AccessRolePage(
+        items=[
+            TransportAccessRoleDescriptor(
+                role=TransportAccessRole(role.value),
+                resource_type=TransportAccessResourceType(ROLE_RESOURCE_TYPES[role].value),
+                actions=[TransportAccessAction(action.value) for action in sorted(ROLE_ACTIONS[role], key=str)],
+            )
+            for role in roles
+        ]
+    )
+
+
+async def list_access_bindings(payload: ListAccessBindingsRequest, request: Request) -> AccessBindingPage:
+    access = _require_access_control(request)
+    principal = _require_principal()
+    resource = None if payload.resource is None else _access_resource(payload.resource)
+    action, boundary = _binding_administrative_check(resource)
+    await access.require(
+        principal,
+        action,
+        boundary,
+        context=_access_audit_context(LIST_ACCESS_BINDINGS.operation_id),
+    )
+    subject = None if payload.subject is None else _access_principal(payload.subject)
+    bindings = await access.list_bindings(
+        subject=subject,
+        resource=resource,
+        include_revoked=payload.include_revoked,
+    )
+    return AccessBindingPage(items=[_access_binding_response(binding) for binding in bindings])
+
+
+async def create_access_binding(payload: CreateAccessBindingRequest, request: Request) -> TransportAccessBinding:
+    access = _require_access_control(request)
+    binding = await access.create_binding(
+        _require_principal(),
+        CreateBinding(
+            subject=_access_principal(payload.subject),
+            resource=_access_resource(payload.resource),
+            role=AccessRole(payload.role.value),
+            idempotency_key=payload.idempotency_key,
+            reason=payload.reason,
+            expires_at=payload.expires_at,
+        ),
+        context=_access_audit_context(CREATE_ACCESS_BINDING.operation_id),
+    )
+    return _access_binding_response(binding)
+
+
+async def revoke_access_binding(payload: RevokeAccessBindingRequest, request: Request) -> TransportAccessBinding:
+    access = _require_access_control(request)
+    binding = await access.revoke_binding(
+        _require_principal(),
+        payload.binding_id,
+        expected_version=payload.expected_version,
+        context=_access_audit_context(REVOKE_ACCESS_BINDING.operation_id),
+    )
+    return _access_binding_response(binding)
+
+
+async def list_access_audit(payload: ListAccessAuditRequest, request: Request) -> AccessAuditPage:
+    access = _require_access_control(request)
+    events = await access.list_audit(after=payload.after, limit=payload.limit)
+    next_cursor = events[-1].cursor if len(events) == payload.limit else None
+    return AccessAuditPage(
+        items=[_access_audit_response(event) for event in events],
+        next_cursor=next_cursor,
+    )
 
 
 async def get_stats(
@@ -1334,6 +1535,121 @@ def _require_handoff_report_application(request: Request) -> HandoffReportApplic
     return application.handoff_report
 
 
+def _require_access_control(request: Request) -> AccessControlService:
+    access: AccessControlService | None = request.app.state.access_control
+    if access is None:
+        raise _RuntimeNotReadyError
+    return access
+
+
+def _require_principal() -> PrincipalRef:
+    principal = current_principal()
+    if principal is None:
+        raise AccessIdentityRequiredError
+    return principal
+
+
+def _access_audit_context(operation: str) -> AccessAuditContext:
+    return AccessAuditContext(
+        transport="mcp" if is_internal_bridge() else "http",
+        operation=operation,
+        request_id=current_request_id(),
+    )
+
+
+def _access_principal(value: TransportAccessPrincipal) -> PrincipalRef:
+    return PrincipalRef(type=value.type, issuer=value.issuer, id=value.id)
+
+
+def _access_principal_response(value: PrincipalRef) -> TransportAccessPrincipal:
+    return TransportAccessPrincipal(type=value.type, issuer=value.issuer, id=value.id)
+
+
+def _access_resource(value: TransportAccessResource) -> ResourceRef:
+    resource_type = AccessResourceType(value.type.value)
+    if resource_type is AccessResourceType.SERVER:
+        return ResourceRef.server()
+    if resource_type is AccessResourceType.SCOPE:
+        return ResourceRef.scope(value.scope_id or "")
+    return ResourceRef(
+        type=AccessResourceType.HANDOFF,
+        scope_id=value.scope_id,
+        family=value.family,
+        artifact_id=value.artifact_id,
+        revision=value.revision,
+    )
+
+
+def _access_resource_response(value: ResourceRef) -> TransportAccessResource:
+    return TransportAccessResource(
+        type=TransportAccessResourceType(value.type.value),
+        scope_id=value.scope_id,
+        family=value.family,
+        artifact_id=value.artifact_id,
+        revision=value.revision,
+    )
+
+
+def _access_decision_response(value: AccessDecision) -> TransportAccessDecision:
+    return TransportAccessDecision(
+        allowed=value.allowed,
+        reason_code=value.reason_code,
+        policy_revision=value.policy_revision,
+    )
+
+
+def _access_binding_response(value: AccessBinding) -> TransportAccessBinding:
+    return TransportAccessBinding(
+        binding_id=value.binding_id,
+        subject=_access_principal_response(value.subject),
+        resource=_access_resource_response(value.resource),
+        role=TransportAccessRole(value.role.value),
+        granted_by=_access_principal_response(value.granted_by),
+        reason=value.reason,
+        created_at=value.created_at,
+        expires_at=value.expires_at,
+        state=TransportAccessBindingState(value.state.value),
+        version=value.version,
+        policy_revision=value.policy_revision,
+        idempotency_key=value.idempotency_key,
+        revoked_at=value.revoked_at,
+        revoked_by=None if value.revoked_by is None else _access_principal_response(value.revoked_by),
+    )
+
+
+def _access_audit_response(value: AccessAuditEvent) -> TransportAccessAuditEvent:
+    if value.cursor is None:
+        raise AccessUnavailableError
+    return TransportAccessAuditEvent(
+        cursor=value.cursor,
+        event_id=value.event_id,
+        occurred_at=value.occurred_at,
+        request_id=value.request_id,
+        transport=value.transport,
+        operation=value.operation,
+        principal=_access_principal_response(value.principal),
+        action=TransportAccessAction(value.action.value),
+        resource=_access_resource_response(value.resource),
+        allowed=value.allowed,
+        reason_code=value.reason_code,
+        policy_revision=value.policy_revision,
+        binding_id=value.binding_id,
+        target=None if value.target is None else _access_principal_response(value.target),
+        role=None if value.role is None else TransportAccessRole(value.role.value),
+    )
+
+
+def _binding_administrative_check(resource: ResourceRef | None) -> tuple[AccessAction, ResourceRef]:
+    if resource is None or resource.type is AccessResourceType.SERVER:
+        return AccessAction.SERVER_ADMIN, ResourceRef.server()
+    if resource.type is AccessResourceType.SCOPE:
+        return AccessAction.SCOPE_ADMIN, resource
+    parent = resource.parent_scope
+    if parent is None:
+        raise AccessInvalidRequestError("handoff-reference")
+    return AccessAction.SCOPE_DELEGATE, parent
+
+
 def _project_descriptor_response(value: DomainProjectDescriptor) -> ProjectDescriptor:
     return ProjectDescriptor.model_validate(value.model_dump(mode="json", by_alias=True))
 
@@ -1347,9 +1663,10 @@ def _add_route(
     operation: Operation[_RequestT, _ResponseT],
     endpoint: Callable[..., Awaitable[_ResponseT | Response]],
 ) -> None:
+    observed = _observe_application_operation(app, operation, endpoint)
     app.add_api_route(
         operation.path,
-        _observe_application_operation(app, operation, endpoint),
+        observed,
         methods=[operation.method],
         operation_id=operation.operation_id,
         response_model=operation.response_type,
@@ -1357,7 +1674,101 @@ def _add_route(
         responses=operation.responses,
         summary=operation.summary,
         tags=list(operation.tags),
+        dependencies=[] if operation.access is None else [Depends(_authorization_dependency(operation))],
     )
+
+
+def _authorization_dependency(
+    operation: Operation[Any, Any],
+) -> Callable[[Request], Awaitable[None]]:
+    requirement = operation.access
+    if requirement is None:
+        raise AccessInvalidRequestError("resource")
+
+    async def authorize(request: Request) -> None:
+        access: AccessControlService | None = request.app.state.access_control
+        if access is not None:
+            payload = await _authorization_payload(request, operation)
+            action, resource = _resolve_access_requirement(requirement, payload)
+            await access.require(
+                current_principal(),
+                action,
+                resource,
+                context=_access_audit_context(operation.operation_id),
+            )
+
+    return authorize
+
+
+async def _authorization_payload(request: Request, operation: Operation[Any, Any]) -> Mapping[str, Any]:
+    if operation.request_type is None:
+        return {}
+    if operation.request_location == "query":
+        return request.query_params
+    try:
+        value = await request.json()
+    except (UnicodeDecodeError, ValueError) as error:
+        raise AccessInvalidRequestError("resource") from error
+    if not isinstance(value, dict):
+        raise AccessInvalidRequestError("resource")
+    return value
+
+
+def _resolve_access_requirement(
+    requirement: AccessRequirement,
+    payload: Mapping[str, Any],
+) -> tuple[AccessAction, ResourceRef]:
+    if requirement.resolver == "static":
+        return AccessAction(requirement.action), ResourceRef.server()
+    if requirement.resolver == "request":
+        scope_id = _nested_request_value(payload, requirement.scope_id_field)
+        return AccessAction(requirement.action), ResourceRef.scope(scope_id)
+    scope_id = _nested_request_value(payload, "scope_id")
+    selection = str(_nested_request_value(payload, "selection"))
+    if selection != "exact":
+        return AccessAction(requirement.action), ResourceRef.scope(scope_id)
+    revision = payload.get("revision")
+    if not isinstance(revision, Mapping):
+        raise AccessInvalidRequestError("handoff-reference")
+    resource = ResourceRef(
+        type=AccessResourceType.HANDOFF,
+        scope_id=scope_id,
+        family=_mapping_text(revision, "family"),
+        artifact_id=_mapping_text(revision, "artifact_id"),
+        revision=_mapping_revision(revision),
+    )
+    action = (
+        AccessAction.HANDOFF_ACKNOWLEDGE if requirement.resolver == "acknowledge_handoff" else AccessAction.HANDOFF_READ
+    )
+    return action, resource
+
+
+def _nested_request_value(payload: Mapping[str, Any], field: str | None) -> str:
+    if not field:
+        raise AccessInvalidRequestError("resource")
+    value = payload
+    for part in field.split("."):
+        value = value.get(part) if isinstance(value, Mapping) else None
+        if value is None:
+            raise AccessInvalidRequestError("resource")
+    text = str(value)
+    if not text:
+        raise AccessInvalidRequestError("resource")
+    return text
+
+
+def _mapping_text(value: Mapping[str, Any], field: str) -> str:
+    item = value.get(field)
+    if not isinstance(item, str) or not item:
+        raise AccessInvalidRequestError("handoff-reference")
+    return item
+
+
+def _mapping_revision(value: Mapping[str, Any]) -> int:
+    revision = value.get("revision")
+    if not isinstance(revision, int) or isinstance(revision, bool) or revision < 1:
+        raise AccessInvalidRequestError("handoff-reference")
+    return revision
 
 
 def _observe_application_operation(
@@ -1492,6 +1903,9 @@ def _validation_error_details(error: RequestValidationError) -> list[Any]:
 
 
 def _map_error(error: Exception) -> tuple[int, str, str, dict[str, Any] | None]:
+    access_error = _map_access_error(error)
+    if access_error is not None:
+        return access_error
     if isinstance(error, _RuntimeNotReadyError):
         return status.HTTP_503_SERVICE_UNAVAILABLE, "runtime_not_ready", "The Runtime is not ready.", None
     if isinstance(error, ExternalSkillRegistryUnavailableError):
@@ -1527,6 +1941,20 @@ def _map_error(error: Exception) -> tuple[int, str, str, dict[str, Any] | None]:
     if report_error is not None:
         return report_error
     return _map_domain_error(error)
+
+
+def _map_access_error(error: Exception) -> tuple[int, str, str, dict[str, Any] | None] | None:
+    if isinstance(error, AccessIdentityRequiredError):
+        return status.HTTP_401_UNAUTHORIZED, "unauthorized", "An authenticated Principal is required.", None
+    if isinstance(error, AccessDeniedError):
+        return status.HTTP_403_FORBIDDEN, "forbidden", "The Principal is not authorized for this operation.", None
+    if isinstance(error, AccessConflictError):
+        return status.HTTP_409_CONFLICT, error.code, "The Access Binding conflicts with current state.", None
+    if isinstance(error, AccessInvalidRequestError):
+        return status.HTTP_422_UNPROCESSABLE_CONTENT, "invalid_access_request", "The Access request is invalid.", None
+    if isinstance(error, AccessUnavailableError):
+        return status.HTTP_503_SERVICE_UNAVAILABLE, "access_unavailable", "Access Control is unavailable.", None
+    return None
 
 
 def _map_candidate_error(error: Exception) -> tuple[int, str, str, dict[str, Any] | None] | None:

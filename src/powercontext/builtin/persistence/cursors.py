@@ -86,20 +86,31 @@ class SourceCursorRepository:
             if existing is not None:
                 raise GenerationConflictError(binding_name, None, existing.generation)
             generation = 1
+            statement = insert(SOURCE_CURSORS_TABLE).values(
+                scope_id=scope_id,
+                binding_name=binding_name,
+                cursor=payload,
+                generation=generation,
+            )
             try:
-                async with connection.begin_nested():
-                    await connection.execute(
-                        insert(SOURCE_CURSORS_TABLE).values(
-                            scope_id=scope_id,
-                            binding_name=binding_name,
-                            cursor=payload,
-                            generation=generation,
-                        )
+                if connection.dialect.name == "sqlite":
+                    async with connection.begin_nested():
+                        await connection.execute(statement)
+                elif connection.dialect.name == "mysql":
+                    await connection.execute(statement)
+                else:
+                    raise InvalidRepositoryArgumentError(
+                        "dialect",
+                        f"unsupported database dialect: {connection.dialect.name}",
                     )
             except IntegrityError:
                 # Another runtime may have inserted the same cursor after our
                 # initial read. Normalize that database race to the same CAS
-                # conflict used for concurrent updates.
+                # conflict used for concurrent updates. SQLite needs the nested
+                # transaction to release its read lock before the competing writer
+                # commits. The supported MySQL-compatible profiles keep the outer
+                # transaction usable after a uniqueness error, while OceanBase does
+                # not consistently preserve SAVEPOINTs for this write path.
                 existing = await self.load(
                     connection,
                     scope_id,

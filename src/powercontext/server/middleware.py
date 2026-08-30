@@ -23,7 +23,8 @@ from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from powercontext.http import ErrorDetail, ErrorResponse
-from powercontext.server.context import is_internal_bridge
+from powercontext.server.authz import PrincipalRef
+from powercontext.server.context import bind_principal, is_internal_bridge, reset_principal
 
 _PUBLIC_PATHS = frozenset({"/", "/handoff-reports", "/reviews", "/skills", "/health/live", "/health/ready"})
 _PUBLIC_PATH_PREFIXES = ("/static/",)
@@ -32,15 +33,30 @@ _PUBLIC_PATH_PREFIXES = ("/static/",)
 class StaticBearerMiddleware:
     """Require one configured bearer token for external HTTP requests."""
 
-    def __init__(self, app: ASGIApp, *, token: str) -> None:
+    def __init__(self, app: ASGIApp, *, token: str, principal: PrincipalRef | None = None) -> None:
         if not token:
             raise ValueError("Bearer token must not be empty")  # noqa: TRY003
         self.app = app
         self._token = token.encode()
+        self._principal = principal or PrincipalRef(type="service", issuer="powercontext:static", id="server-token")
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-        if self._allows(scope):
+        if is_internal_bridge():
             await self.app(scope, receive, send)
+            return
+        if self._allows(scope):
+            if (
+                scope["type"] != "http"
+                or scope["path"] in _PUBLIC_PATHS
+                or scope["path"].startswith(_PUBLIC_PATH_PREFIXES)
+            ):
+                await self.app(scope, receive, send)
+                return
+            principal_token = bind_principal(self._principal)
+            try:
+                await self.app(scope, receive, send)
+            finally:
+                reset_principal(principal_token)
             return
 
         error = ErrorResponse(
@@ -58,12 +74,7 @@ class StaticBearerMiddleware:
         await response(scope, receive, send)
 
     def _allows(self, scope: Scope) -> bool:
-        if (
-            scope["type"] != "http"
-            or scope["path"] in _PUBLIC_PATHS
-            or scope["path"].startswith(_PUBLIC_PATH_PREFIXES)
-            or is_internal_bridge()
-        ):
+        if scope["type"] != "http" or scope["path"] in _PUBLIC_PATHS or scope["path"].startswith(_PUBLIC_PATH_PREFIXES):
             return True
 
         authorization = Headers(scope=scope).get("authorization")

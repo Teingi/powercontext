@@ -52,6 +52,8 @@ Server 配置使用 `POWERCONTEXT_SERVER_` 前缀。
 | `POWERCONTEXT_SERVER_MCP_PATH` | `/mcp` | MCP 路径 |
 | `POWERCONTEXT_SERVER_AUTH_ENABLED` | `false` | HTTP 和 MCP 是否要求一个静态 Bearer token |
 | `POWERCONTEXT_SERVER_AUTH_TOKEN` | 未设置 | 静态 Bearer token；启用鉴权时必须设置 |
+| `POWERCONTEXT_SERVER_ACCESS_MODE` | `legacy-static-admin` | 权限启用模式：`disabled`、`legacy-static-admin` 或 `enforced` |
+| `POWERCONTEXT_SERVER_ACCESS_BOOTSTRAP_STATIC_PRINCIPAL` | `true` | 是否把部署本地静态 token 的 Principal 作为初始 Server 管理员 |
 | `POWERCONTEXT_SERVER_ALLOW_UNAUTHENTICATED_NON_LOOPBACK` | `false` | 在鉴权关闭时显式允许绑定非 loopback 地址 |
 | `POWERCONTEXT_SERVER_DASHBOARD_ENABLED` | `true` | 在 Server 根路径 `/` 启用 Dashboard |
 | `POWERCONTEXT_SERVER_DASHBOARD_SCOPES` | `[]` | Dashboard 可选择的 scope JSON 数组 |
@@ -88,6 +90,17 @@ readiness endpoint 仍然公开。明文 HTTP 仅在 loopback 地址（`localhos
 TLS 由上游终止或网络本身受控的场景下，
 显式设置 `POWERCONTEXT_SERVER_ALLOW_UNAUTHENTICATED_NON_LOOPBACK=true` 主动选择接受。通过网络暴露启用鉴权的
 Server 前必须配置 TLS。
+
+Authentication 负责建立 Principal，Access Control 负责判断该 Principal 能做什么。内置静态 token 始终只代表一个
+部署本地 service Principal，因此不能区分用户 A 和用户 B。默认 `legacy-static-admin` 会把该 Principal 映射为初始
+Server 管理员，以保持单用户本地部署的兼容行为。`enforced` 使用同一个策略执行点和持久化 Binding/审计存储，供注入的
+多用户 authentication 与 Authorization Provider 使用。在已有其他管理员关系后，可设置
+`bootstrap_static_principal=false`。`disabled` 会跳过授权决策，只应作为可信网络边界内的显式兼容回退。
+
+内置 Access schema 使用配置好的 SQLite、seekDB 或 OceanBase，但由 Server 独立持有，不进入 Runtime 领域。自定义部署
+可以向 `create_server_app` 注入 `AccessControlService`，并用 OpenFGA、Casbin、Oso 或其他策略系统实现
+`AuthorizationProvider` 与 `RelationshipWriter` protocol。authentication middleware 必须绑定不透明的
+`PrincipalRef`；`scope_id` 只用于资源分区，不能建立身份。
 
 Python Client 和 CLI 对出站请求应用相同规则：配置的明文 `http://` Server URL 仅接受 loopback 主机，并且 Client 拒绝
 通过明文的非 loopback HTTP 发送任何请求，无论是否携带 Bearer token。当代码的 `http://` base URL 只是路由标签、

@@ -26,6 +26,16 @@ from pydantic import TypeAdapter, ValidationError
 from powercontext.client.errors import InvalidResponseError, ServerResponseError, TransportError
 from powercontext.client.tracing import ClientSpan
 from powercontext.http import (
+    AccessAuditPage,
+    AccessBinding,
+    AccessBindingPage,
+    AccessCheckBatchRequest,
+    AccessCheckBatchResponse,
+    AccessCheckRequest,
+    AccessDecision,
+    AccessPrincipal,
+    AccessResourcePage,
+    AccessRolePage,
     AcknowledgeHandoffRequest,
     ActivateHandoffRequest,
     ApproveArtifactCandidateRequest,
@@ -38,6 +48,7 @@ from powercontext.http import (
     CommitHandoffRequest,
     CommittedHandoff,
     ContinueHandoffRequest,
+    CreateAccessBindingRequest,
     CreateHandoffReportProjectRequest,
     CreateWorkContractRequest,
     DetachHandoffReportWorkspaceRequest,
@@ -69,6 +80,10 @@ from powercontext.http import (
     HealthResponse,
     ImportExternalSkillRequest,
     KnownHandoffScopePage,
+    ListAccessAuditRequest,
+    ListAccessBindingsRequest,
+    ListAccessResourcesRequest,
+    ListAccessRolesRequest,
     ListArtifactCandidatesRequest,
     ListExternalSkillsRequest,
     ListExternalSkillsResponse,
@@ -103,6 +118,7 @@ from powercontext.http import (
     RetireMemoryEntryRequest,
     ReviseArtifactCandidateRequest,
     ReviseMemoryEntryRequest,
+    RevokeAccessBindingRequest,
     ScanExternalSkillsRequest,
     ScanExternalSkillsResponse,
     ScopedStats,
@@ -122,8 +138,11 @@ from powercontext.http._generated.operations import (
     APPROVE_ARTIFACT_CANDIDATE,
     ATTACH_HANDOFF_REPORT_WORKSPACE,
     CAPTURE_CONTENT_SOURCE,
+    CHECK_ACCESS,
+    CHECK_ACCESS_BATCH,
     COMMIT_HANDOFF,
     CONTINUE_HANDOFF,
+    CREATE_ACCESS_BINDING,
     CREATE_HANDOFF_REPORT_PROJECT,
     CREATE_WORK_CONTRACT,
     DETACH_HANDOFF_REPORT_WORKSPACE,
@@ -131,6 +150,7 @@ from powercontext.http._generated.operations import (
     FLUSH_MEMORY,
     GENERATE_EXPERIENCE,
     GENERATE_SKILL,
+    GET_ACCESS_PRINCIPAL,
     GET_ARTIFACT_CANDIDATE,
     GET_CAPABILITIES,
     GET_EXPERIENCE,
@@ -144,6 +164,10 @@ from powercontext.http._generated.operations import (
     GET_STATS,
     HANDOFF_CURRENT_WORK,
     IMPORT_EXTERNAL_SKILL,
+    LIST_ACCESS_AUDIT,
+    LIST_ACCESS_BINDINGS,
+    LIST_ACCESS_RESOURCES,
+    LIST_ACCESS_ROLES,
     LIST_ARTIFACT_CANDIDATES,
     LIST_EXTERNAL_SKILLS,
     LIST_HANDOFF_REPORT_ACTIVITIES,
@@ -166,6 +190,7 @@ from powercontext.http._generated.operations import (
     RETIRE_MEMORY_ENTRY,
     REVISE_ARTIFACT_CANDIDATE,
     REVISE_MEMORY_ENTRY,
+    REVOKE_ACCESS_BINDING,
     SCAN_EXTERNAL_SKILLS,
     SEARCH_MEMORY,
     UPDATE_HANDOFF_REPORT_PROJECT,
@@ -422,6 +447,51 @@ class PowerContextClient:
         """Capture raw content as durable Source evidence."""
 
         return await self._request(CAPTURE_CONTENT_SOURCE, request)
+
+    async def get_access_principal(self) -> AccessPrincipal:
+        """Return the opaque Principal established by Server authentication."""
+
+        return await self._request(GET_ACCESS_PRINCIPAL)
+
+    async def check_access(self, request: AccessCheckRequest) -> AccessDecision:
+        """Evaluate one action and resource for the current Principal."""
+
+        return await self._request(CHECK_ACCESS, request)
+
+    async def check_access_batch(self, request: AccessCheckBatchRequest) -> AccessCheckBatchResponse:
+        """Evaluate a bounded ordered batch for the current Principal."""
+
+        return await self._request(CHECK_ACCESS_BATCH, request)
+
+    async def list_access_resources(self, request: ListAccessResourcesRequest) -> AccessResourcePage:
+        """List only relationships already visible to the current Principal."""
+
+        return await self._request(LIST_ACCESS_RESOURCES, request)
+
+    async def list_access_roles(self, request: ListAccessRolesRequest) -> AccessRolePage:
+        """List stable built-in role definitions."""
+
+        return await self._request(LIST_ACCESS_ROLES, request)
+
+    async def list_access_bindings(self, request: ListAccessBindingsRequest) -> AccessBindingPage:
+        """List bindings within an authorized administrative boundary."""
+
+        return await self._request(LIST_ACCESS_BINDINGS, request)
+
+    async def create_access_binding(self, request: CreateAccessBindingRequest) -> AccessBinding:
+        """Create or idempotently return one Access Binding."""
+
+        return await self._request(CREATE_ACCESS_BINDING, request)
+
+    async def revoke_access_binding(self, request: RevokeAccessBindingRequest) -> AccessBinding:
+        """Revoke one Access Binding using compare-and-swap."""
+
+        return await self._request(REVOKE_ACCESS_BINDING, request)
+
+    async def list_access_audit(self, request: ListAccessAuditRequest) -> AccessAuditPage:
+        """List data-minimized authorization and relationship audit events."""
+
+        return await self._request(LIST_ACCESS_AUDIT, request)
 
     async def create_work_contract(self, request: CreateWorkContractRequest) -> WorkSourceReceipt:
         """Create one grounded delegation baseline as durable Source evidence."""

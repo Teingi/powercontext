@@ -309,6 +309,26 @@ def test_server_factory_optionally_requires_bearer_authentication() -> None:
     assert liveness.status_code == 200
 
 
+def test_server_factory_maps_static_token_to_bootstrap_principal() -> None:
+    app = create_server_app(
+        settings=ServerSettings(
+            auth=BearerAuthConfig(enabled=True, token=SecretStr("server-secret")),
+            database=SQLiteConfig(),
+            mcp=McpConfig(enabled=False),
+        )
+    )
+
+    with TestClient(app) as client:
+        response = client.get("/v1/access/me", headers={"Authorization": "Bearer server-secret"})
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "type": "service",
+        "issuer": "powercontext:static",
+        "id": "server-token",
+    }
+
+
 def test_readiness_reports_unavailable_bindings() -> None:
     async def probe() -> ReadinessResponse:
         return ReadinessResponse(

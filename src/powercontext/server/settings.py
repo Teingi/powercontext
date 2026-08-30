@@ -108,6 +108,13 @@ class BearerAuthConfig(BaseModel):
         return self
 
 
+class AccessControlConfig(BaseModel):
+    """Server authorization rollout and bootstrap behavior."""
+
+    mode: Literal["disabled", "legacy-static-admin", "enforced"] = "legacy-static-admin"
+    bootstrap_static_principal: bool = True
+
+
 class DashboardScopeConfig(BaseModel):
     """One scope exposed by the personal Dashboard."""
 
@@ -178,6 +185,7 @@ class ServerSettings(BaseSettings):
     http: HttpConfig = Field(default_factory=HttpConfig)
     mcp: McpConfig = Field(default_factory=McpConfig)
     auth: BearerAuthConfig = Field(default_factory=BearerAuthConfig)
+    access: AccessControlConfig = Field(default_factory=AccessControlConfig)
     allow_unauthenticated_non_loopback: bool = False
     dashboard: DashboardConfig = Field(default_factory=DashboardConfig)
     logging: ServerLoggingConfig = Field(default_factory=ServerLoggingConfig)
@@ -220,6 +228,7 @@ class ServerSettings(BaseSettings):
 
 
 __all__ = [
+    "AccessControlConfig",
     "BearerAuthConfig",
     "DashboardConfig",
     "DashboardScopeConfig",

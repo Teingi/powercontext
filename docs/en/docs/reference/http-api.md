@@ -90,11 +90,48 @@ curl --fail \
   "$POWERCONTEXT_URL/v1/memory/search"
 ```
 
+## Grant one exact Handoff to a receiver
+
+`scope_id` never grants access by itself. An administrator delegates one exact committed Handoff by creating a
+Binding for the receiver's authenticated Principal:
+
+```bash
+curl --fail \
+  --request POST \
+  --header 'Content-Type: application/json' \
+  --header "$POWERCONTEXT_AUTH_HEADER" \
+  --data '{
+    "subject": {"type": "user", "issuer": "https://id.example", "id": "user-b"},
+    "resource": {
+      "type": "handoff",
+      "scope_id": "project:example",
+      "family": "handoff",
+      "artifact_id": "handoff-42",
+      "revision": 3
+    },
+    "role": "handoff.receiver",
+    "idempotency_key": "handoff-42-r3-to-user-b"
+  }' \
+  "$POWERCONTEXT_URL/v1/access/bindings/create"
+```
+
+The receiver can read evidence and acknowledge only that Revision. It cannot use latest-Handoff discovery, read
+another Handoff, or access Memory in the parent scope unless a separate scope role allows it. Use `/v1/access/me` to
+verify which Principal the deployment established, `/v1/access/check` for one decision, and
+`/v1/access/resources/list` for a non-discovering list of already visible resources. Creation is idempotent per
+grantor and key; revocation uses `binding_id` plus `expected_version`. Relationship and decision events are available
+to Server administrators through `/v1/access/audit/list`.
+
+The built-in static token represents one local administrator and cannot model different A/B users. A real multi-user
+deployment must authenticate each caller to a different Principal and inject an Authorization Provider. HTTP and MCP
+use the same policy enforcement point; MCP tool visibility is not permission.
+
 ## Find an operation
 
 | Area | Main paths | Purpose |
 | --- | --- | --- |
 | Health and capabilities | `/health/*`, `/v1/capabilities` | Probe the deployment and discover enabled runtime behavior |
+| Access Control | `/v1/access/*` | Inspect identity, check decisions, and administer roles, Bindings, and audit events |
 | Source and context | `/v1/sources/content`, `/v1/context/prepare` | Capture evidence and prepare bounded context |
 | Work continuity | `/v1/work/*` | Create work contracts, prepare or acknowledge Handoffs, and record outcomes |
 | Low-level Handoff | `/v1/handoff/*` | Activate, prepare, finalize, commit, or continue a Handoff |
@@ -127,6 +164,7 @@ Common statuses are:
 | Status | Meaning |
 | --- | --- |
 | `401` | The Server requires a valid bearer token |
+| `403` | The authenticated Principal is not authorized for the requested action and resource |
 | `404` | The requested immutable value does not exist |
 | `409` | The request conflicts with current immutable state or an expected version |
 | `413` | A selected Handoff Report exceeds its output limit |

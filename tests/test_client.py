@@ -22,9 +22,46 @@ from pydantic import ValidationError
 from powercontext.client import InvalidResponseError, PowerContextClient, ServerResponseError, TransportError
 from powercontext.client.settings import ClientSettings
 from powercontext.http import (
+    AccessAction,
+    AccessCheckRequest,
+    AccessResource,
+    AccessResourceType,
     CaptureContentSourceRequest,
     GetHandoffReportRequest,
 )
+
+
+def test_client_exposes_typed_access_check() -> None:
+    async def scenario() -> None:
+        requests: list[httpx.Request] = []
+
+        def respond(request: httpx.Request) -> httpx.Response:
+            requests.append(request)
+            return httpx.Response(
+                200,
+                json={"allowed": True, "reason_code": "role-binding", "policy_revision": "7"},
+            )
+
+        async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as http_client:
+            client = PowerContextClient("https://memory.example", http_client=http_client)
+            decision = await client.check_access(
+                AccessCheckRequest(
+                    action=AccessAction.HANDOFF_READ,
+                    resource=AccessResource(
+                        type=AccessResourceType.HANDOFF,
+                        scope_id="scope-a",
+                        family="handoff",
+                        artifact_id="handoff-a",
+                        revision=3,
+                    ),
+                )
+            )
+
+        assert decision.allowed is True
+        assert requests[0].url.path == "/v1/access/check"
+        assert json.loads(requests[0].content)["resource"]["artifact_id"] == "handoff-a"
+
+    asyncio.run(scenario())
 
 
 def test_client_rejects_an_undeclared_success_status() -> None:

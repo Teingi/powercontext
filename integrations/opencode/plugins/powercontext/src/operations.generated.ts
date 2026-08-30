@@ -70,6 +70,15 @@ export const OPERATIONS = {
   get_handoff_report_workspace: { method: 'POST', path: '/v1/handoff-reports/workspace-bindings/get', location: "body", scope: false },
   attach_handoff_report_workspace: { method: 'POST', path: '/v1/handoff-reports/workspace-bindings/attach', location: "body", scope: false },
   detach_handoff_report_workspace: { method: 'POST', path: '/v1/handoff-reports/workspace-bindings/detach', location: "body", scope: false },
+  get_access_principal: { method: 'GET', path: '/v1/access/me', location: null, scope: false },
+  check_access: { method: 'POST', path: '/v1/access/check', location: "body", scope: false },
+  check_access_batch: { method: 'POST', path: '/v1/access/check-batch', location: "body", scope: false },
+  list_access_resources: { method: 'POST', path: '/v1/access/resources/list', location: "body", scope: false },
+  list_access_roles: { method: 'POST', path: '/v1/access/roles/list', location: "body", scope: false },
+  list_access_bindings: { method: 'POST', path: '/v1/access/bindings/list', location: "body", scope: false },
+  create_access_binding: { method: 'POST', path: '/v1/access/bindings/create', location: "body", scope: false },
+  revoke_access_binding: { method: 'POST', path: '/v1/access/bindings/revoke', location: "body", scope: false },
+  list_access_audit: { method: 'POST', path: '/v1/access/audit/list', location: "body", scope: false },
 } as const
 
 export type OperationId = keyof typeof OPERATIONS

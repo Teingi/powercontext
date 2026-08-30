@@ -21,6 +21,228 @@ from pydantic import (
 )
 
 
+class AccessPrincipal(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    type: Annotated[StrictStr, Field(max_length=64, min_length=1)]
+    issuer: Annotated[StrictStr, Field(max_length=255, min_length=1)]
+    id: Annotated[StrictStr, Field(max_length=255, min_length=1)]
+
+
+class AccessAction(StrEnum):
+    ACCESS_SELF = "access.self"
+    SERVER_OBSERVE = "server.observe"
+    SERVER_ADMIN = "server.admin"
+    SCOPE_READ = "scope.read"
+    SCOPE_CONTRIBUTE = "scope.contribute"
+    SCOPE_REVIEW = "scope.review"
+    SCOPE_DELEGATE = "scope.delegate"
+    SCOPE_ADMIN = "scope.admin"
+    HANDOFF_READ = "handoff.read"
+    HANDOFF_EVIDENCE_READ = "handoff.evidence.read"
+    HANDOFF_ACKNOWLEDGE = "handoff.acknowledge"
+
+
+class AccessResourceType(StrEnum):
+    SERVER = "server"
+    SCOPE = "scope"
+    HANDOFF = "handoff"
+
+
+class AccessResource(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    type: AccessResourceType
+    scope_id: Annotated[StrictStr | None, Field(max_length=256, min_length=1)] = None
+    family: Annotated[StrictStr | None, Field(max_length=64, min_length=1)] = None
+    artifact_id: Annotated[StrictStr | None, Field(max_length=256, min_length=1)] = None
+    revision: Annotated[StrictInt | None, Field(ge=1)] = None
+
+
+class AccessDecision(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    allowed: StrictBool
+    reason_code: Annotated[StrictStr, Field(max_length=64, min_length=1)]
+    policy_revision: Annotated[StrictStr | None, Field(max_length=64, min_length=1)]
+
+
+class AccessCheckRequest(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    action: AccessAction
+    resource: AccessResource
+
+
+class AccessCheckBatchRequest(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    checks: Annotated[list[AccessCheckRequest], Field(max_length=100, min_length=1)]
+
+
+class AccessCheckBatchResponse(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    decisions: Annotated[list[AccessDecision], Field(max_length=100)]
+
+
+class ListAccessResourcesRequest(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    action: AccessAction
+    resource_type: AccessResourceType
+    cursor: StrictStr | None = None
+    limit: Annotated[StrictInt, Field(ge=1, le=500)] = 100
+
+
+class AccessResourcePage(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    items: Annotated[list[AccessResource], Field(max_length=500)]
+    next_cursor: Annotated[StrictStr | None, Field(...)]
+
+
+class AccessRole(StrEnum):
+    HANDOFF_VIEWER = "handoff.viewer"
+    HANDOFF_RECEIVER = "handoff.receiver"
+    SCOPE_VIEWER = "scope.viewer"
+    SCOPE_CONTRIBUTOR = "scope.contributor"
+    SCOPE_REVIEWER = "scope.reviewer"
+    SCOPE_DELEGATOR = "scope.delegator"
+    SCOPE_ADMIN = "scope.admin"
+    SERVER_OBSERVER = "server.observer"
+    SERVER_ADMIN = "server.admin"
+
+
+class ListAccessRolesRequest(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    resource_type: AccessResourceType | None = None
+
+
+class AccessRoleDescriptor(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    role: AccessRole
+    resource_type: AccessResourceType
+    actions: list[AccessAction]
+
+
+class AccessRolePage(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    items: Annotated[list[AccessRoleDescriptor], Field(max_length=16)]
+
+
+class AccessBindingState(StrEnum):
+    ACTIVE = "active"
+    REVOKED = "revoked"
+
+
+class AccessBinding(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    binding_id: Annotated[StrictStr, Field(max_length=64, min_length=1)]
+    subject: AccessPrincipal
+    resource: AccessResource
+    role: AccessRole
+    granted_by: AccessPrincipal
+    reason: Annotated[StrictStr | None, Field(max_length=1024)]
+    created_at: AwareDatetime
+    expires_at: Annotated[AwareDatetime | None, Field(...)]
+    state: AccessBindingState
+    version: Annotated[StrictInt, Field(ge=1)]
+    policy_revision: Annotated[StrictStr, Field(max_length=64, min_length=1)]
+    idempotency_key: Annotated[StrictStr, Field(max_length=255, min_length=1)]
+    revoked_at: Annotated[AwareDatetime | None, Field(...)]
+    revoked_by: Annotated[AccessPrincipal | None, Field(...)]
+
+
+class ListAccessBindingsRequest(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    subject: AccessPrincipal | None = None
+    resource: AccessResource | None = None
+    include_revoked: StrictBool = False
+
+
+class AccessBindingPage(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    items: Annotated[list[AccessBinding], Field(max_length=500)]
+
+
+class CreateAccessBindingRequest(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    subject: AccessPrincipal
+    resource: AccessResource
+    role: AccessRole
+    idempotency_key: Annotated[StrictStr, Field(max_length=255, min_length=1)]
+    reason: Annotated[StrictStr | None, Field(max_length=1024)] = None
+    expires_at: AwareDatetime | None = None
+
+
+class RevokeAccessBindingRequest(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    binding_id: Annotated[StrictStr, Field(max_length=64, min_length=1)]
+    expected_version: Annotated[StrictInt, Field(ge=1)]
+
+
+class ListAccessAuditRequest(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    after: Annotated[StrictInt | None, Field(ge=0)] = None
+    limit: Annotated[StrictInt, Field(ge=1, le=500)] = 100
+
+
+class AccessAuditEvent(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    cursor: Annotated[StrictInt, Field(ge=1)]
+    event_id: Annotated[StrictStr, Field(max_length=64, min_length=1)]
+    occurred_at: AwareDatetime
+    request_id: Annotated[StrictStr | None, Field(max_length=128)]
+    transport: Annotated[StrictStr, Field(max_length=16, min_length=1)]
+    operation: Annotated[StrictStr, Field(max_length=128, min_length=1)]
+    principal: AccessPrincipal
+    action: AccessAction
+    resource: AccessResource
+    allowed: StrictBool
+    reason_code: Annotated[StrictStr, Field(max_length=64, min_length=1)]
+    policy_revision: Annotated[StrictStr | None, Field(max_length=64)]
+    binding_id: Annotated[StrictStr | None, Field(max_length=64)]
+    target: Annotated[AccessPrincipal | None, Field(...)]
+    role: Annotated[AccessRole | None, Field(...)]
+
+
+class AccessAuditPage(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    items: Annotated[list[AccessAuditEvent], Field(max_length=500)]
+    next_cursor: Annotated[StrictInt | None, Field(ge=1)]
+
+
 class ArtifactReference(BaseModel):
     model_config = ConfigDict(
         extra="forbid",

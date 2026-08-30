@@ -19,7 +19,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 from pprint import pformat
-from typing import Literal
+from typing import Literal, TypedDict
 
 import yaml
 from datamodel_code_generator import GenerateConfig, InputFileType, generate
@@ -56,6 +56,13 @@ class ContractGenerationError(RuntimeError):
         self.subject = subject
         self.value = value
         super().__init__(f"cannot generate PowerContext API: invalid {subject}: {value!r}")
+
+
+class _AccessRequirement(TypedDict):
+    action: str
+    resource: Literal["server", "scope", "handoff"]
+    scope_id_field: str | None
+    resolver: Literal["static", "request", "continue_handoff", "acknowledge_handoff"]
 
 
 def generate_sources() -> dict[Path, str]:
@@ -145,6 +152,7 @@ def _generate_operations(
             if operation.operationId is None or operation.summary is None:
                 raise ContractGenerationError("operation metadata", path)  # noqa: TRY003
             operation_id = operation.operationId
+            access = _access_requirement(operation, operation_id)
             request_model = _request_model(operation, schemas)
             if request_model is not None:
                 imports.add(request_model[:2])
@@ -168,6 +176,7 @@ def _generate_operations(
                         int(code) if code.isdecimal() else code: _response_metadata(response)
                         for code, response in operation.responses.items()
                     },
+                    access=access,
                 )
             )
 
@@ -203,6 +212,14 @@ class Operation(BaseModel, Generic[RequestT, ResponseT]):
     summary: str
     tags: tuple[str, ...]
     responses: dict[int | str, dict[str, JsonValue]]
+    access: AccessRequirement | None
+
+
+class AccessRequirement(BaseModel):
+    action: str
+    resource: Literal["server", "scope", "handoff"]
+    scope_id_field: str | None
+    resolver: Literal["static", "request", "continue_handoff", "acknowledge_handoff"]
 
 
 {rendered_operations}
@@ -353,6 +370,34 @@ def _response_metadata(response: Response | object) -> dict[str, JsonValue]:
     )
 
 
+def _access_requirement(operation: OpenAPIOperation, operation_id: str) -> _AccessRequirement | None:
+    value = (operation.model_extra or {}).get("x-powercontext-access")
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        raise ContractGenerationError(f"{operation_id} x-powercontext-access", value)  # noqa: TRY003
+    action = value.get("action")
+    resource = value.get("resource")
+    scope_id_field = value.get("scope_id_field")
+    resolver = value.get("resolver", "static" if resource == "server" else "request")
+    if not isinstance(action, str) or not action:
+        raise ContractGenerationError(f"{operation_id} access action", action)  # noqa: TRY003
+    if resource not in {"server", "scope", "handoff"}:
+        raise ContractGenerationError(f"{operation_id} access resource", resource)  # noqa: TRY003
+    if scope_id_field is not None and not isinstance(scope_id_field, str):
+        raise ContractGenerationError(f"{operation_id} access scope_id_field", scope_id_field)  # noqa: TRY003
+    if resolver not in {"static", "request", "continue_handoff", "acknowledge_handoff"}:
+        raise ContractGenerationError(f"{operation_id} access resolver", resolver)  # noqa: TRY003
+    if resource != "server" and resolver == "request" and not scope_id_field:
+        raise ContractGenerationError(f"{operation_id} access scope_id_field", scope_id_field)  # noqa: TRY003
+    return {
+        "action": action,
+        "resource": resource,
+        "scope_id_field": scope_id_field,
+        "resolver": resolver,
+    }
+
+
 def _render_operation(
     *,
     constant_name: str,
@@ -366,8 +411,18 @@ def _render_operation(
     summary: str,
     tags: tuple[str, ...],
     responses: dict[int | str, dict[str, JsonValue]],
+    access: _AccessRequirement | None,
 ) -> str:
     request_type = "None" if request_model is None else request_model
+    rendered_access = (
+        "None"
+        if access is None
+        else "AccessRequirement("
+        f"action={access['action']!r}, "
+        f"resource={access['resource']!r}, "
+        f"scope_id_field={access['scope_id_field']!r}, "
+        f"resolver={access['resolver']!r})"
+    )
     return f"""{constant_name} = Operation[{request_type}, {response_model}](
     method={method!r},
     path={path!r},
@@ -379,6 +434,7 @@ def _render_operation(
     summary={summary!r},
     tags={tags!r},
     responses={pformat(responses, width=100, sort_dicts=False)},
+    access={rendered_access},
 )"""
 
 

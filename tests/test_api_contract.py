@@ -124,7 +124,7 @@ def test_contract_declares_optional_bearer_authentication() -> None:
     assert contract["components"]["securitySchemes"]["BearerAuth"] == {
         "type": "http",
         "scheme": "bearer",
-        "description": "Static bearer token used when local Server authentication is enabled.",
+        "description": "Bearer credential resolved to an opaque authenticated Principal by the Server deployment.",
     }
     for path, path_item in contract["paths"].items():
         operation = next(iter(path_item.values()))
@@ -132,6 +132,8 @@ def test_contract_declares_optional_bearer_authentication() -> None:
             assert operation["security"] == []
         else:
             assert operation["responses"]["401"] == {"$ref": "#/components/responses/Unauthorized"}
+            assert operation["responses"]["403"] == {"$ref": "#/components/responses/Forbidden"}
+            assert "x-powercontext-access" in operation
 
 
 def test_capabilities_report_semantics_without_runtime_tuning_values() -> None:
@@ -210,6 +212,15 @@ def test_memory_operations_use_family_prefixed_paths_and_typed_requests() -> Non
 
 def test_memory_search_declares_the_revision_conflict_response() -> None:
     assert SEARCH_MEMORY.responses[409] == {"$ref": "#/components/responses/Conflict"}
+
+
+def test_handoff_access_metadata_preserves_exact_revision_authorization() -> None:
+    assert CONTINUE_HANDOFF.access is not None
+    assert CONTINUE_HANDOFF.access.action == "scope.read"
+    assert CONTINUE_HANDOFF.access.resolver == "continue_handoff"
+    assert ACKNOWLEDGE_HANDOFF.access is not None
+    assert ACKNOWLEDGE_HANDOFF.access.action == "scope.contribute"
+    assert ACKNOWLEDGE_HANDOFF.access.resolver == "acknowledge_handoff"
 
 
 def test_prepared_context_is_a_generic_typed_operation_outside_the_mcp_memory_tools() -> None:
