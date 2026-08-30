@@ -1,7 +1,8 @@
 - Proposal Name: `handoff_access_control`
+- RFC Number: 1396
 - Start Date: 2026-08-30
 - Status: Draft
-- RFC PR: [oceanbase/powercontext#0000](https://github.com/oceanbase/powercontext/pull/0000)
+- RFC PR: [oceanbase/powercontext#1396](https://github.com/oceanbase/powercontext/pull/1396)
 - Tracking Issue: [oceanbase/powercontext#1395](https://github.com/oceanbase/powercontext/issues/1395)
 - Related RFCs: [RFC 0011](0011_remote_access_architecture.md)、[RFC 0048](0048_handoff_artifact.md)、
   [RFC 0082](0082_handoff_report.md)、[RFC 1223](1223_human_agent_work_continuity.md)
