@@ -49,6 +49,7 @@ nav = [
                 { "Configuration" = "en/docs/reference/configuration.md" },
             ] },
         ] },
+        { "Benchmarks" = "en/benchmarks/index.md" },
         { "Development" = [
             { "Core Protocol" = "en/development/core-protocol.md" },
             { "Memory Layer" = "en/development/memory-layer.md" },
@@ -131,6 +132,7 @@ nav = [
                 { "配置" = "zh/docs/reference/configuration.md" },
             ] },
         ] },
+        { "Benchmark" = "zh/benchmarks/index.md" },
         { "开发" = [
             { "Core Protocol" = "zh/development/core-protocol.md" },
             { "Memory Layer" = "zh/development/memory-layer.md" },
