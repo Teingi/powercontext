@@ -23,6 +23,9 @@ PowerContext 是 [PowerMem](https://www.powermem.ai/) 的升级版本，也是�
 
 你需要 macOS 或 Linux、Python 3.11 或更高版本、[`uv`](https://docs.astral.sh/uv/)，以及至少一个支持的 Agent Host。
 
+如果是第一次使用 PowerContext，建议直接跟着 [Codex 分步教程](docs/zh/docs/tutorials/codex-quickstart.md)操作。
+教程包含前置条件、每一步的预期结果、跨会话 Memory、Handoff、持久化验证和失败排查。下面保留的是更短的安装路径。
+
 ### 1. 安装 PowerContext 和集成
 
 ```bash
@@ -64,6 +67,18 @@ powercontext doctor codex  # 请把 codex 换成已安装的宿主。
 
 默认情况下，Server 监听 `127.0.0.1:8000`，在 `/mcp` 提供 Streamable HTTP MCP，并将数据持久化到本地
 SQLite 数据库。显式 Memory 操作无需配置 inference provider 即可使用。
+
+### 3. 跑通 Memory 与 Handoff 闭环
+
+从一个项目目录开启新会话，并按照 [Codex 分步教程](docs/zh/docs/tutorials/codex-quickstart.md)中的提示词操作。
+教程会带你完成：
+
+1. 保存显式项目 Memory，并在另一个 Codex 会话中恢复；
+2. 修订和停用条目，同时保留历史；
+3. 把经过检查的当前工作提交为 Handoff；
+4. 在新会话中接收并核对该 exact Handoff Revision。
+
+第一个闭环不需要 generation model。需要从 Source 自动抽取 Memory 或使用向量搜索时，再继续配置推理服务。
 
 ## 核心能力
 

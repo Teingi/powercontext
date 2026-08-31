@@ -1,7 +1,7 @@
 ---
 template: home.html
 title: PowerContext
-description: Keep project decisions, constraints, and next steps available across Codex and Claude Code sessions.
+description: Start locally and complete a Codex project Memory, cross-session recovery, and Handoff loop step by step.
 hide:
   - navigation
   - toc
@@ -12,26 +12,26 @@ home:
     title:
       - Start a new session.
       - Keep moving.
-    lead: PowerContext keeps project decisions, constraints, and next steps outside the chat. When Codex or Claude Code opens the project again, the relevant context is ready.
-    note: Codex, Claude Code, Python, HTTP, and MCP share the same project Memory.
+    lead: PowerContext keeps project decisions, constraints, next steps, and work boundaries outside the chat. Follow the tutorial to complete one inspectable cross-session loop in Codex.
+    note: No inference model required; local SQLite is enough for explicit Memory and Handoff.
     actions:
-      - label: Start with Codex
+      - label: Follow the Codex tutorial
         href: en/docs/tutorials/codex-quickstart/
         kind: primary
       - label: How context carries over
         href: en/docs/explanation/memory-and-handoff/
         kind: secondary
   continuity:
-    label: One project, two sessions
-    title: Do not start from scratch.
-    lead: Record a decision once. The next session can recover it with its source and exact revision.
+    label: One project, multiple sessions
+    title: Record. Hand off. Continue.
+    lead: Save durable knowledge, commit an inspected work boundary, and let a new session verify the exact Revision.
     steps:
-      - title: Save
-        description: In Codex, record that a Handoff stays temporary until the user asks to commit it.
-      - title: Continue
-        description: Open the same project in Claude Code without replaying the earlier chat.
-      - title: Check
-        description: Recover the rule together with its source and exact revision.
+      - title: Save Memory
+        description: Explicitly record project decisions, constraints, and next steps with a citation for each entry.
+      - title: Commit a Handoff
+        description: Have Codex inspect the objective, worktree, checks, and omissions to create a traceable milestone.
+      - title: Receive in a new session
+        description: Read the exact Revision, then verify it against the current repository, capabilities, and authorization.
   ownership:
     label: Memory and Handoff
     title:
@@ -42,7 +42,7 @@ home:
     result: "LOCOMO: 90.78% correct · 1.38 s p95 search latency"
     command: powercontext server run
     primary_action:
-      label: Read the quickstart
+      label: Start the step-by-step tutorial
       href: en/docs/tutorials/codex-quickstart/
     secondary_action:
       label: Explore documentation

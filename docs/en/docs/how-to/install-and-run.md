@@ -5,6 +5,10 @@ description: Install PowerContext from Git and run the local Server.
 
 # Install and run
 
+If you are new to PowerContext and want to complete a Memory and Handoff loop in Codex from zero, follow the
+[Codex step-by-step tutorial](../tutorials/codex-quickstart.md). This guide focuses on installation roles, Server
+startup, seekDB, diagnostics, and updates for readers who already know which operation they need.
+
 ## Install the application
 
 You need Python 3.11 or newer, Git, and [`uv`](https://docs.astral.sh/uv/) on macOS or Linux. Then install

@@ -1,17 +1,20 @@
 ---
 template: docs-overview.html
-title: Start with one project
-description: Install PowerContext, verify context across sessions, and choose the next task.
+title: Complete your first Codex loop
+description: Install PowerContext step by step, verify cross-session Memory, and commit and receive a Handoff.
 page_type: docs-overview
 overview:
-  intro: Complete one cross-session loop first. Use the documentation navigation for setup, reference, and development details.
+  intro: If you are new to PowerContext, start with the Codex step-by-step tutorial. It provides commands, expected results, and failure checks from environment setup through a local Memory and Handoff loop.
   sections:
-    - title: Continue the project
-      description: Save one decision, recover it in another session, or hand off current work.
+    - title: Recommended learning path
+      description: Complete the local loop first, then connect another agent host or adopt the complete work workflow.
       cards:
-        - title: Codex quickstart
-          description: Install the local Server, save one project decision, and recover it in a new session.
+        - title: Codex step-by-step tutorial
+          description: Install from zero, save and revise Memory, commit a Handoff, and receive its exact Revision in a new session.
           href: en/docs/tutorials/codex-quickstart/
+        - title: Hand off current work
+          description: Use Work Contract, Handoff, Acknowledgement, and Task Outcome for the complete task loop.
+          href: en/docs/how-to/handoff-with-codex/
         - title: Continue in Claude Code
           description: Open the same project Memory from Claude Code and Codex.
           href: en/docs/how-to/configure-claude-code/
@@ -27,9 +30,6 @@ overview:
         - title: Load an Agent Plugin
           description: Use reusable PowerContext skills and MCP configuration in compatible agents.
           href: en/docs/how-to/configure-agent-plugin/
-        - title: Hand off current work
-          description: Prepare a checked Handoff for another task, session, or model.
-          href: en/docs/how-to/handoff-with-codex/
     - title: Understand and operate
       description: Decide what persists, configure the Server, or resolve a broken setup.
       cards:

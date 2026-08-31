@@ -1,7 +1,7 @@
 ---
 template: home.html
 title: PowerContext
-description: 让项目决定、约束和下一步在 Codex 与 Claude Code 会话之间继续可用。
+description: 从本地安装开始，逐步跑通 Codex 的项目 Memory、跨会话恢复与 Handoff。
 hide:
   - navigation
   - toc
@@ -12,26 +12,26 @@ home:
     title:
       - 换一个会话，
       - 项目继续向前。
-    lead: PowerContext 把项目里的决定、约束和下一步保存在对话之外。再次打开 Codex 或 Claude Code 时，相关上下文已经准备好。
-    note: Codex、Claude Code、Python、HTTP 和 MCP 连接同一份项目 Memory。
+    lead: PowerContext 把项目决定、约束、下一步和任务边界保存在对话之外。跟着分步教程，先在 Codex 中完成一次可检查的跨会话闭环。
+    note: 无需推理模型；本地 SQLite 即可跑通显式 Memory 和 Handoff。
     actions:
-      - label: 从 Codex 开始
+      - label: 跟着 Codex 教程操作
         href: zh/docs/tutorials/codex-quickstart/
         kind: primary
       - label: 了解上下文如何延续
         href: zh/docs/explanation/memory-and-handoff/
         kind: secondary
   continuity:
-    label: 同一项目，两次会话
-    title: 项目背景，不必重讲。
-    lead: 决定只需记录一次。后续会话可以恢复它，并核对来源和精确 Revision。
+    label: 同一项目，多个会话
+    title: 从记录，到交接，再继续。
+    lead: 保存长期知识，提交经过检查的工作边界，再让新会话按精确 Revision 核对并继续。
     steps:
-      - title: 记录
-        description: 在 Codex 中留下规则：Handoff 默认保持临时，用户明确要求后才提交。
-      - title: 继续
-        description: 在 Claude Code 中打开同一项目，不必重新解释之前的对话。
-      - title: 核对
-        description: 恢复这条规则，同时查看它的来源和精确 Revision。
+      - title: 保存 Memory
+        description: 明确记录项目决定、约束和下一步，并保留每条内容的 citation。
+      - title: 提交 Handoff
+        description: 让 Codex 检查目标、工作区、验证结果和遗漏，形成可追踪的任务里程碑。
+      - title: 在新会话接收
+        description: 按 exact Revision 读取 Handoff，再用当前仓库、能力和授权重新核对。
   ownership:
     label: Memory 与 Handoff
     title:
@@ -42,7 +42,7 @@ home:
     result: "LOCOMO：答对率 90.78% · 搜索 p95 延迟 1.38 秒"
     command: powercontext server run
     primary_action:
-      label: 阅读快速入门
+      label: 开始分步教程
       href: zh/docs/tutorials/codex-quickstart/
     secondary_action:
       label: 浏览文档

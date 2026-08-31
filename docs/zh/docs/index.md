@@ -1,17 +1,20 @@
 ---
 template: docs-overview.html
-title: 从一个项目开始
-description: 安装 PowerContext，验证跨会话上下文，再选择下一个任务。
+title: 从 Codex 跑通第一个闭环
+description: 分步安装 PowerContext，验证跨会话 Memory，并提交和接收一份 Handoff。
 page_type: docs-overview
 overview:
-  intro: 先完成一次跨会话闭环。安装、参考和开发细节仍可通过文档导航访问。
+  intro: 第一次使用时，建议先完成 Codex 分步教程。它从环境检查开始，给出每一步的命令、预期结果和失败排查，并在本地跑通 Memory 与 Handoff。
   sections:
-    - title: 让项目继续
-      description: 保存一个决定，在另一个会话中恢复它，或交接当前工作。
+    - title: 推荐学习路径
+      description: 先跑通本地闭环，再按需要接入其他 Agent Host 或更完整的工作流程。
       cards:
-        - title: Codex 快速入门
-          description: 安装本地 Server，保存一个项目决定，并在新会话中恢复它。
+        - title: Codex 分步教程
+          description: 从零安装，保存和修订 Memory，提交 Handoff，再由新会话按 exact Revision 接收。
           href: zh/docs/tutorials/codex-quickstart/
+        - title: 交接当前工作
+          description: 使用 Work Contract、Handoff、Acknowledgement 和 Task Outcome 完成完整任务闭环。
+          href: zh/docs/how-to/handoff-with-codex/
         - title: 在 Claude Code 中继续
           description: 让 Claude Code 和 Codex 打开同一份项目 Memory。
           href: zh/docs/how-to/configure-claude-code/
@@ -27,9 +30,6 @@ overview:
         - title: 加载 Agent Plugin
           description: 在兼容 Agent 中使用可复用的 PowerContext skills 和 MCP 配置。
           href: zh/docs/how-to/configure-agent-plugin/
-        - title: 交接当前工作
-          description: 为另一个任务、会话或模型准备一份经过检查的 Handoff。
-          href: zh/docs/how-to/handoff-with-codex/
     - title: 理解与运行
       description: 判断什么需要保留，配置 Server，或排查无法工作的环境。
       cards:

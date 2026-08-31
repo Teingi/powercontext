@@ -25,6 +25,10 @@ collaboration. It turns shared work into project context that can be understood,
 You need macOS or Linux, Python 3.11 or newer, [`uv`](https://docs.astral.sh/uv/), and at least one supported agent
 host.
 
+New to PowerContext? Follow the [Codex step-by-step tutorial](docs/en/docs/tutorials/codex-quickstart.md) for a
+complete first run with prerequisites, expected results, cross-session Memory, Handoff, persistence, and failure
+checks. The commands below are the shorter installation path.
+
 ### 1. Install PowerContext and integrations
 
 ```bash
@@ -67,6 +71,19 @@ powercontext doctor codex  # Replace codex with the host you installed.
 
 By default, the Server listens on `127.0.0.1:8000`, exposes Streamable HTTP MCP at `/mcp`, and persists data in a
 local SQLite database. Explicit Memory operations work without configuring an inference provider.
+
+### 3. Complete the Memory and Handoff loop
+
+Start a new session from one project directory and follow the prompts in the
+[Codex step-by-step tutorial](docs/en/docs/tutorials/codex-quickstart.md). It shows how to:
+
+1. save explicit project Memory and recover it in another Codex session;
+2. revise and retire entries without losing their history;
+3. commit the inspected current work as a Handoff;
+4. receive and verify that exact Handoff Revision in a new session.
+
+No generation model is required for this first loop. Configure inference only when you continue to model-backed
+extraction and vector search.
 
 ## Core capabilities
 
