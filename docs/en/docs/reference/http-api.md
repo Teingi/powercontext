@@ -8,6 +8,10 @@ description: Call the PowerContext Server over HTTP and find the complete OpenAP
 The HTTP API is the language-neutral interface to a running PowerContext Server. The default base URL is
 `http://127.0.0.1:8000`.
 
+If you are adding Memory to your own AI application rather than looking up one field, start with the
+[AI application API quickstart](../tutorials/api-memory-quickstart.md). This page remains the path, contract, and
+error-semantics reference.
+
 ## Discover the contract
 
 With a local unauthenticated Server running, open:

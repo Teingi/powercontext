@@ -9,6 +9,9 @@ This tutorial is for agent users who are new to PowerContext. You can use Codex,
 OpenClaw, OpenCode, Pi, Hermes, or WorkBuddy. You can also load the portable Agent Plugin in a host that supports
 Skills and MCP.
 
+If you already have your own AI application and do not use one of these Agent Hosts, follow the
+[AI application API quickstart](api-memory-quickstart.md) to connect Memory and `PreparedContext` directly over HTTP.
+
 By the end, you will complete this common loop:
 
 ```text

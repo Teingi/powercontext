@@ -8,6 +8,9 @@ description: 选择一个受支持的 Agent，安装 PowerContext，并跑通跨
 本教程面向第一次使用 PowerContext 的 Agent 用户。你可以使用 Codex、Claude Code、DeepSeek Harness、
 OpenClaw、OpenCode、Pi、Hermes 或 WorkBuddy，也可以把通用 Agent Plugin 加载到支持 Skill 与 MCP 的 Host。
 
+如果你已经有自己的 AI 应用，并不使用这些 Agent Host，请改用
+[AI 应用 API 分步入门](api-memory-quickstart.md)，直接通过 HTTP 接入 Memory 与 `PreparedContext`。
+
 完成后，你会跑通下面的公共闭环：
 
 ```text

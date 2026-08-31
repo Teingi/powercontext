@@ -1,14 +1,17 @@
 ---
 template: docs-overview.html
-title: Choose your agent and complete the first loop
-description: Install PowerContext, configure the selected agent, and verify Memory and its supported Handoff path.
+title: Choose an Agent or API and complete the first loop
+description: Add the HTTP Memory API to an existing AI application, or configure an Agent and verify Memory and Handoff.
 page_type: docs-overview
 overview:
-  intro: If you are new to PowerContext, start with the Agent step-by-step quickstart. It begins with host selection and separates eight dedicated agents, the portable Agent Plugin, and Python application paths by their actual capabilities.
+  intro: If you are new to PowerContext, choose the entry that matches your application. Use HTTP directly from an existing AI application, or start with the Agent quickstart for Codex, Claude Code, OpenCode, and other hosts.
   sections:
     - title: Recommended learning path
-      description: Complete the local loop first, then connect another agent host or adopt the complete work workflow.
+      description: Complete a local API or Agent loop first, then connect another host or adopt the complete work workflow.
       cards:
+        - title: AI application API quickstart
+          description: Use HTTP without an Agent Host to save Memory, prepare context, call a model, and manage revisions.
+          href: en/docs/tutorials/api-memory-quickstart/
         - title: Agent step-by-step quickstart
           description: Choose a host, install and diagnose it, complete Memory, then use its one-line, pc_*, or /pc Handoff path.
           href: en/docs/tutorials/agent-quickstart/
@@ -64,7 +67,7 @@ overview:
           description: Run a persistent Server with health checks, authentication, and a safe network boundary.
           href: en/docs/how-to/deploy-server/
         - title: HTTP API
-          description: Call the Server from any language and find the complete OpenAPI contract.
+          description: Look up every Server path, error semantic, and the complete OpenAPI contract.
           href: en/docs/reference/http-api/
         - title: Review Candidates
           description: Inspect, revise, approve, or reject pending Experience and Skill proposals.

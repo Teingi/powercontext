@@ -1,7 +1,7 @@
 ---
 template: home.html
 title: PowerContext
-description: Choose a supported agent and complete project Memory, cross-session recovery, and Handoff step by step.
+description: Add Memory to your own AI over HTTP, or choose a supported agent for cross-session recovery and Handoff.
 hide:
   - navigation
   - toc
@@ -12,14 +12,14 @@ home:
     title:
       - Start a new session.
       - Keep moving.
-    lead: PowerContext keeps project decisions, constraints, next steps, and work boundaries outside the chat. Choose Codex, Claude Code, DSH, OpenCode, or another supported agent and complete one inspectable cross-session loop.
-    note: Multiple agents connect to one Server; Memory, automatic recall, and Handoff follow each host's actual capabilities.
+    lead: PowerContext keeps decisions, constraints, next steps, and work boundaries outside the chat. Existing AI applications can call HTTP directly; Codex, Claude Code, DSH, OpenCode, and other agents can connect to the same Server.
+    note: You control the model, identity, and write authorization; PowerContext provides cited Memory, request-time context, and history-preserving revisions.
     actions:
       - label: Choose your agent
         href: en/docs/tutorials/agent-quickstart/
         kind: primary
-      - label: How work crosses agents
-        href: en/docs/explanation/memory-and-handoff/
+      - label: Add the API to your AI
+        href: en/docs/tutorials/api-memory-quickstart/
         kind: secondary
   continuity:
     label: One project, multiple sessions
@@ -45,6 +45,6 @@ home:
       label: Open the Agent quickstart
       href: en/docs/tutorials/agent-quickstart/
     secondary_action:
-      label: Explore documentation
-      href: en/docs/
+      label: Open the API quickstart
+      href: en/docs/tutorials/api-memory-quickstart/
 ---

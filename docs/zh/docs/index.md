@@ -1,14 +1,17 @@
 ---
 template: docs-overview.html
-title: 选择你的 Agent，跑通第一个闭环
-description: 分步安装 PowerContext，为选定 Agent 配置集成，并验证 Memory 与对应的 Handoff 路径。
+title: 选择 Agent 或 API，跑通第一个闭环
+description: 为现有 AI 应用接入 HTTP Memory API，或为选定 Agent 配置集成并验证 Memory 与 Handoff。
 page_type: docs-overview
 overview:
-  intro: 第一次使用时，建议先完成 Agent 分步入门。它从 Host 选择和环境检查开始，按真实能力区分八个专属 Agent、通用 Agent Plugin 和 Python 应用路线。
+  intro: 第一次使用时，先选择自己的入口。已有 AI 应用可以直接使用 HTTP API；使用 Codex、Claude Code、OpenCode 等 Host 时，从 Agent 分步入门开始。
   sections:
     - title: 推荐学习路径
-      description: 先跑通本地闭环，再按需要接入其他 Agent Host 或更完整的工作流程。
+      description: 先通过 API 或 Agent 跑通本地闭环，再按需要接入其他 Host 或更完整的工作流程。
       cards:
+        - title: AI 应用 API 分步入门
+          description: 不安装 Agent Host，通过 HTTP 保存 Memory、准备上下文、接入模型，并管理修订与停用。
+          href: zh/docs/tutorials/api-memory-quickstart/
         - title: Agent 分步入门
           description: 选择 Host，安装并诊断集成，跑通 Memory，再按一句话、pc_* 或 /pc 路径完成 Handoff。
           href: zh/docs/tutorials/agent-quickstart/
@@ -64,7 +67,7 @@ overview:
           description: 使用持久化数据、健康检查、鉴权和安全网络边界运行 Server。
           href: zh/docs/how-to/deploy-server/
         - title: HTTP API
-          description: 从任意语言调用 Server，并查阅完整 OpenAPI 契约。
+          description: 查阅所有 Server 路径、错误语义和完整 OpenAPI 契约。
           href: zh/docs/reference/http-api/
         - title: 审核 Candidate
           description: 检查、修订、批准或拒绝待审核的 Experience 和 Skill 提案。

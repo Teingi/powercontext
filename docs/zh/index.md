@@ -1,7 +1,7 @@
 ---
 template: home.html
 title: PowerContext
-description: 选择一个受支持的 Agent，从本地安装开始，逐步跑通项目 Memory、跨会话恢复与 Handoff。
+description: 通过 HTTP 为自己的 AI 接入 Memory，或选择受支持的 Agent 跑通跨会话恢复与 Handoff。
 hide:
   - navigation
   - toc
@@ -12,14 +12,14 @@ home:
     title:
       - 换一个会话，
       - 项目继续向前。
-    lead: PowerContext 把项目决定、约束、下一步和任务边界保存在对话之外。选择 Codex、Claude Code、DSH、OpenCode 或其他受支持的 Agent，先完成一次可检查的跨会话闭环。
-    note: 多个 Agent 连接同一个 Server；Memory、自动恢复和 Handoff 按各 Host 的真实能力提供。
+    lead: PowerContext 把决定、约束、下一步和任务边界保存在对话之外。现有 AI 应用可以直接调用 HTTP API；Codex、Claude Code、DSH、OpenCode 等 Agent 也可以连接同一个 Server。
+    note: 你控制模型、身份和写入授权；PowerContext 提供带 citation 的 Memory、请求时上下文和保留历史的修订。
     actions:
       - label: 选择你的 Agent
         href: zh/docs/tutorials/agent-quickstart/
         kind: primary
-      - label: 了解跨 Agent 如何延续
-        href: zh/docs/explanation/memory-and-handoff/
+      - label: 为自己的 AI 接入 API
+        href: zh/docs/tutorials/api-memory-quickstart/
         kind: secondary
   continuity:
     label: 同一项目，多个会话
@@ -45,6 +45,6 @@ home:
       label: 打开 Agent 分步入门
       href: zh/docs/tutorials/agent-quickstart/
     secondary_action:
-      label: 浏览文档
-      href: zh/docs/
+      label: 打开 API 分步入门
+      href: zh/docs/tutorials/api-memory-quickstart/
 ---
