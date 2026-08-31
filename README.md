@@ -25,8 +25,8 @@ collaboration. It turns shared work into project context that can be understood,
 You need macOS or Linux, Python 3.11 or newer, and [`uv`](https://docs.astral.sh/uv/). Choose your entry:
 
 - already have an AI application and do not use an Agent Host: follow the
-  [AI application API quickstart](docs/en/docs/tutorials/api-memory-quickstart.md) to save, prepare, inject, and
-  maintain Memory over HTTP;
+  [complete HTTP API tutorial](docs/en/docs/tutorials/api-quickstart.md) to build the full Source, Memory,
+  PreparedContext, Handoff, Experience, Skill, and Review lifecycle over HTTP;
 - use Codex, Claude Code, DSH, OpenCode, or another Host: follow the
   [Agent step-by-step quickstart](docs/en/docs/tutorials/agent-quickstart.md) for its actual Memory, automatic-recall,
   and Handoff surface.
@@ -94,8 +94,8 @@ extraction and vector search. For the Codex-specific Hook and one-line flow, con
 
 Without an Agent Host, call `POST /v1/context/prepare` before each model request and supply the returned read-only,
 untrusted historical context to the model. Call `POST /v1/memory/remember` only after explicit user or business-policy
-authorization. The [AI application API quickstart](docs/en/docs/tutorials/api-memory-quickstart.md) includes complete
-curl, Python, tool-calling, revision, retirement, authentication, and production examples.
+authorization. The [complete HTTP API tutorial](docs/en/docs/tutorials/api-quickstart.md) includes curl, Python,
+tool-calling, evidence lineage, Handoff, Experience and Skill governance, authentication, and production examples.
 
 ## Core capabilities
 

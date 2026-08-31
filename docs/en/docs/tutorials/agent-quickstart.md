@@ -10,7 +10,7 @@ OpenClaw, OpenCode, Pi, Hermes, or WorkBuddy. You can also load the portable Age
 Skills and MCP.
 
 If you already have your own AI application and do not use one of these Agent Hosts, follow the
-[AI application API quickstart](api-memory-quickstart.md) to connect Memory and `PreparedContext` directly over HTTP.
+[complete HTTP API tutorial](api-quickstart.md) to integrate every public HTTP API domain directly.
 
 By the end, you will complete this common loop:
 

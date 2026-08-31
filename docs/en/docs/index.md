@@ -9,9 +9,9 @@ overview:
     - title: Recommended learning path
       description: Complete a local API or Agent loop first, then connect another host or adopt the complete work workflow.
       cards:
-        - title: AI application API quickstart
-          description: Use HTTP without an Agent Host to save Memory, prepare context, call a model, and manage revisions.
-          href: en/docs/tutorials/api-memory-quickstart/
+        - title: Complete HTTP API tutorial
+          description: Use HTTP without an Agent Host to build the complete context, work, Experience, Skill, and Review lifecycle.
+          href: en/docs/tutorials/api-quickstart/
         - title: Agent step-by-step quickstart
           description: Choose a host, install and diagnose it, complete Memory, then use its one-line, pc_*, or /pc Handoff path.
           href: en/docs/tutorials/agent-quickstart/

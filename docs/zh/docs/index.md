@@ -9,9 +9,9 @@ overview:
     - title: 推荐学习路径
       description: 先通过 API 或 Agent 跑通本地闭环，再按需要接入其他 Host 或更完整的工作流程。
       cards:
-        - title: AI 应用 API 分步入门
-          description: 不安装 Agent Host，通过 HTTP 保存 Memory、准备上下文、接入模型，并管理修订与停用。
-          href: zh/docs/tutorials/api-memory-quickstart/
+        - title: HTTP API 完整教程
+          description: 不安装 Agent Host，通过 HTTP 跑通上下文、工作流、Experience、Skill 与 Review 的完整生命周期。
+          href: zh/docs/tutorials/api-quickstart/
         - title: Agent 分步入门
           description: 选择 Host，安装并诊断集成，跑通 Memory，再按一句话、pc_* 或 /pc 路径完成 Handoff。
           href: zh/docs/tutorials/agent-quickstart/

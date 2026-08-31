@@ -19,7 +19,7 @@ home:
         href: zh/docs/tutorials/agent-quickstart/
         kind: primary
       - label: 为自己的 AI 接入 API
-        href: zh/docs/tutorials/api-memory-quickstart/
+        href: zh/docs/tutorials/api-quickstart/
         kind: secondary
   continuity:
     label: 同一项目，多个会话
@@ -45,6 +45,6 @@ home:
       label: 打开 Agent 分步入门
       href: zh/docs/tutorials/agent-quickstart/
     secondary_action:
-      label: 打开 API 分步入门
-      href: zh/docs/tutorials/api-memory-quickstart/
+      label: 打开 HTTP API 完整教程
+      href: zh/docs/tutorials/api-quickstart/
 ---

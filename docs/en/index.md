@@ -19,7 +19,7 @@ home:
         href: en/docs/tutorials/agent-quickstart/
         kind: primary
       - label: Add the API to your AI
-        href: en/docs/tutorials/api-memory-quickstart/
+        href: en/docs/tutorials/api-quickstart/
         kind: secondary
   continuity:
     label: One project, multiple sessions
@@ -45,6 +45,6 @@ home:
       label: Open the Agent quickstart
       href: en/docs/tutorials/agent-quickstart/
     secondary_action:
-      label: Open the API quickstart
-      href: en/docs/tutorials/api-memory-quickstart/
+      label: Open the complete API tutorial
+      href: en/docs/tutorials/api-quickstart/
 ---
