@@ -5,8 +5,8 @@ description: 从 Git 安装 PowerContext，并运行本地 Server。
 
 # 安装和运行
 
-如果你是第一次使用 PowerContext，并希望在 Codex 中从零跑通 Memory 与 Handoff，请直接跟随
-[Codex 分步教程](../tutorials/codex-quickstart.md)。本指南集中说明安装角色、Server 启动方式、seekDB、诊断和更新，
+如果你是第一次使用 PowerContext，请先跟随 [Agent 分步入门](../tutorials/agent-quickstart.md)选择 Host，并从零
+跑通 Memory 与该 Host 支持的 Handoff 路径。本指南集中说明安装角色、Server 启动方式、seekDB、诊断和更新，
 便于已经明确目标的用户按需查找操作。
 
 ## 安装应用

@@ -1,16 +1,19 @@
 ---
 template: docs-overview.html
-title: Complete your first Codex loop
-description: Install PowerContext step by step, verify cross-session Memory, and commit and receive a Handoff.
+title: Choose your agent and complete the first loop
+description: Install PowerContext, configure the selected agent, and verify Memory and its supported Handoff path.
 page_type: docs-overview
 overview:
-  intro: If you are new to PowerContext, start with the Codex step-by-step tutorial. It provides commands, expected results, and failure checks from environment setup through a local Memory and Handoff loop.
+  intro: If you are new to PowerContext, start with the Agent step-by-step quickstart. It begins with host selection and separates eight dedicated agents, the portable Agent Plugin, and Python application paths by their actual capabilities.
   sections:
     - title: Recommended learning path
       description: Complete the local loop first, then connect another agent host or adopt the complete work workflow.
       cards:
-        - title: Codex step-by-step tutorial
-          description: Install from zero, save and revise Memory, commit a Handoff, and receive its exact Revision in a new session.
+        - title: Agent step-by-step quickstart
+          description: Choose a host, install and diagnose it, complete Memory, then use its one-line, pc_*, or /pc Handoff path.
+          href: en/docs/tutorials/agent-quickstart/
+        - title: Complete Codex tutorial
+          description: Go deeper into the Codex Hook, MCP Skill, Memory lifecycle, and one-line durable Handoff.
           href: en/docs/tutorials/codex-quickstart/
         - title: Hand off current work
           description: Use Work Contract, Handoff, Acknowledgement, and Task Outcome for the complete task loop.
@@ -18,6 +21,9 @@ overview:
         - title: Continue in Claude Code
           description: Open the same project Memory from Claude Code and Codex.
           href: en/docs/how-to/configure-claude-code/
+        - title: Use DeepSeek Harness
+          description: Prepare context before each model step and use pc_* Memory and Handoff tools.
+          href: en/docs/how-to/configure-dsh/
         - title: Continue in Pi
           description: Open project context in Pi with the native package.
           href: en/docs/how-to/configure-pi/
@@ -27,6 +33,12 @@ overview:
         - title: Continue in OpenCode
           description: Recall and maintain project context with the native OpenCode plugin.
           href: en/docs/how-to/configure-opencode/
+        - title: Continue in Hermes
+          description: Use the MemoryProvider, /pc companion, and Handoff lifecycle operations.
+          href: en/docs/how-to/configure-hermes/
+        - title: Continue in WorkBuddy
+          description: Use the Prompt Hook, MCP Memory, and one-line durable Handoff.
+          href: en/docs/how-to/configure-workbuddy/
         - title: Load an Agent Plugin
           description: Use reusable PowerContext skills and MCP configuration in compatible agents.
           href: en/docs/how-to/configure-agent-plugin/

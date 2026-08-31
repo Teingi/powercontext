@@ -1,16 +1,19 @@
 ---
 template: docs-overview.html
-title: 从 Codex 跑通第一个闭环
-description: 分步安装 PowerContext，验证跨会话 Memory，并提交和接收一份 Handoff。
+title: 选择你的 Agent，跑通第一个闭环
+description: 分步安装 PowerContext，为选定 Agent 配置集成，并验证 Memory 与对应的 Handoff 路径。
 page_type: docs-overview
 overview:
-  intro: 第一次使用时，建议先完成 Codex 分步教程。它从环境检查开始，给出每一步的命令、预期结果和失败排查，并在本地跑通 Memory 与 Handoff。
+  intro: 第一次使用时，建议先完成 Agent 分步入门。它从 Host 选择和环境检查开始，按真实能力区分八个专属 Agent、通用 Agent Plugin 和 Python 应用路线。
   sections:
     - title: 推荐学习路径
       description: 先跑通本地闭环，再按需要接入其他 Agent Host 或更完整的工作流程。
       cards:
-        - title: Codex 分步教程
-          description: 从零安装，保存和修订 Memory，提交 Handoff，再由新会话按 exact Revision 接收。
+        - title: Agent 分步入门
+          description: 选择 Host，安装并诊断集成，跑通 Memory，再按一句话、pc_* 或 /pc 路径完成 Handoff。
+          href: zh/docs/tutorials/agent-quickstart/
+        - title: Codex 完整教程
+          description: 深入 Codex Hook、MCP Skill、Memory 生命周期与一句话 durable Handoff。
           href: zh/docs/tutorials/codex-quickstart/
         - title: 交接当前工作
           description: 使用 Work Contract、Handoff、Acknowledgement 和 Task Outcome 完成完整任务闭环。
@@ -18,6 +21,9 @@ overview:
         - title: 在 Claude Code 中继续
           description: 让 Claude Code 和 Codex 打开同一份项目 Memory。
           href: zh/docs/how-to/configure-claude-code/
+        - title: 使用 DeepSeek Harness
+          description: 在每个 model step 准备上下文，并使用 pc_* Memory 与 Handoff tools。
+          href: zh/docs/how-to/configure-dsh/
         - title: 在 Pi 中继续
           description: 通过原生 package 在 Pi 中打开项目上下文。
           href: zh/docs/how-to/configure-pi/
@@ -27,6 +33,12 @@ overview:
         - title: 在 OpenCode 中继续
           description: 通过原生 OpenCode 插件召回并维护项目上下文。
           href: zh/docs/how-to/configure-opencode/
+        - title: 在 Hermes 中继续
+          description: 使用 MemoryProvider、/pc companion 和 Handoff 生命周期操作。
+          href: zh/docs/how-to/configure-hermes/
+        - title: 在 WorkBuddy 中继续
+          description: 使用 Prompt Hook、MCP Memory 和一句话 durable Handoff。
+          href: zh/docs/how-to/configure-workbuddy/
         - title: 加载 Agent Plugin
           description: 在兼容 Agent 中使用可复用的 PowerContext skills 和 MCP 配置。
           href: zh/docs/how-to/configure-agent-plugin/

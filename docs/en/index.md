@@ -1,7 +1,7 @@
 ---
 template: home.html
 title: PowerContext
-description: Start locally and complete a Codex project Memory, cross-session recovery, and Handoff loop step by step.
+description: Choose a supported agent and complete project Memory, cross-session recovery, and Handoff step by step.
 hide:
   - navigation
   - toc
@@ -12,26 +12,26 @@ home:
     title:
       - Start a new session.
       - Keep moving.
-    lead: PowerContext keeps project decisions, constraints, next steps, and work boundaries outside the chat. Follow the tutorial to complete one inspectable cross-session loop in Codex.
-    note: No inference model required; local SQLite is enough for explicit Memory and Handoff.
+    lead: PowerContext keeps project decisions, constraints, next steps, and work boundaries outside the chat. Choose Codex, Claude Code, DSH, OpenCode, or another supported agent and complete one inspectable cross-session loop.
+    note: Multiple agents connect to one Server; Memory, automatic recall, and Handoff follow each host's actual capabilities.
     actions:
-      - label: Follow the Codex tutorial
-        href: en/docs/tutorials/codex-quickstart/
+      - label: Choose your agent
+        href: en/docs/tutorials/agent-quickstart/
         kind: primary
-      - label: How context carries over
+      - label: How work crosses agents
         href: en/docs/explanation/memory-and-handoff/
         kind: secondary
   continuity:
     label: One project, multiple sessions
-    title: Record. Hand off. Continue.
-    lead: Save durable knowledge, commit an inspected work boundary, and let a new session verify the exact Revision.
+    title: One agent stops. Work continues.
+    lead: Different agents can implement, review, and validate compatibility. Handoff transfers an inspected boundary; a human decides whether to continue.
     steps:
-      - title: Save Memory
-        description: Explicitly record project decisions, constraints, and next steps with a citation for each entry.
-      - title: Commit a Handoff
-        description: Have Codex inspect the objective, worktree, checks, and omissions to create a traceable milestone.
-      - title: Receive in a new session
-        description: Read the exact Revision, then verify it against the current repository, capabilities, and authorization.
+      - title: Agent A implements
+        description: Record decisions, constraints, and next steps, then assemble the objective, changes, checks, and omissions as a Handoff.
+      - title: Agent B checks independently
+        description: Receive the exact Revision in another host and verify its evidence and risks against the current repository.
+      - title: A human decides
+        description: Confirm scope, capability, and authorization, then continue, request clarification, or decline. Receipt is not completion.
   ownership:
     label: Memory and Handoff
     title:
@@ -42,8 +42,8 @@ home:
     result: "LOCOMO: 90.78% correct · 1.38 s p95 search latency"
     command: powercontext server run
     primary_action:
-      label: Start the step-by-step tutorial
-      href: en/docs/tutorials/codex-quickstart/
+      label: Open the Agent quickstart
+      href: en/docs/tutorials/agent-quickstart/
     secondary_action:
       label: Explore documentation
       href: en/docs/

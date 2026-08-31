@@ -5,9 +5,9 @@ description: Install PowerContext from Git and run the local Server.
 
 # Install and run
 
-If you are new to PowerContext and want to complete a Memory and Handoff loop in Codex from zero, follow the
-[Codex step-by-step tutorial](../tutorials/codex-quickstart.md). This guide focuses on installation roles, Server
-startup, seekDB, diagnostics, and updates for readers who already know which operation they need.
+If you are new to PowerContext, follow the [Agent step-by-step quickstart](../tutorials/agent-quickstart.md) to choose
+a host and complete Memory plus its supported Handoff path from zero. This guide focuses on installation roles,
+Server startup, seekDB, diagnostics, and updates for readers who already know which operation they need.
 
 ## Install the application
 

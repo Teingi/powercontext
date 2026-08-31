@@ -23,8 +23,9 @@ PowerContext 是 [PowerMem](https://www.powermem.ai/) 的升级版本，也是�
 
 你需要 macOS 或 Linux、Python 3.11 或更高版本、[`uv`](https://docs.astral.sh/uv/)，以及至少一个支持的 Agent Host。
 
-如果是第一次使用 PowerContext，建议直接跟着 [Codex 分步教程](docs/zh/docs/tutorials/codex-quickstart.md)操作。
-教程包含前置条件、每一步的预期结果、跨会话 Memory、Handoff、持久化验证和失败排查。下面保留的是更短的安装路径。
+如果是第一次使用 PowerContext，建议直接跟着 [Agent 分步入门](docs/zh/docs/tutorials/agent-quickstart.md)操作。
+教程覆盖 Codex、Claude Code、DSH、OpenClaw、OpenCode、Pi、Hermes、WorkBuddy 和通用 Agent Plugin，并按各
+Host 的真实能力区分 Memory、自动恢复和 Handoff。下面保留的是更短的安装路径。
 
 ### 1. 安装 PowerContext 和集成
 
@@ -68,17 +69,18 @@ powercontext doctor codex  # 请把 codex 换成已安装的宿主。
 默认情况下，Server 监听 `127.0.0.1:8000`，在 `/mcp` 提供 Streamable HTTP MCP，并将数据持久化到本地
 SQLite 数据库。显式 Memory 操作无需配置 inference provider 即可使用。
 
-### 3. 跑通 Memory 与 Handoff 闭环
+### 3. 跑通 Agent Memory 与 Handoff 闭环
 
-从一个项目目录开启新会话，并按照 [Codex 分步教程](docs/zh/docs/tutorials/codex-quickstart.md)中的提示词操作。
+从一个项目目录开启新会话，并按照 [Agent 分步入门](docs/zh/docs/tutorials/agent-quickstart.md)中的提示词操作。
 教程会带你完成：
 
-1. 保存显式项目 Memory，并在另一个 Codex 会话中恢复；
-2. 修订和停用条目，同时保留历史；
-3. 把经过检查的当前工作提交为 Handoff；
-4. 在新会话中接收并核对该 exact Handoff Revision。
+1. 选择并诊断一个已经安装的 Agent Host；
+2. 保存显式项目 Memory，并在另一个会话中恢复；
+3. 按 Host 使用一句话、`pc_*` 或 `/pc` Handoff；
+4. 用 DSH → OpenCode 验证不依赖 Codex 的 exact Revision continuation。
 
 第一个闭环不需要 generation model。需要从 Source 自动抽取 Memory 或使用向量搜索时，再继续配置推理服务。
+Codex 专属 Hook 和一句话流程见 [Codex 完整教程](docs/zh/docs/tutorials/codex-quickstart.md)。
 
 ## 核心能力
 

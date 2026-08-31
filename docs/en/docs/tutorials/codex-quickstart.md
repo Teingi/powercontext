@@ -8,6 +8,10 @@ description: Start with a local Server, then complete a Memory, cross-session re
 This tutorial is for Codex users who are new to PowerContext. You do not need to clone the PowerContext repository or
 configure an inference model. By the end, you will complete this loop in a small local project:
 
+If you have not chosen an agent yet, or you use Claude Code, DSH, OpenClaw, OpenCode, Pi, Hermes, WorkBuddy, or another
+host, start with the [Agent step-by-step quickstart](agent-quickstart.md). This page expands only the Codex Hook, MCP
+Skill, and one-line durable Handoff flow; it does not represent every agent's interaction model.
+
 ```text
 Install and check → Save Memory → Recover in a new session → Revise and retire → Commit Handoff → Receive and verify
 ```
