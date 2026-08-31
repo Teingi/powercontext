@@ -10,7 +10,7 @@ OpenClaw, OpenCode, Pi, Hermes, or WorkBuddy. You can also load the portable Age
 Skills and MCP.
 
 If you already have your own AI application and do not use one of these Agent Hosts, follow the
-[complete HTTP API tutorial](api-quickstart.md) to integrate every public HTTP API domain directly.
+[HTTP API lifecycle tutorial](api-quickstart.md) to complete the first governed context loop directly.
 
 By the end, you will complete this common loop:
 

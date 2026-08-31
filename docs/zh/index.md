@@ -45,6 +45,6 @@ home:
       label: 打开 Agent 分步入门
       href: zh/docs/tutorials/agent-quickstart/
     secondary_action:
-      label: 打开 HTTP API 完整教程
+      label: 打开 HTTP API 生命周期教程
       href: zh/docs/tutorials/api-quickstart/
 ---

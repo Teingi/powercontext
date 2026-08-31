@@ -45,6 +45,6 @@ home:
       label: Open the Agent quickstart
       href: en/docs/tutorials/agent-quickstart/
     secondary_action:
-      label: Open the complete API tutorial
+      label: Open the API lifecycle tutorial
       href: en/docs/tutorials/api-quickstart/
 ---

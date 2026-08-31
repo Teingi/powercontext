@@ -23,8 +23,8 @@ PowerContext 是 [PowerMem](https://www.powermem.ai/) 的升级版本，也是�
 
 你需要 macOS 或 Linux、Python 3.11 或更高版本，以及 [`uv`](https://docs.astral.sh/uv/)。先选择入口：
 
-- 已经有自己的 AI 应用，不使用 Agent Host：跟着 [HTTP API 完整教程](docs/zh/docs/tutorials/api-quickstart.md)，
-  通过 HTTP 跑通 Source、Memory、PreparedContext、Handoff、Experience、Skill 和 Review 全流程；
+- 已经有自己的 AI 应用，不使用 Agent Host：跟着 [HTTP API 生命周期教程](docs/zh/docs/tutorials/api-quickstart.md)，
+  通过 HTTP 跑通第一个 Source、Memory、PreparedContext、Experience、Skill 和 Review 闭环；
 - 使用 Codex、Claude Code、DSH、OpenCode 等 Host：跟着
   [Agent 分步入门](docs/zh/docs/tutorials/agent-quickstart.md)，按 Host 的真实能力接入 Memory、自动恢复和 Handoff。
 
@@ -89,9 +89,9 @@ Codex 专属 Hook 和一句话流程见 [Codex 完整教程](docs/zh/docs/tutori
 ### 4. 或者，为自己的 AI 接入 HTTP API
 
 不使用 Agent Host 时，在每次模型请求前调用 `POST /v1/context/prepare`，把返回的只读、不可信历史上下文交给
-模型；只有在用户或业务策略明确授权后，才调用 `POST /v1/memory/remember` 保存长期 Memory。完整 curl、Python、
-tool calling、证据链、Handoff、Experience 与 Skill 治理、鉴权和生产检查见
-[HTTP API 完整教程](docs/zh/docs/tutorials/api-quickstart.md)。
+模型；只有在用户或业务策略明确授权后，才调用 `POST /v1/memory/remember` 保存长期 Memory。
+[HTTP API 生命周期教程](docs/zh/docs/tutorials/api-quickstart.md)提供一个小型 Python 学习路径；全部 endpoint 和
+schema 请查 [Scalar API 参考](https://oceanbase.github.io/powercontext/api/)。
 
 ## 核心能力
 

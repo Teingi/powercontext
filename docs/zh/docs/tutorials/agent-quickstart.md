@@ -9,7 +9,7 @@ description: 选择一个受支持的 Agent，安装 PowerContext，并跑通跨
 OpenClaw、OpenCode、Pi、Hermes 或 WorkBuddy，也可以把通用 Agent Plugin 加载到支持 Skill 与 MCP 的 Host。
 
 如果你已经有自己的 AI 应用，并不使用这些 Agent Host，请改用
-[HTTP API 完整教程](api-quickstart.md)，直接接入全部公共 HTTP API 领域。
+[HTTP API 生命周期教程](api-quickstart.md)，直接跑通第一个受治理的上下文闭环。
 
 完成后，你会跑通下面的公共闭环：
 

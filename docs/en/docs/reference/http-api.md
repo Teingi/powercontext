@@ -9,7 +9,7 @@ The HTTP API is the language-neutral interface to a running PowerContext Server.
 `http://127.0.0.1:8000`.
 
 If you are integrating PowerContext into your own AI application rather than looking up one field, start with the
-[complete HTTP API tutorial](../tutorials/api-quickstart.md). This page remains the path, contract, and
+[HTTP API lifecycle tutorial](../tutorials/api-quickstart.md). This page remains the path, contract, and
 error-semantics reference.
 
 ## Discover the contract
