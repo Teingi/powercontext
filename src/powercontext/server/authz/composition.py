@@ -27,7 +27,7 @@ from powercontext.builtin.runtime.composition import BuiltinConfigurationError
 from powercontext.builtin.runtime.config import DatabaseConfig
 from powercontext.server.authz.casbin import CasbinAuthorizationProvider
 from powercontext.server.authz.models import DEFAULT_DEPLOYMENT_ID, PrincipalRef
-from powercontext.server.authz.repository import ACCESS_TABLES, RelationalAccessRepository, ensure_access_schema
+from powercontext.server.authz.repository import ACCESS_TABLES, RelationalAccessRepository
 from powercontext.server.authz.service import AccessControlService, BuiltinAuthorizationProvider
 
 
@@ -41,7 +41,7 @@ async def open_builtin_access_control(
 ) -> AsyncIterator[AccessControlService]:
     """Open a Server-owned Access schema without coupling it to Runtime domains."""
 
-    async with _open_access_repository(database, deployment_id=deployment_id) as repository:
+    async with _open_access_repository(database) as repository:
         provider = BuiltinAuthorizationProvider(
             repository,
             bootstrap_administrators=bootstrap_administrators,
@@ -66,7 +66,7 @@ async def open_casbin_access_control(
 ) -> AsyncIterator[AccessControlService]:
     """Open the writable embedded Casbin adapter over the canonical Access schema."""
 
-    async with _open_access_repository(database, deployment_id=deployment_id) as repository:
+    async with _open_access_repository(database) as repository:
         provider = CasbinAuthorizationProvider(
             repository,
             bootstrap_administrators=bootstrap_administrators,
@@ -84,8 +84,6 @@ async def open_casbin_access_control(
 @asynccontextmanager
 async def _open_access_repository(
     database: DatabaseConfig,
-    *,
-    deployment_id: str,
 ) -> AsyncIterator[RelationalAccessRepository]:
     if isinstance(database, SQLiteConfig):
         profile_context = SQLiteProfile.open(database, tables=ACCESS_TABLES)
@@ -96,8 +94,6 @@ async def _open_access_repository(
     else:
         raise BuiltinConfigurationError("database")
     async with profile_context as profile:
-        async with profile.database.transaction() as connection:
-            await ensure_access_schema(connection, deployment_id=deployment_id)
         yield RelationalAccessRepository(profile.database)
 
 

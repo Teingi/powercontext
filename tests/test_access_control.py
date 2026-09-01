@@ -18,7 +18,6 @@ import asyncio
 from datetime import UTC, datetime, timedelta
 
 import pytest
-from sqlalchemy import text
 
 from powercontext.builtin.persistence.sqlite import SQLiteConfig, SQLiteProfile
 from powercontext.server.authz import (
@@ -39,7 +38,7 @@ from powercontext.server.authz import (
     PrincipalRef,
     ResourceRef,
 )
-from powercontext.server.authz.repository import ACCESS_TABLES, RelationalAccessRepository, ensure_access_schema
+from powercontext.server.authz.repository import ACCESS_TABLES, RelationalAccessRepository
 
 NOW = datetime(2026, 8, 30, 10, tzinfo=UTC)
 ADMIN = PrincipalRef(type="user", issuer="https://identity.example", id="admin")
@@ -52,7 +51,7 @@ def test_exact_handoff_receiver_cannot_discover_other_handoffs_or_scope_data() -
     async def scenario() -> None:
         async with SQLiteProfile.open(SQLiteConfig(), tables=ACCESS_TABLES) as profile:
             service, repository = _service(profile.database)
-            exact = ResourceRef.handoff("scope-a", artifact_id="handoff-a", revision=3)
+            exact = ResourceRef.artifact("scope-a", family="handoff", artifact_id="handoff-a", revision=3)
             created = await service.create_binding(
                 ADMIN,
                 CreateBinding(
@@ -75,7 +74,7 @@ def test_exact_handoff_receiver_cannot_discover_other_handoffs_or_scope_data() -
                 await service.require(
                     BOB,
                     AccessAction.ARTIFACT_READ,
-                    ResourceRef.handoff("scope-a", artifact_id="handoff-b", revision=1),
+                    ResourceRef.artifact("scope-a", family="handoff", artifact_id="handoff-b", revision=1),
                     context=AUDIT,
                 )
             with pytest.raises(AccessDeniedError):
@@ -110,7 +109,7 @@ def test_scope_role_covers_handoffs_but_expired_bindings_do_not() -> None:
                 ),
                 context=AUDIT,
             )
-            handoff = ResourceRef.handoff("scope-a", artifact_id="handoff-a", revision=1)
+            handoff = ResourceRef.artifact("scope-a", family="handoff", artifact_id="handoff-a", revision=1)
             assert (await service.require(ALICE, AccessAction.ARTIFACT_READ, handoff, context=AUDIT)).allowed
             assert not (await service.check(ALICE, AccessAction.HANDOFF_ACKNOWLEDGE, handoff, context=AUDIT)).allowed
 
@@ -251,7 +250,7 @@ def test_artifact_family_profiles_enforce_selector_role_and_delegation_boundarie
                 ),
                 context=AUDIT,
             )
-            handoff = ResourceRef.handoff("scope-a", artifact_id="handoff-a", revision=1)
+            handoff = ResourceRef.artifact("scope-a", family="handoff", artifact_id="handoff-a", revision=1)
             delegated = await service.create_binding(
                 ALICE,
                 CreateBinding(
@@ -369,7 +368,13 @@ def test_safe_listing_is_exact_paginated_and_fails_closed_without_provider_suppo
         async with SQLiteProfile.open(SQLiteConfig(), tables=ACCESS_TABLES) as profile:
             service, repository = _service(profile.database)
             resources = tuple(
-                ResourceRef.handoff("scope-a", artifact_id=f"handoff-{index}", revision=1) for index in range(3)
+                ResourceRef.artifact(
+                    "scope-a",
+                    family="handoff",
+                    artifact_id=f"handoff-{index}",
+                    revision=1,
+                )
+                for index in range(3)
             )
             for index, resource in enumerate(resources):
                 await service.create_binding(
@@ -462,51 +467,6 @@ def test_access_self_is_not_exposed_as_a_public_audit_action() -> None:
             decision = await service.check(BOB, AccessAction.ACCESS_SELF, ResourceRef.server(), context=AUDIT)
             assert decision.allowed is True
             assert await repository.list_audit() == ()
-
-    asyncio.run(scenario())
-
-
-def test_handoff_only_schema_is_migrated_without_losing_bindings_or_audit() -> None:
-    async def scenario() -> None:
-        async with SQLiteProfile.open(SQLiteConfig(), tables=ACCESS_TABLES) as profile:
-            service, repository = _service(profile.database)
-            handoff = ResourceRef.handoff("scope-a", artifact_id="handoff-a", revision=1)
-            await service.create_binding(
-                ADMIN,
-                CreateBinding(
-                    subject=BOB,
-                    resource=handoff,
-                    role=AccessRole.HANDOFF_VIEWER,
-                    idempotency_key="legacy-handoff-viewer",
-                ),
-                context=AUDIT,
-            )
-            await service.require(BOB, AccessAction.ARTIFACT_READ, handoff, context=AUDIT)
-            async with profile.database.transaction() as connection:
-                for table_name in ("pc_access_bindings", "pc_access_audit_events"):
-                    for column_name in (
-                        "deployment_id",
-                        "selector_type",
-                        "selector_entry_id",
-                        "selector_entry_version_id",
-                    ):
-                        await connection.exec_driver_sql(f"ALTER TABLE {table_name} DROP COLUMN {column_name}")
-                    await connection.execute(
-                        text(
-                            f"UPDATE {table_name} SET resource_type = 'handoff' "  # noqa: S608
-                            "WHERE resource_type = 'artifact'"
-                        )
-                    )
-                await connection.execute(
-                    text("UPDATE pc_access_audit_events SET action = 'handoff.read' WHERE action = 'artifact.read'")
-                )
-                await ensure_access_schema(connection)
-
-            bindings = await repository.list_bindings(subject=BOB)
-            assert len(bindings) == 1
-            assert bindings[0].resource == handoff
-            audit = await repository.list_audit()
-            assert any(event.action is AccessAction.ARTIFACT_READ and event.resource == handoff for event in audit)
 
     asyncio.run(scenario())
 

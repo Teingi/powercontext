@@ -191,23 +191,6 @@ class ResourceRef:
             selector=selector,
         )
 
-    @classmethod
-    def handoff(
-        cls,
-        scope_id: str,
-        *,
-        artifact_id: str,
-        revision: int,
-    ) -> ResourceRef:
-        """Build an exact Handoff Artifact resource."""
-
-        return cls.artifact(
-            scope_id,
-            family="handoff",
-            artifact_id=artifact_id,
-            revision=revision,
-        )
-
     @property
     def family(self) -> str | None:
         return None if self.reference is None else self.reference.family

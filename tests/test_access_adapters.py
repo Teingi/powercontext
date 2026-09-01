@@ -72,8 +72,8 @@ def test_builtin_and_casbin_adapters_share_the_same_access_semantics() -> None:
                 audit=repository,
                 clock=lambda: NOW,
             )
-            exact = ResourceRef.handoff("scope-a", artifact_id="handoff-a", revision=3)
-            sibling = ResourceRef.handoff("scope-a", artifact_id="handoff-a", revision=4)
+            exact = ResourceRef.artifact("scope-a", family="handoff", artifact_id="handoff-a", revision=3)
+            sibling = ResourceRef.artifact("scope-a", family="handoff", artifact_id="handoff-a", revision=4)
             binding = await casbin_service.create_binding(
                 ADMIN,
                 CreateBinding(
@@ -183,8 +183,8 @@ def test_casbin_composition_opens_a_writable_access_service() -> None:
 
 
 def test_authzen_adapter_matches_the_exact_resource_conformance_vector() -> None:
-    exact = ResourceRef.handoff("scope-a", artifact_id="handoff-a", revision=3)
-    sibling = ResourceRef.handoff("scope-a", artifact_id="handoff-a", revision=4)
+    exact = ResourceRef.artifact("scope-a", family="handoff", artifact_id="handoff-a", revision=3)
+    sibling = ResourceRef.artifact("scope-a", family="handoff", artifact_id="handoff-a", revision=4)
     vectors = _handoff_conformance_vectors(exact, sibling)
     expected = {(action.value, resource.key): allowed for action, resource, allowed in vectors}
 

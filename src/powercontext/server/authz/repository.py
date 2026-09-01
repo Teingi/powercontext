@@ -33,18 +33,15 @@ from sqlalchemy import (
     UniqueConstraint,
     insert,
     select,
-    text,
     update,
 )
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.ext.asyncio import AsyncConnection
 
 from powercontext.builtin.persistence.database import AsyncDatabase
 from powercontext.builtin.persistence.tables import identity_string
 from powercontext.limits import MAX_ARTIFACT_FAMILY_LENGTH, MAX_ARTIFACT_ID_LENGTH, MAX_SCOPE_ID_LENGTH
 from powercontext.server.authz.errors import AccessConflictError, AccessInvalidRequestError
 from powercontext.server.authz.models import (
-    DEFAULT_DEPLOYMENT_ID,
     AccessAction,
     AccessAuditEvent,
     AccessBinding,
@@ -141,76 +138,6 @@ ACCESS_AUDIT_EVENTS_TABLE = Table(
 
 ACCESS_TABLES = (ACCESS_POLICY_HEADS_TABLE, ACCESS_BINDINGS_TABLE, ACCESS_AUDIT_EVENTS_TABLE)
 _POLICY_HEAD = "authorization"
-_ACCESS_RESOURCE_COLUMNS = {
-    "deployment_id": 128,
-    "selector_type": 32,
-    "selector_entry_id": MAX_ARTIFACT_ID_LENGTH,
-    "selector_entry_version_id": MAX_ARTIFACT_ID_LENGTH,
-}
-
-
-async def ensure_access_schema(
-    connection: AsyncConnection,
-    /,
-    *,
-    deployment_id: str = DEFAULT_DEPLOYMENT_ID,
-) -> None:
-    """Upgrade the first Handoff-only Access tables to the Artifact resource contract."""
-
-    dialect = connection.dialect.name
-    if dialect not in {"sqlite", "mysql"}:
-        raise ValueError(f"unsupported Access schema migration dialect: {dialect}")  # noqa: TRY003
-    rehash_binding_idempotency = False
-    for table_name in (ACCESS_BINDINGS_TABLE.name, ACCESS_AUDIT_EVENTS_TABLE.name):
-        for column_name, maximum in _ACCESS_RESOURCE_COLUMNS.items():
-            if await _column_exists(connection, table_name, column_name):
-                continue
-            if table_name == ACCESS_BINDINGS_TABLE.name:
-                rehash_binding_idempotency = True
-            column_type = "TEXT" if dialect == "sqlite" else f"VARCHAR({maximum})"
-            await connection.exec_driver_sql(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_type} NULL")
-        converted = await connection.execute(
-            text(
-                f"UPDATE {table_name} SET resource_type = 'artifact' "  # noqa: S608
-                "WHERE resource_type = 'handoff'"
-            )
-        )
-        if table_name == ACCESS_BINDINGS_TABLE.name and converted.rowcount > 0:
-            rehash_binding_idempotency = True
-        await connection.execute(
-            text(
-                f"UPDATE {table_name} SET deployment_id = :deployment_id "  # noqa: S608
-                "WHERE resource_type = 'server' AND deployment_id IS NULL"
-            ),
-            {"deployment_id": deployment_id},
-        )
-    await connection.execute(
-        text("UPDATE pc_access_audit_events SET action = 'artifact.read' WHERE action = 'handoff.read'")
-    )
-    if rehash_binding_idempotency:
-        rows = (await connection.execute(select(ACCESS_BINDINGS_TABLE))).mappings().all()
-        for row in rows:
-            await connection.execute(
-                update(ACCESS_BINDINGS_TABLE)
-                .where(ACCESS_BINDINGS_TABLE.c.binding_id == row["binding_id"])
-                .values(
-                    idempotency_key_hash=_idempotency_digest(
-                        _decode_resource(row),
-                        str(row["idempotency_key"]),
-                    )
-                )
-            )
-
-
-async def _column_exists(connection: AsyncConnection, table_name: str, column_name: str) -> bool:
-    if connection.dialect.name == "sqlite":
-        statement = text(f"SELECT COUNT(*) FROM pragma_table_info('{table_name}') WHERE name = :column_name")  # noqa: S608
-        return bool(await connection.scalar(statement, {"column_name": column_name}))
-    statement = text(
-        "SELECT COUNT(*) FROM information_schema.columns "
-        "WHERE table_schema = DATABASE() AND table_name = :table_name AND column_name = :column_name"
-    )
-    return bool(await connection.scalar(statement, {"table_name": table_name, "column_name": column_name}))
 
 
 class RelationalAccessRepository:
@@ -548,7 +475,7 @@ def _decode_audit(row: Mapping[Any, Any]) -> AccessAuditEvent:
         transport=str(row["transport"]),
         operation=str(row["operation"]),
         principal=_principal(row, "principal"),
-        action=AccessAction.ARTIFACT_READ if str(row["action"]) == "handoff.read" else AccessAction(str(row["action"])),
+        action=AccessAction(str(row["action"])),
         resource=_decode_resource(row),
         allowed=bool(row["allowed"]),
         reason_code=str(row["reason_code"]),
@@ -560,11 +487,12 @@ def _decode_audit(row: Mapping[Any, Any]) -> AccessAuditEvent:
 
 
 def _decode_resource(row: Mapping[Any, Any]) -> ResourceRef:
-    stored_type = str(row["resource_type"])
-    resource_type = AccessResourceType.ARTIFACT if stored_type == "handoff" else AccessResourceType(stored_type)
+    resource_type = AccessResourceType(str(row["resource_type"]))
     if resource_type is AccessResourceType.SERVER:
-        deployment_id = row.get("deployment_id")
-        return ResourceRef.server() if deployment_id is None else ResourceRef.server(str(deployment_id))
+        deployment_id = row["deployment_id"]
+        if deployment_id is None:
+            raise AccessInvalidRequestError("resource")
+        return ResourceRef.server(str(deployment_id))
     if resource_type is AccessResourceType.SCOPE:
         return ResourceRef.scope(str(row["scope_id"]))
     selector_type = row.get("selector_type")
@@ -628,5 +556,4 @@ def _idempotency_digest(resource: ResourceRef, idempotency_key: str) -> str:
 __all__ = (
     "ACCESS_TABLES",
     "RelationalAccessRepository",
-    "ensure_access_schema",
 )
