@@ -26,7 +26,7 @@ from powercontext.http import ErrorDetail, ErrorResponse
 from powercontext.server.authz import PrincipalRef
 from powercontext.server.context import bind_principal, is_internal_bridge, reset_principal
 
-_PUBLIC_PATHS = frozenset({"/", "/handoff-reports", "/reviews", "/skills", "/health/live", "/health/ready"})
+_PUBLIC_PATHS = frozenset({"/", "/docs", "/handoff-reports", "/reviews", "/skills", "/health/live", "/health/ready"})
 _PUBLIC_PATH_PREFIXES = ("/static/",)
 
 
