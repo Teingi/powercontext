@@ -33,21 +33,25 @@ from sqlalchemy import (
     UniqueConstraint,
     insert,
     select,
+    text,
     update,
 )
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy.ext.asyncio import AsyncConnection
 
 from powercontext.builtin.persistence.database import AsyncDatabase
 from powercontext.builtin.persistence.tables import identity_string
 from powercontext.limits import MAX_ARTIFACT_FAMILY_LENGTH, MAX_ARTIFACT_ID_LENGTH, MAX_SCOPE_ID_LENGTH
 from powercontext.server.authz.errors import AccessConflictError, AccessInvalidRequestError
 from powercontext.server.authz.models import (
+    DEFAULT_DEPLOYMENT_ID,
     AccessAction,
     AccessAuditEvent,
     AccessBinding,
     AccessBindingState,
     AccessResourceType,
     AccessRole,
+    MemoryEntrySelector,
     PrincipalRef,
     ResourceRef,
 )
@@ -70,10 +74,14 @@ ACCESS_BINDINGS_TABLE = Table(
     Column("subject_issuer", identity_string(255), nullable=False),
     Column("subject_id", identity_string(255), nullable=False),
     Column("resource_type", identity_string(16), nullable=False),
+    Column("deployment_id", identity_string(128)),
     Column("scope_id", identity_string(MAX_SCOPE_ID_LENGTH)),
     Column("family", identity_string(MAX_ARTIFACT_FAMILY_LENGTH)),
     Column("artifact_id", identity_string(MAX_ARTIFACT_ID_LENGTH)),
     Column("revision", Integer),
+    Column("selector_type", identity_string(32)),
+    Column("selector_entry_id", identity_string(MAX_ARTIFACT_ID_LENGTH)),
+    Column("selector_entry_version_id", identity_string(MAX_ARTIFACT_ID_LENGTH)),
     Column("role", identity_string(32), nullable=False),
     Column("granted_by_type", identity_string(64), nullable=False),
     Column("granted_by_issuer", identity_string(255), nullable=False),
@@ -113,10 +121,14 @@ ACCESS_AUDIT_EVENTS_TABLE = Table(
     Column("principal_id", identity_string(255), nullable=False),
     Column("action", identity_string(64), nullable=False),
     Column("resource_type", identity_string(16), nullable=False),
+    Column("deployment_id", identity_string(128)),
     Column("scope_id", identity_string(MAX_SCOPE_ID_LENGTH)),
     Column("family", identity_string(MAX_ARTIFACT_FAMILY_LENGTH)),
     Column("artifact_id", identity_string(MAX_ARTIFACT_ID_LENGTH)),
     Column("revision", Integer),
+    Column("selector_type", identity_string(32)),
+    Column("selector_entry_id", identity_string(MAX_ARTIFACT_ID_LENGTH)),
+    Column("selector_entry_version_id", identity_string(MAX_ARTIFACT_ID_LENGTH)),
     Column("allowed", Boolean, nullable=False),
     Column("reason_code", identity_string(64), nullable=False),
     Column("policy_revision", identity_string(32)),
@@ -129,6 +141,76 @@ ACCESS_AUDIT_EVENTS_TABLE = Table(
 
 ACCESS_TABLES = (ACCESS_POLICY_HEADS_TABLE, ACCESS_BINDINGS_TABLE, ACCESS_AUDIT_EVENTS_TABLE)
 _POLICY_HEAD = "authorization"
+_ACCESS_RESOURCE_COLUMNS = {
+    "deployment_id": 128,
+    "selector_type": 32,
+    "selector_entry_id": MAX_ARTIFACT_ID_LENGTH,
+    "selector_entry_version_id": MAX_ARTIFACT_ID_LENGTH,
+}
+
+
+async def ensure_access_schema(
+    connection: AsyncConnection,
+    /,
+    *,
+    deployment_id: str = DEFAULT_DEPLOYMENT_ID,
+) -> None:
+    """Upgrade the first Handoff-only Access tables to the Artifact resource contract."""
+
+    dialect = connection.dialect.name
+    if dialect not in {"sqlite", "mysql"}:
+        raise ValueError(f"unsupported Access schema migration dialect: {dialect}")  # noqa: TRY003
+    rehash_binding_idempotency = False
+    for table_name in (ACCESS_BINDINGS_TABLE.name, ACCESS_AUDIT_EVENTS_TABLE.name):
+        for column_name, maximum in _ACCESS_RESOURCE_COLUMNS.items():
+            if await _column_exists(connection, table_name, column_name):
+                continue
+            if table_name == ACCESS_BINDINGS_TABLE.name:
+                rehash_binding_idempotency = True
+            column_type = "TEXT" if dialect == "sqlite" else f"VARCHAR({maximum})"
+            await connection.exec_driver_sql(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_type} NULL")
+        converted = await connection.execute(
+            text(
+                f"UPDATE {table_name} SET resource_type = 'artifact' "  # noqa: S608
+                "WHERE resource_type = 'handoff'"
+            )
+        )
+        if table_name == ACCESS_BINDINGS_TABLE.name and converted.rowcount > 0:
+            rehash_binding_idempotency = True
+        await connection.execute(
+            text(
+                f"UPDATE {table_name} SET deployment_id = :deployment_id "  # noqa: S608
+                "WHERE resource_type = 'server' AND deployment_id IS NULL"
+            ),
+            {"deployment_id": deployment_id},
+        )
+    await connection.execute(
+        text("UPDATE pc_access_audit_events SET action = 'artifact.read' WHERE action = 'handoff.read'")
+    )
+    if rehash_binding_idempotency:
+        rows = (await connection.execute(select(ACCESS_BINDINGS_TABLE))).mappings().all()
+        for row in rows:
+            await connection.execute(
+                update(ACCESS_BINDINGS_TABLE)
+                .where(ACCESS_BINDINGS_TABLE.c.binding_id == row["binding_id"])
+                .values(
+                    idempotency_key_hash=_idempotency_digest(
+                        _decode_resource(row),
+                        str(row["idempotency_key"]),
+                    )
+                )
+            )
+
+
+async def _column_exists(connection: AsyncConnection, table_name: str, column_name: str) -> bool:
+    if connection.dialect.name == "sqlite":
+        statement = text(f"SELECT COUNT(*) FROM pragma_table_info('{table_name}') WHERE name = :column_name")  # noqa: S608
+        return bool(await connection.scalar(statement, {"column_name": column_name}))
+    statement = text(
+        "SELECT COUNT(*) FROM information_schema.columns "
+        "WHERE table_schema = DATABASE() AND table_name = :table_name AND column_name = :column_name"
+    )
+    return bool(await connection.scalar(statement, {"table_name": table_name, "column_name": column_name}))
 
 
 class RelationalAccessRepository:
@@ -192,7 +274,7 @@ class RelationalAccessRepository:
                 ACCESS_BINDINGS_TABLE.c.subject_id == subject.id,
             )
         if resource is not None:
-            statement = statement.where(*_resource_predicates(resource))
+            statement = statement.where(*_binding_resource_predicates(resource))
         if not include_revoked:
             statement = statement.where(ACCESS_BINDINGS_TABLE.c.state == AccessBindingState.ACTIVE.value)
         statement = statement.order_by(ACCESS_BINDINGS_TABLE.c.created_at, ACCESS_BINDINGS_TABLE.c.binding_id)
@@ -207,7 +289,8 @@ class RelationalAccessRepository:
                     await connection.execute(
                         select(ACCESS_BINDINGS_TABLE).where(
                             ACCESS_BINDINGS_TABLE.c.grantor_key_hash == _digest(binding.granted_by.key),
-                            ACCESS_BINDINGS_TABLE.c.idempotency_key_hash == _digest(binding.idempotency_key),
+                            ACCESS_BINDINGS_TABLE.c.idempotency_key_hash
+                            == _idempotency_digest(binding.resource, binding.idempotency_key),
                         )
                     )
                 )
@@ -291,8 +374,18 @@ class RelationalAccessRepository:
             ).scalar_one()
         return replace(event, cursor=int(cursor))
 
-    async def list_audit(self, *, after: int | None = None, limit: int = 100) -> tuple[AccessAuditEvent, ...]:
-        statement = select(ACCESS_AUDIT_EVENTS_TABLE)
+    async def list_audit(
+        self,
+        *,
+        resource: ResourceRef | None = None,
+        after: int | None = None,
+        limit: int = 100,
+    ) -> tuple[AccessAuditEvent, ...]:
+        statement = select(ACCESS_AUDIT_EVENTS_TABLE).where(
+            ACCESS_AUDIT_EVENTS_TABLE.c.action != AccessAction.ACCESS_SELF.value
+        )
+        if resource is not None:
+            statement = statement.where(*_audit_resource_predicates(resource))
         if after is not None:
             statement = statement.where(ACCESS_AUDIT_EVENTS_TABLE.c.cursor > after)
         statement = statement.order_by(ACCESS_AUDIT_EVENTS_TABLE.c.cursor).limit(limit)
@@ -326,28 +419,52 @@ class RelationalAccessRepository:
         return int(current) + 1
 
 
-def _resource_predicates(resource: ResourceRef) -> Sequence[Any]:
+def _resource_predicates(table: Table, resource: ResourceRef) -> Sequence[Any]:
+    selector = resource.selector
     return (
-        ACCESS_BINDINGS_TABLE.c.resource_type == resource.type.value,
-        ACCESS_BINDINGS_TABLE.c.scope_id == resource.scope_id,
-        ACCESS_BINDINGS_TABLE.c.family == resource.family,
-        ACCESS_BINDINGS_TABLE.c.artifact_id == resource.artifact_id,
-        ACCESS_BINDINGS_TABLE.c.revision == resource.revision,
+        table.c.resource_type == resource.type.value,
+        table.c.deployment_id == resource.deployment_id,
+        table.c.scope_id == resource.scope_id,
+        table.c.family == resource.family,
+        table.c.artifact_id == resource.artifact_id,
+        table.c.revision == resource.revision,
+        table.c.selector_type == (None if selector is None else selector.type),
+        table.c.selector_entry_id == (None if selector is None else selector.entry_id),
+        table.c.selector_entry_version_id == (None if selector is None else selector.entry_version_id),
     )
+
+
+def _binding_resource_predicates(resource: ResourceRef) -> Sequence[Any]:
+    if resource.type is AccessResourceType.SERVER:
+        return ()
+    if resource.type is AccessResourceType.SCOPE:
+        return (ACCESS_BINDINGS_TABLE.c.scope_id == resource.scope_id,)
+    return _resource_predicates(ACCESS_BINDINGS_TABLE, resource)
+
+
+def _audit_resource_predicates(resource: ResourceRef) -> Sequence[Any]:
+    if resource.type is AccessResourceType.SCOPE:
+        return (ACCESS_AUDIT_EVENTS_TABLE.c.scope_id == resource.scope_id,)
+    return _resource_predicates(ACCESS_AUDIT_EVENTS_TABLE, resource)
 
 
 def _binding_row(binding: AccessBinding) -> dict[str, object | None]:
     revoked_by = binding.revoked_by
+    selector = binding.resource.selector
     return {
         "binding_id": binding.binding_id,
         "subject_type": binding.subject.type,
         "subject_issuer": binding.subject.issuer,
         "subject_id": binding.subject.id,
         "resource_type": binding.resource.type.value,
+        "deployment_id": binding.resource.deployment_id,
         "scope_id": binding.resource.scope_id,
         "family": binding.resource.family,
         "artifact_id": binding.resource.artifact_id,
         "revision": binding.resource.revision,
+        "selector_type": None if selector is None else selector.type,
+        "selector_entry_id": None if selector is None else selector.entry_id,
+        "selector_entry_version_id": None if selector is None else selector.entry_version_id,
         "role": binding.role.value,
         "granted_by_type": binding.granted_by.type,
         "granted_by_issuer": binding.granted_by.issuer,
@@ -360,7 +477,7 @@ def _binding_row(binding: AccessBinding) -> dict[str, object | None]:
         "version": binding.version,
         "policy_revision": binding.policy_revision,
         "idempotency_key": binding.idempotency_key,
-        "idempotency_key_hash": _digest(binding.idempotency_key),
+        "idempotency_key_hash": _idempotency_digest(binding.resource, binding.idempotency_key),
         "revoked_at": None if binding.revoked_at is None else _timestamp(binding.revoked_at),
         "revoked_by_type": None if revoked_by is None else revoked_by.type,
         "revoked_by_issuer": None if revoked_by is None else revoked_by.issuer,
@@ -391,6 +508,7 @@ def _decode_binding(row: Mapping[Any, Any]) -> AccessBinding:
 
 def _audit_row(event: AccessAuditEvent) -> dict[str, object | None]:
     target = event.target
+    selector = event.resource.selector
     return {
         "event_id": event.event_id,
         "occurred_at": _timestamp(event.occurred_at),
@@ -402,10 +520,14 @@ def _audit_row(event: AccessAuditEvent) -> dict[str, object | None]:
         "principal_id": event.principal.id,
         "action": event.action.value,
         "resource_type": event.resource.type.value,
+        "deployment_id": event.resource.deployment_id,
         "scope_id": event.resource.scope_id,
         "family": event.resource.family,
         "artifact_id": event.resource.artifact_id,
         "revision": event.resource.revision,
+        "selector_type": None if selector is None else selector.type,
+        "selector_entry_id": None if selector is None else selector.entry_id,
+        "selector_entry_version_id": None if selector is None else selector.entry_version_id,
         "allowed": event.allowed,
         "reason_code": event.reason_code,
         "policy_revision": event.policy_revision,
@@ -426,7 +548,7 @@ def _decode_audit(row: Mapping[Any, Any]) -> AccessAuditEvent:
         transport=str(row["transport"]),
         operation=str(row["operation"]),
         principal=_principal(row, "principal"),
-        action=AccessAction(str(row["action"])),
+        action=AccessAction.ARTIFACT_READ if str(row["action"]) == "handoff.read" else AccessAction(str(row["action"])),
         resource=_decode_resource(row),
         allowed=bool(row["allowed"]),
         reason_code=str(row["reason_code"]),
@@ -438,15 +560,28 @@ def _decode_audit(row: Mapping[Any, Any]) -> AccessAuditEvent:
 
 
 def _decode_resource(row: Mapping[Any, Any]) -> ResourceRef:
-    resource_type = AccessResourceType(str(row["resource_type"]))
+    stored_type = str(row["resource_type"])
+    resource_type = AccessResourceType.ARTIFACT if stored_type == "handoff" else AccessResourceType(stored_type)
     if resource_type is AccessResourceType.SERVER:
-        return ResourceRef.server()
+        deployment_id = row.get("deployment_id")
+        return ResourceRef.server() if deployment_id is None else ResourceRef.server(str(deployment_id))
     if resource_type is AccessResourceType.SCOPE:
         return ResourceRef.scope(str(row["scope_id"]))
-    return ResourceRef.handoff(
+    selector_type = row.get("selector_type")
+    selector = (
+        None
+        if selector_type is None
+        else MemoryEntrySelector(
+            entry_id=str(row["selector_entry_id"]),
+            entry_version_id=str(row["selector_entry_version_id"]),
+        )
+    )
+    return ResourceRef.artifact(
         str(row["scope_id"]),
+        family=str(row["family"]),
         artifact_id=str(row["artifact_id"]),
         revision=int(row["revision"]),
+        selector=selector,
     )
 
 
@@ -486,7 +621,12 @@ def _digest(value: str) -> str:
     return sha256(value.encode("utf-8")).hexdigest()
 
 
+def _idempotency_digest(resource: ResourceRef, idempotency_key: str) -> str:
+    return _digest(f"{resource.key}\0{idempotency_key}")
+
+
 __all__ = (
     "ACCESS_TABLES",
     "RelationalAccessRepository",
+    "ensure_access_schema",
 )

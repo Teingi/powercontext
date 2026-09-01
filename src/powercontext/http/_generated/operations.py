@@ -14,7 +14,7 @@ from powercontext.http._generated.models import (
     AccessCheckBatchResponse,
     AccessCheckRequest,
     AccessDecision,
-    AccessPrincipal,
+    AccessMeResponse,
     AccessResourcePage,
     AccessRolePage,
     AcknowledgeHandoffRequest,
@@ -75,6 +75,9 @@ from powercontext.http._generated.models import (
     ListMemoryChangesResponse,
     ListMemoryEntriesRequest,
     ListMemoryEntriesResponse,
+    ListSkillPublicationTargetsRequest,
+    ListSkillPublicationTargetsResponse,
+    ManagedSkillPublication,
     MemoryEntry,
     MemoryMutationResponse,
     PrepareContextRequest,
@@ -86,6 +89,7 @@ from powercontext.http._generated.models import (
     ProjectPage,
     ProposeExperienceRequest,
     ProposeSkillRequest,
+    PublishManagedSkillRequest,
     PurgeHandoffReportActivitiesRequest,
     PurgeHandoffReportActivitiesResponse,
     ReadinessResponse,
@@ -137,10 +141,10 @@ class Operation(BaseModel, Generic[RequestT, ResponseT]):
 
 
 class AccessRequirement(BaseModel):
-    action: str
-    resource: Literal["server", "scope", "handoff"]
+    action: str | None
+    resource: Literal["server", "scope", "artifact"] | None
     scope_id_field: str | None
-    resolver: Literal["static", "request", "continue_handoff", "acknowledge_handoff"]
+    resolver: str
 
 
 GET_LIVENESS = Operation[None, HealthResponse](
@@ -336,9 +340,7 @@ ACKNOWLEDGE_HANDOFF = Operation[AcknowledgeHandoffRequest, HandoffAcknowledgemen
         503: {"$ref": "#/components/responses/Unavailable"},
         500: {"$ref": "#/components/responses/InternalError"},
     },
-    access=AccessRequirement(
-        action="scope.contribute", resource="scope", scope_id_field=None, resolver="acknowledge_handoff"
-    ),
+    access=AccessRequirement(action=None, resource=None, scope_id_field=None, resolver="acknowledge_handoff_access"),
 )
 
 RECORD_TASK_OUTCOME = Operation[RecordTaskOutcomeRequest, WorkSourceReceipt](
@@ -501,7 +503,7 @@ CONTINUE_HANDOFF = Operation[ContinueHandoffRequest, HandoffResolution](
         503: {"$ref": "#/components/responses/Unavailable"},
         500: {"$ref": "#/components/responses/InternalError"},
     },
-    access=AccessRequirement(action="scope.read", resource="scope", scope_id_field=None, resolver="continue_handoff"),
+    access=AccessRequirement(action=None, resource=None, scope_id_field=None, resolver="continue_handoff_access"),
 )
 
 FLUSH_MEMORY = Operation[FlushMemoryRequest, FlushMemoryResponse](
@@ -629,7 +631,7 @@ GET_MEMORY_ENTRY = Operation[GetMemoryEntryRequest, MemoryEntry](
         503: {"$ref": "#/components/responses/Unavailable"},
         500: {"$ref": "#/components/responses/InternalError"},
     },
-    access=AccessRequirement(action="scope.read", resource="scope", scope_id_field="scope_id", resolver="request"),
+    access=AccessRequirement(action=None, resource=None, scope_id_field=None, resolver="exact_memory_access"),
 )
 
 REVISE_MEMORY_ENTRY = Operation[ReviseMemoryEntryRequest, MemoryMutationResponse](
@@ -789,7 +791,7 @@ GET_EXPERIENCE = Operation[GetExperienceRequest, ExperienceArtifact](
         503: {"$ref": "#/components/responses/Unavailable"},
         500: {"$ref": "#/components/responses/InternalError"},
     },
-    access=AccessRequirement(action="scope.read", resource="scope", scope_id_field="scope_id", resolver="request"),
+    access=AccessRequirement(action=None, resource=None, scope_id_field=None, resolver="exact_experience_access"),
 )
 
 PROPOSE_SKILL = Operation[ProposeSkillRequest, ArtifactCandidate](
@@ -868,7 +870,58 @@ GET_SKILL = Operation[GetSkillRequest, SkillArtifact](
         503: {"$ref": "#/components/responses/Unavailable"},
         500: {"$ref": "#/components/responses/InternalError"},
     },
-    access=AccessRequirement(action="scope.read", resource="scope", scope_id_field="scope_id", resolver="request"),
+    access=AccessRequirement(action=None, resource=None, scope_id_field=None, resolver="exact_skill_access"),
+)
+
+LIST_SKILL_PUBLICATION_TARGETS = Operation[ListSkillPublicationTargetsRequest, ListSkillPublicationTargetsResponse](
+    method="POST",
+    path="/v1/skills/publication-targets/list",
+    operation_id="list_skill_publication_targets",
+    request_type=ListSkillPublicationTargetsRequest,
+    request_location="body",
+    response_type=ListSkillPublicationTargetsResponse,
+    success_status=200,
+    summary="List safe publication targets for an exact managed Skill",
+    tags=("skill",),
+    responses={
+        200: {
+            "description": "Enabled publication targets without host paths, locators, or credentials.",
+            "headers": {"X-PowerContext-Request-ID": {"$ref": "#/components/headers/RequestId"}},
+        },
+        401: {"$ref": "#/components/responses/Unauthorized"},
+        403: {"$ref": "#/components/responses/Forbidden"},
+        404: {"$ref": "#/components/responses/NotFound"},
+        422: {"$ref": "#/components/responses/InvalidRequest"},
+        503: {"$ref": "#/components/responses/Unavailable"},
+        500: {"$ref": "#/components/responses/InternalError"},
+    },
+    access=AccessRequirement(action=None, resource=None, scope_id_field=None, resolver="publish_managed_skill_access"),
+)
+
+PUBLISH_MANAGED_SKILL = Operation[PublishManagedSkillRequest, ManagedSkillPublication](
+    method="POST",
+    path="/v1/skills/publish",
+    operation_id="publish_managed_skill",
+    request_type=PublishManagedSkillRequest,
+    request_location="body",
+    response_type=ManagedSkillPublication,
+    success_status=200,
+    summary="Publish an exact managed Skill to one configured target",
+    tags=("skill",),
+    responses={
+        200: {
+            "description": "Safe publication result for the selected exact Revision and opaque target.",
+            "headers": {"X-PowerContext-Request-ID": {"$ref": "#/components/headers/RequestId"}},
+        },
+        401: {"$ref": "#/components/responses/Unauthorized"},
+        403: {"$ref": "#/components/responses/Forbidden"},
+        404: {"$ref": "#/components/responses/NotFound"},
+        409: {"$ref": "#/components/responses/Conflict"},
+        422: {"$ref": "#/components/responses/InvalidRequest"},
+        503: {"$ref": "#/components/responses/Unavailable"},
+        500: {"$ref": "#/components/responses/InternalError"},
+    },
+    access=AccessRequirement(action=None, resource=None, scope_id_field=None, resolver="publish_managed_skill_access"),
 )
 
 SCAN_EXTERNAL_SKILLS = Operation[ScanExternalSkillsRequest, ScanExternalSkillsResponse](
@@ -1515,18 +1568,18 @@ DETACH_HANDOFF_REPORT_WORKSPACE = Operation[DetachHandoffReportWorkspaceRequest,
     access=AccessRequirement(action="server.admin", resource="server", scope_id_field=None, resolver="static"),
 )
 
-GET_ACCESS_PRINCIPAL = Operation[None, AccessPrincipal](
+GET_ACCESS_PRINCIPAL = Operation[None, AccessMeResponse](
     method="GET",
     path="/v1/access/me",
     operation_id="get_access_principal",
     request_type=None,
     request_location=None,
-    response_type=AccessPrincipal,
+    response_type=AccessMeResponse,
     success_status=200,
-    summary="Get the authenticated Principal",
+    summary="Get the authenticated Principal and Access capabilities",
     tags=("access",),
     responses={
-        200: {"description": "The opaque Principal established by the authentication adapter."},
+        200: {"description": "The opaque Principal and enforceable deployment Access capabilities."},
         401: {"$ref": "#/components/responses/Unauthorized"},
         403: {"$ref": "#/components/responses/Forbidden"},
         503: {"$ref": "#/components/responses/Unavailable"},
@@ -1692,5 +1745,5 @@ LIST_ACCESS_AUDIT = Operation[ListAccessAuditRequest, AccessAuditPage](
         422: {"$ref": "#/components/responses/InvalidRequest"},
         503: {"$ref": "#/components/responses/Unavailable"},
     },
-    access=AccessRequirement(action="server.admin", resource="server", scope_id_field=None, resolver="static"),
+    access=AccessRequirement(action=None, resource=None, scope_id_field=None, resolver="access_audit_access"),
 )

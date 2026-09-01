@@ -100,11 +100,10 @@ curl --fail \
   --data '{
     "subject": {"type": "user", "issuer": "https://id.example", "id": "user-b"},
     "resource": {
-      "type": "handoff",
+      "type": "artifact",
       "scope_id": "project:example",
-      "family": "handoff",
-      "artifact_id": "handoff-42",
-      "revision": 3
+      "reference": {"family": "handoff", "artifact_id": "handoff-42", "revision": 3},
+      "selector": null
     },
     "role": "handoff.receiver",
     "idempotency_key": "handoff-42-r3-to-user-b"
@@ -116,6 +115,15 @@ curl --fail \
 也不能访问父 scope 的 Memory。用 `/v1/access/me` 确认部署建立的 Principal，用 `/v1/access/check` 检查一个决策，
 用 `/v1/access/resources/list` 非发现式地列出已经可见的资源。创建操作按授权者与幂等键保证幂等；撤销时必须提交
 `binding_id` 和 `expected_version`。Server 管理员可通过 `/v1/access/audit/list` 查看关系变更与决策事件。
+
+Access wire contract 只使用 `server`、`scope` 和 `artifact` 三种 Resource Kind。Artifact 的 `reference` 必须指向精确
+Revision；Memory 还必须提供完整 `memory_entry` selector（`entry_id` 和 `entry_version_id`）。未知 Family、未实现
+Prompt lifecycle 的 `prompt`、不匹配的 selector/role 或 `latest` 都不会创建 Binding。`/v1/access/me` 会报告当前 mode、
+Provider 能力和每个 Artifact Family 的启用状态。
+
+读取一个 managed Skill 与发布它是两项权限。`/v1/skills/publication-targets/list` 和 `/v1/skills/publish` 都要求同一个
+精确 Skill Revision 上的 `artifact.read` 与 `skill.publish`。请求只提交不透明的 `target_id`；公共响应和错误不返回
+host path、Agent home、credential 或 locator。详细 Dashboard publication status 另由 `server.observe` 保护。
 
 内置静态 token 只代表一个本地管理员，无法表达不同的 A/B 用户。真正的多用户部署必须把每个调用者认证为不同的
 Principal，并注入 Authorization Provider。HTTP 与 MCP 使用同一个策略执行点；MCP tool 可见不等于有权限。
@@ -130,7 +138,7 @@ Principal，并注入 Authorization Provider。HTTP 与 MCP 使用同一个策�
 | 工作连续性 | `/v1/work/*` | 创建 Work Contract、准备或确认 Handoff、记录 Outcome |
 | 底层 Handoff | `/v1/handoff/*` | activate、prepare、finalize、commit 或 continue Handoff |
 | Memory | `/v1/memory/*` | flush、remember、search、list、get、revise、retire 和查看变更 |
-| Experience 与 Skill | `/v1/experience/*`、`/v1/skill/*` | propose、generate 和读取 Artifact Revision |
+| Experience 与 Skill | `/v1/experience/*`、`/v1/skill/*`、`/v1/skills/*` | propose、generate、读取 Artifact Revision 和受控发布 managed Skill |
 | 审核 | `/v1/artifact-candidates/*` | 列出、检查、修订、批准或拒绝 pending Candidate |
 | 外部 Skill | `/v1/external-skills/*` | 扫描已配置 target，解析或导入 package |
 | Handoff Report | `/v1/handoff-reports/*` | 管理 Project、Workstream、activity、report 和 workspace binding |

@@ -84,6 +84,13 @@ from powercontext.server.factory import create_server_app
 from powercontext.server.settings import McpConfig, ServerSettings
 
 OCEANBASE_URL = os.environ.get("POWERCONTEXT_TEST_OCEANBASE_URL")
+_ACCESS_READINESS_CHECKS = {
+    "access_mode": "legacy-static-admin",
+    "access_provider": "disabled",
+    "access_resource_kinds": "server,scope,artifact",
+    "access_artifact_families": "experience:enabled,handoff:enabled,memory:enabled,prompt:disabled,skill:enabled",
+    "access_skill_publication": "disabled",
+}
 EMBEDDING_PROFILE = EmbeddingProfile(
     profile_id="database-e2e-v1",
     model="database-e2e",
@@ -206,7 +213,7 @@ def test_server_databases_share_source_to_memory_search_behavior(
             )
             entries = await client.list_memory_entries(ListMemoryEntriesRequest(scope_id=scope_id))
 
-        assert readiness.checks == {"runtime": "ready", "database": "ready"}
+        assert readiness.checks == {"runtime": "ready", "database": "ready", **_ACCESS_READINESS_CHECKS}
         assert capabilities.source_types == ["content"]
         assert capabilities.memory_extraction is True
         assert capabilities.search_modes == ["auto", "fts"]
@@ -310,6 +317,7 @@ def test_inference_failure_degrades_readiness_without_blocking_database_operatio
             "runtime": "ready",
             "database": "ready",
             "inference.embedding": "misconfigured",
+            **_ACCESS_READINESS_CHECKS,
         }
         assert captured.position == 1
 

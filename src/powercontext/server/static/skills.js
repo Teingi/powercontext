@@ -318,7 +318,6 @@ const deliveryContent = document.getElementById("skills-delivery-content");
 const deliveryTarget = document.getElementById("skills-delivery-target");
 const publishedRevision = document.getElementById("skills-published-revision");
 const discovery = document.getElementById("skills-discovery");
-const destination = document.getElementById("skills-destination");
 const createRevisionButton = document.getElementById("skills-create-revision");
 const publishButton = document.getElementById("skills-publish");
 const publishDialog = document.getElementById("skills-publish-dialog");
@@ -889,7 +888,6 @@ function renderDelivery() {
     ? translate("unavailable")
     : String(target.published_revision);
   discovery.textContent = translate(discoveryStateKey(target.discovery));
-  destination.textContent = target.destination;
   publishButton.textContent = translate(publicationActionKey(target));
   const canPublish = canPublishProjection(target);
   publishButton.hidden = !canPublish;

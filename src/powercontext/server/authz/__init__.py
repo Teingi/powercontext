@@ -14,21 +14,28 @@
 
 """Server-owned authentication and authorization building blocks."""
 
+from powercontext.server.authz.authzen import AuthZenAuthorizationProvider
+from powercontext.server.authz.casbin import CasbinAuthorizationProvider
 from powercontext.server.authz.errors import (
     AccessConflictError,
+    AccessControlError,
     AccessDeniedError,
     AccessIdentityRequiredError,
     AccessInvalidRequestError,
     AccessUnavailableError,
 )
 from powercontext.server.authz.models import (
+    DEFAULT_DEPLOYMENT_ID,
+    PUBLIC_ACCESS_ACTIONS,
     AccessAction,
+    AccessArtifactReference,
     AccessAuditEvent,
     AccessBinding,
     AccessBindingState,
     AccessDecision,
     AccessResourceType,
     AccessRole,
+    MemoryEntrySelector,
     PrincipalRef,
     ResourceRef,
 )
@@ -36,34 +43,49 @@ from powercontext.server.authz.service import (
     AccessAuditContext,
     AccessAuditStore,
     AccessControlService,
+    AccessProviderCapabilities,
+    AccessRequest,
     AuthorizationProvider,
+    AuthorizedResourceFilter,
     AuthorizedResourcePage,
     BuiltinAuthorizationProvider,
     CreateBinding,
     RelationshipWriter,
+    ResourceSearchRequest,
 )
 
 __all__ = (
+    "DEFAULT_DEPLOYMENT_ID",
+    "PUBLIC_ACCESS_ACTIONS",
     "AccessAction",
+    "AccessArtifactReference",
     "AccessAuditContext",
     "AccessAuditEvent",
     "AccessAuditStore",
     "AccessBinding",
     "AccessBindingState",
     "AccessConflictError",
+    "AccessControlError",
     "AccessControlService",
     "AccessDecision",
     "AccessDeniedError",
     "AccessIdentityRequiredError",
     "AccessInvalidRequestError",
+    "AccessProviderCapabilities",
+    "AccessRequest",
     "AccessResourceType",
     "AccessRole",
     "AccessUnavailableError",
+    "AuthZenAuthorizationProvider",
     "AuthorizationProvider",
+    "AuthorizedResourceFilter",
     "AuthorizedResourcePage",
     "BuiltinAuthorizationProvider",
+    "CasbinAuthorizationProvider",
     "CreateBinding",
+    "MemoryEntrySelector",
     "PrincipalRef",
     "RelationshipWriter",
     "ResourceRef",
+    "ResourceSearchRequest",
 )

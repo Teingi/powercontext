@@ -59,10 +59,10 @@ class ContractGenerationError(RuntimeError):
 
 
 class _AccessRequirement(TypedDict):
-    action: str
-    resource: Literal["server", "scope", "handoff"]
+    action: str | None
+    resource: Literal["server", "scope", "artifact"] | None
     scope_id_field: str | None
-    resolver: Literal["static", "request", "continue_handoff", "acknowledge_handoff"]
+    resolver: str
 
 
 def generate_sources() -> dict[Path, str]:
@@ -216,10 +216,10 @@ class Operation(BaseModel, Generic[RequestT, ResponseT]):
 
 
 class AccessRequirement(BaseModel):
-    action: str
-    resource: Literal["server", "scope", "handoff"]
+    action: str | None
+    resource: Literal["server", "scope", "artifact"] | None
     scope_id_field: str | None
-    resolver: Literal["static", "request", "continue_handoff", "acknowledge_handoff"]
+    resolver: str
 
 
 {rendered_operations}
@@ -376,18 +376,33 @@ def _access_requirement(operation: OpenAPIOperation, operation_id: str) -> _Acce
         return None
     if not isinstance(value, dict):
         raise ContractGenerationError(f"{operation_id} x-powercontext-access", value)  # noqa: TRY003
+    named_resolver = value.get("resolver")
+    if named_resolver is not None:
+        if not isinstance(named_resolver, str) or not named_resolver:
+            raise ContractGenerationError(f"{operation_id} access resolver", named_resolver)  # noqa: TRY003
+        return {
+            "action": None,
+            "resource": None,
+            "scope_id_field": None,
+            "resolver": named_resolver,
+        }
     action = value.get("action")
-    resource = value.get("resource")
-    scope_id_field = value.get("scope_id_field")
-    resolver = value.get("resolver", "static" if resource == "server" else "request")
+    resource_value = value.get("resource")
+    if isinstance(resource_value, dict):
+        resource = resource_value.get("type")
+        scope_id_field = resource_value.get("scope-id-from")
+    else:
+        # Accept the first implementation's flat shape while downstream branches
+        # regenerate their contract from the RFC 1396 nested form.
+        resource = resource_value
+        scope_id_field = value.get("scope_id_field")
+    resolver = "static" if resource == "server" else "request"
     if not isinstance(action, str) or not action:
         raise ContractGenerationError(f"{operation_id} access action", action)  # noqa: TRY003
-    if resource not in {"server", "scope", "handoff"}:
+    if resource not in {"server", "scope", "artifact"}:
         raise ContractGenerationError(f"{operation_id} access resource", resource)  # noqa: TRY003
     if scope_id_field is not None and not isinstance(scope_id_field, str):
         raise ContractGenerationError(f"{operation_id} access scope_id_field", scope_id_field)  # noqa: TRY003
-    if resolver not in {"static", "request", "continue_handoff", "acknowledge_handoff"}:
-        raise ContractGenerationError(f"{operation_id} access resolver", resolver)  # noqa: TRY003
     if resource != "server" and resolver == "request" and not scope_id_field:
         raise ContractGenerationError(f"{operation_id} access scope_id_field", scope_id_field)  # noqa: TRY003
     return {

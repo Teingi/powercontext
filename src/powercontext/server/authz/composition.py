@@ -18,14 +18,16 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator, Sequence
 from contextlib import asynccontextmanager
+from typing import Literal
 
 from powercontext.builtin.persistence.oceanbase import OceanBaseConfig, OceanBaseProfile
 from powercontext.builtin.persistence.seekdb import SeekDBConfig, SeekDBProfile
 from powercontext.builtin.persistence.sqlite import SQLiteConfig, SQLiteProfile
 from powercontext.builtin.runtime.composition import BuiltinConfigurationError
 from powercontext.builtin.runtime.config import DatabaseConfig
-from powercontext.server.authz.models import PrincipalRef
-from powercontext.server.authz.repository import ACCESS_TABLES, RelationalAccessRepository
+from powercontext.server.authz.casbin import CasbinAuthorizationProvider
+from powercontext.server.authz.models import DEFAULT_DEPLOYMENT_ID, PrincipalRef
+from powercontext.server.authz.repository import ACCESS_TABLES, RelationalAccessRepository, ensure_access_schema
 from powercontext.server.authz.service import AccessControlService, BuiltinAuthorizationProvider
 
 
@@ -34,9 +36,57 @@ async def open_builtin_access_control(
     database: DatabaseConfig,
     *,
     bootstrap_administrators: Sequence[PrincipalRef] = (),
+    deployment_id: str = DEFAULT_DEPLOYMENT_ID,
+    mode: Literal["legacy-static-admin", "enforced"] = "enforced",
 ) -> AsyncIterator[AccessControlService]:
     """Open a Server-owned Access schema without coupling it to Runtime domains."""
 
+    async with _open_access_repository(database, deployment_id=deployment_id) as repository:
+        provider = BuiltinAuthorizationProvider(
+            repository,
+            bootstrap_administrators=bootstrap_administrators,
+            deployment_id=deployment_id,
+        )
+        yield AccessControlService(
+            provider,
+            relationships=repository,
+            audit=repository,
+            deployment_id=deployment_id,
+            mode=mode,
+        )
+
+
+@asynccontextmanager
+async def open_casbin_access_control(
+    database: DatabaseConfig,
+    *,
+    bootstrap_administrators: Sequence[PrincipalRef] = (),
+    deployment_id: str = DEFAULT_DEPLOYMENT_ID,
+    mode: Literal["legacy-static-admin", "enforced"] = "enforced",
+) -> AsyncIterator[AccessControlService]:
+    """Open the writable embedded Casbin adapter over the canonical Access schema."""
+
+    async with _open_access_repository(database, deployment_id=deployment_id) as repository:
+        provider = CasbinAuthorizationProvider(
+            repository,
+            bootstrap_administrators=bootstrap_administrators,
+            deployment_id=deployment_id,
+        )
+        yield AccessControlService(
+            provider,
+            relationships=provider,
+            audit=repository,
+            deployment_id=deployment_id,
+            mode=mode,
+        )
+
+
+@asynccontextmanager
+async def _open_access_repository(
+    database: DatabaseConfig,
+    *,
+    deployment_id: str,
+) -> AsyncIterator[RelationalAccessRepository]:
     if isinstance(database, SQLiteConfig):
         profile_context = SQLiteProfile.open(database, tables=ACCESS_TABLES)
     elif isinstance(database, OceanBaseConfig):
@@ -46,12 +96,9 @@ async def open_builtin_access_control(
     else:
         raise BuiltinConfigurationError("database")
     async with profile_context as profile:
-        repository = RelationalAccessRepository(profile.database)
-        provider = BuiltinAuthorizationProvider(
-            repository,
-            bootstrap_administrators=bootstrap_administrators,
-        )
-        yield AccessControlService(provider, relationships=repository, audit=repository)
+        async with profile.database.transaction() as connection:
+            await ensure_access_schema(connection, deployment_id=deployment_id)
+        yield RelationalAccessRepository(profile.database)
 
 
-__all__ = ("open_builtin_access_control",)
+__all__ = ("open_builtin_access_control", "open_casbin_access_control")

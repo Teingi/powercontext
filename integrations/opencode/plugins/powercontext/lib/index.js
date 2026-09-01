@@ -236,6 +236,18 @@ const OPERATIONS = {
 		location: "body",
 		scope: true
 	},
+	list_skill_publication_targets: {
+		method: "POST",
+		path: "/v1/skills/publication-targets/list",
+		location: "body",
+		scope: true
+	},
+	publish_managed_skill: {
+		method: "POST",
+		path: "/v1/skills/publish",
+		location: "body",
+		scope: true
+	},
 	scan_external_skills: {
 		method: "POST",
 		path: "/v1/external-skills/scan",
@@ -308,6 +320,12 @@ const OPERATIONS = {
 		location: "body",
 		scope: false
 	},
+	list_handoff_report_known_scopes: {
+		method: "POST",
+		path: "/v1/handoff-reports/scopes/list-known",
+		location: "body",
+		scope: false
+	},
 	get_handoff_report_project: {
 		method: "POST",
 		path: "/v1/handoff-reports/projects/get",
@@ -342,7 +360,7 @@ const OPERATIONS = {
 		method: "POST",
 		path: "/v1/handoff-reports/get",
 		location: "body",
-		scope: false
+		scope: true
 	},
 	record_handoff_report_activity: {
 		method: "POST",
@@ -379,6 +397,60 @@ const OPERATIONS = {
 		path: "/v1/handoff-reports/workspace-bindings/detach",
 		location: "body",
 		scope: false
+	},
+	get_access_principal: {
+		method: "GET",
+		path: "/v1/access/me",
+		location: null,
+		scope: false
+	},
+	check_access: {
+		method: "POST",
+		path: "/v1/access/check",
+		location: "body",
+		scope: false
+	},
+	check_access_batch: {
+		method: "POST",
+		path: "/v1/access/check-batch",
+		location: "body",
+		scope: false
+	},
+	list_access_resources: {
+		method: "POST",
+		path: "/v1/access/resources/list",
+		location: "body",
+		scope: false
+	},
+	list_access_roles: {
+		method: "POST",
+		path: "/v1/access/roles/list",
+		location: "body",
+		scope: false
+	},
+	list_access_bindings: {
+		method: "POST",
+		path: "/v1/access/bindings/list",
+		location: "body",
+		scope: false
+	},
+	create_access_binding: {
+		method: "POST",
+		path: "/v1/access/bindings/create",
+		location: "body",
+		scope: false
+	},
+	revoke_access_binding: {
+		method: "POST",
+		path: "/v1/access/bindings/revoke",
+		location: "body",
+		scope: false
+	},
+	list_access_audit: {
+		method: "POST",
+		path: "/v1/access/audit/list",
+		location: "body",
+		scope: true
 	}
 };
 const OPERATION_IDS = Object.keys(OPERATIONS);

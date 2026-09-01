@@ -358,6 +358,9 @@ def test_review_publishes_an_approved_managed_skill_into_configured_agent_target
     assert wrong_revision.json()["error"]["code"] == "skill_projection_not_approved"
     assert before.status_code == 200
     assert before.json()["targets"][0]["state"] == "unpublished"
+    assert "destination" not in before.json()["targets"][0]
+    assert str(codex_skill_root) not in before.text
+    assert before.json()["targets"][0]["capabilities"] == ["publish"]
     assert [target["agent_kind"] for target in before.json()["targets"]] == ["codex", "claude_code"]
     assert published.status_code == 200
     assert published.json()["targets"][0]["state"] == "current"

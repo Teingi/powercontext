@@ -23,7 +23,7 @@ from typing import Self, TypeVar
 import httpx
 from pydantic import TypeAdapter, ValidationError
 
-from powercontext.client.errors import InvalidResponseError, ServerResponseError, TransportError
+from powercontext.client.errors import InvalidResponseError, TransportError, server_response_error
 from powercontext.client.tracing import ClientSpan
 from powercontext.http import (
     AccessAuditPage,
@@ -33,7 +33,7 @@ from powercontext.http import (
     AccessCheckBatchResponse,
     AccessCheckRequest,
     AccessDecision,
-    AccessPrincipal,
+    AccessMeResponse,
     AccessResourcePage,
     AccessRolePage,
     AcknowledgeHandoffRequest,
@@ -95,6 +95,9 @@ from powercontext.http import (
     ListMemoryChangesResponse,
     ListMemoryEntriesRequest,
     ListMemoryEntriesResponse,
+    ListSkillPublicationTargetsRequest,
+    ListSkillPublicationTargetsResponse,
+    ManagedSkillPublication,
     MemoryEntry,
     MemoryMutationResponse,
     PrepareContextRequest,
@@ -106,6 +109,7 @@ from powercontext.http import (
     ProjectPage,
     ProposeExperienceRequest,
     ProposeSkillRequest,
+    PublishManagedSkillRequest,
     PurgeHandoffReportActivitiesRequest,
     PurgeHandoffReportActivitiesResponse,
     ReadinessResponse,
@@ -176,10 +180,12 @@ from powercontext.http._generated.operations import (
     LIST_HANDOFF_REPORT_WORKSTREAMS,
     LIST_MEMORY_CHANGES,
     LIST_MEMORY_ENTRIES,
+    LIST_SKILL_PUBLICATION_TARGETS,
     PREPARE_CONTEXT,
     PREPARE_HANDOFF,
     PROPOSE_EXPERIENCE,
     PROPOSE_SKILL,
+    PUBLISH_MANAGED_SKILL,
     PURGE_HANDOFF_REPORT_ACTIVITIES,
     RECORD_HANDOFF_REPORT_ACTIVITY,
     RECORD_TASK_OUTCOME,
@@ -434,7 +440,7 @@ class PowerContextClient:
         )
         if response.status_code != GET_HANDOFF_REPORT.success_status:
             error = _decode_error(response.content)
-            raise ServerResponseError(
+            raise server_response_error(
                 status_code=response.status_code,
                 request_id=response.headers.get(REQUEST_ID_HEADER),
                 code=None if error is None else error.error.code,
@@ -448,8 +454,8 @@ class PowerContextClient:
 
         return await self._request(CAPTURE_CONTENT_SOURCE, request)
 
-    async def get_access_principal(self) -> AccessPrincipal:
-        """Return the opaque Principal established by Server authentication."""
+    async def get_access_principal(self) -> AccessMeResponse:
+        """Return the authenticated Principal and enforceable Access capabilities."""
 
         return await self._request(GET_ACCESS_PRINCIPAL)
 
@@ -613,6 +619,19 @@ class PowerContextClient:
 
         return await self._request(GET_SKILL, request)
 
+    async def list_skill_publication_targets(
+        self,
+        request: ListSkillPublicationTargetsRequest,
+    ) -> ListSkillPublicationTargetsResponse:
+        """List safe enabled publication targets for one exact managed Skill."""
+
+        return await self._request(LIST_SKILL_PUBLICATION_TARGETS, request)
+
+    async def publish_managed_skill(self, request: PublishManagedSkillRequest) -> ManagedSkillPublication:
+        """Publish one exact managed Skill to an opaque configured target."""
+
+        return await self._request(PUBLISH_MANAGED_SKILL, request)
+
     async def scan_external_skills(self, request: ScanExternalSkillsRequest) -> ScanExternalSkillsResponse:
         """Refresh the configured host-local external Skill Registry."""
 
@@ -707,7 +726,7 @@ class PowerContextClient:
         request_id = response.headers.get(REQUEST_ID_HEADER)
         if response.status_code != operation.success_status:
             error = _decode_error(response.content)
-            raise ServerResponseError(
+            raise server_response_error(
                 status_code=response.status_code,
                 request_id=request_id,
                 code=None if error is None else error.error.code,

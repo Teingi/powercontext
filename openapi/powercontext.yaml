@@ -67,7 +67,7 @@ paths:
       tags: [capabilities]
       summary: Get runtime capabilities
       operationId: get_capabilities
-      x-powercontext-access: {action: server.observe, resource: server}
+      x-powercontext-access: {action: server.observe, resource: {type: server}}
       responses:
         "200":
           description: Behavior enabled by the assembled runtime.
@@ -88,7 +88,7 @@ paths:
       summary: Capture durable ContentSource evidence
       description: Accept raw content as an idempotent Source without synchronously deriving Artifacts.
       operationId: capture_content_source
-      x-powercontext-access: {action: scope.contribute, resource: scope, scope_id_field: scope_id}
+      x-powercontext-access: {action: scope.contribute, resource: {type: scope, scope-id-from: scope_id}}
       requestBody:
         required: true
         content:
@@ -123,7 +123,7 @@ paths:
       summary: Prepare bounded context for an Agent turn
       description: Prepare final, ephemeral context from Runtime-owned sources without persisting or injecting it.
       operationId: prepare_context
-      x-powercontext-access: {action: scope.read, resource: scope, scope_id_field: scope_id}
+      x-powercontext-access: {action: scope.read, resource: {type: scope, scope-id-from: scope_id}}
       requestBody:
         required: true
         content:
@@ -156,7 +156,7 @@ paths:
       summary: Create a grounded Work Contract
       description: Persist an inspectable delegation baseline without granting execution authority.
       operationId: create_work_contract
-      x-powercontext-access: {action: scope.contribute, resource: scope, scope_id_field: scope_id}
+      x-powercontext-access: {action: scope.contribute, resource: {type: scope, scope-id-from: scope_id}}
       requestBody:
         required: true
         content:
@@ -193,7 +193,7 @@ paths:
       summary: Hand off current work in one high-level operation
       description: Capture an inspected boundary and prepare a temporary evidence-bearing Handoff without committing it.
       operationId: handoff_current_work
-      x-powercontext-access: {action: scope.contribute, resource: scope, scope_id_field: scope_id}
+      x-powercontext-access: {action: scope.contribute, resource: {type: scope, scope-id-from: scope_id}}
       requestBody:
         required: true
         content:
@@ -231,9 +231,7 @@ paths:
       description: Re-resolve one prepared or exact Handoff, check evidence, and capture the receiver's explicit live-state, capability, and authorization checks.
       operationId: acknowledge_handoff
       x-powercontext-access:
-        action: scope.contribute
-        resource: scope
-        resolver: acknowledge_handoff
+        resolver: acknowledge_handoff_access
       requestBody:
         required: true
         content:
@@ -270,7 +268,7 @@ paths:
       summary: Record a completion-aware Task Outcome
       description: Preserve one attempt's status and checks, optionally linked to the exact accepted Handoff Receipt that the result covers.
       operationId: record_task_outcome
-      x-powercontext-access: {action: scope.contribute, resource: scope, scope_id_field: scope_id}
+      x-powercontext-access: {action: scope.contribute, resource: {type: scope, scope-id-from: scope_id}}
       requestBody:
         required: true
         content:
@@ -307,7 +305,7 @@ paths:
       summary: Activate Handoff generation at a Source boundary
       description: Evaluate the standard Handoff Trigger and synchronously execute any emitted PrepareHandoff Action.
       operationId: activate_handoff
-      x-powercontext-access: {action: scope.contribute, resource: scope, scope_id_field: scope_id}
+      x-powercontext-access: {action: scope.contribute, resource: {type: scope, scope-id-from: scope_id}}
       requestBody:
         required: true
         content:
@@ -341,7 +339,7 @@ paths:
       tags: [handoff]
       summary: Generate an inspectable Handoff Draft
       operationId: prepare_handoff
-      x-powercontext-access: {action: scope.contribute, resource: scope, scope_id_field: scope_id}
+      x-powercontext-access: {action: scope.contribute, resource: {type: scope, scope-id-from: scope_id}}
       requestBody:
         required: true
         content:
@@ -375,7 +373,7 @@ paths:
       tags: [handoff]
       summary: Finalize an inspected Handoff Draft
       operationId: finalize_handoff
-      x-powercontext-access: {action: scope.contribute, resource: scope, scope_id_field: scope_id}
+      x-powercontext-access: {action: scope.contribute, resource: {type: scope, scope-id-from: scope_id}}
       requestBody:
         required: true
         content:
@@ -409,7 +407,7 @@ paths:
       tags: [handoff]
       summary: Commit an explicit Handoff milestone
       operationId: commit_handoff
-      x-powercontext-access: {action: scope.contribute, resource: scope, scope_id_field: scope_id}
+      x-powercontext-access: {action: scope.contribute, resource: {type: scope, scope-id-from: scope_id}}
       requestBody:
         required: true
         content:
@@ -446,9 +444,7 @@ paths:
       summary: Resolve a Handoff as untrusted historical input
       operationId: continue_handoff
       x-powercontext-access:
-        action: scope.read
-        resource: scope
-        resolver: continue_handoff
+        resolver: continue_handoff_access
       requestBody:
         required: true
         content:
@@ -483,7 +479,7 @@ paths:
       summary: Process the pending Source window into Memory
       description: Run one bounded Source-to-Memory activation for operational control and testing.
       operationId: flush_memory
-      x-powercontext-access: {action: scope.contribute, resource: scope, scope_id_field: scope_id}
+      x-powercontext-access: {action: scope.contribute, resource: {type: scope, scope-id-from: scope_id}}
       requestBody:
         required: true
         content:
@@ -516,7 +512,7 @@ paths:
       summary: Remember explicit Memory content
       description: Save one already-curated Memory entry without creating a Source or invoking extraction.
       operationId: remember_memory
-      x-powercontext-access: {action: scope.contribute, resource: scope, scope_id_field: scope_id}
+      x-powercontext-access: {action: scope.contribute, resource: {type: scope, scope-id-from: scope_id}}
       requestBody:
         required: true
         content:
@@ -551,7 +547,7 @@ paths:
       summary: Search active Memory entries
       description: Retrieve relevant active Memory entries within one explicit application scope.
       operationId: search_memory
-      x-powercontext-access: {action: scope.read, resource: scope, scope_id_field: scope_id}
+      x-powercontext-access: {action: scope.read, resource: {type: scope, scope-id-from: scope_id}}
       requestBody:
         required: true
         content:
@@ -588,7 +584,7 @@ paths:
         Read active entries from the current Memory head. Inactive entries are available only when explicitly
         requested for audit.
       operationId: list_memory_entries
-      x-powercontext-access: {action: scope.read, resource: scope, scope_id_field: scope_id}
+      x-powercontext-access: {action: scope.read, resource: {type: scope, scope-id-from: scope_id}}
       requestBody:
         required: true
         content:
@@ -623,7 +619,7 @@ paths:
       summary: Get an exact Memory entry version
       description: Resolve an immutable entry citation within one Memory Revision.
       operationId: get_memory_entry
-      x-powercontext-access: {action: scope.read, resource: scope, scope_id_field: scope_id}
+      x-powercontext-access: {resolver: exact_memory_access}
       requestBody:
         required: true
         content:
@@ -658,7 +654,7 @@ paths:
       summary: Revise an exact Memory entry
       description: Replace active entry content against an explicit current Memory Revision.
       operationId: revise_memory_entry
-      x-powercontext-access: {action: scope.contribute, resource: scope, scope_id_field: scope_id}
+      x-powercontext-access: {action: scope.contribute, resource: {type: scope, scope-id-from: scope_id}}
       requestBody:
         required: true
         content:
@@ -695,7 +691,7 @@ paths:
       summary: Retire an exact Memory entry
       description: Deactivate an entry against an explicit current Memory Revision without deleting history.
       operationId: retire_memory_entry
-      x-powercontext-access: {action: scope.contribute, resource: scope, scope_id_field: scope_id}
+      x-powercontext-access: {action: scope.contribute, resource: {type: scope, scope-id-from: scope_id}}
       requestBody:
         required: true
         content:
@@ -732,7 +728,7 @@ paths:
       summary: List Memory Revision changes
       description: Read compact entry changes without expanding entry bodies.
       operationId: list_memory_changes
-      x-powercontext-access: {action: scope.read, resource: scope, scope_id_field: scope_id}
+      x-powercontext-access: {action: scope.read, resource: {type: scope, scope-id-from: scope_id}}
       requestBody:
         required: true
         content:
@@ -767,7 +763,7 @@ paths:
       summary: Propose Experience content
       description: Persist a pending Experience Candidate without creating an Artifact Revision.
       operationId: propose_experience
-      x-powercontext-access: {action: scope.contribute, resource: scope, scope_id_field: scope_id}
+      x-powercontext-access: {action: scope.contribute, resource: {type: scope, scope-id-from: scope_id}}
       requestBody:
         required: true
         content:
@@ -802,7 +798,7 @@ paths:
       summary: Generate an Experience Candidate
       description: Use the configured model and caller-selected exact evidence; persist only a schema-valid pending Candidate.
       operationId: generate_experience
-      x-powercontext-access: {action: scope.contribute, resource: scope, scope_id_field: scope_id}
+      x-powercontext-access: {action: scope.contribute, resource: {type: scope, scope-id-from: scope_id}}
       requestBody:
         required: true
         content:
@@ -837,7 +833,7 @@ paths:
       summary: Get an exact Experience Revision
       description: Read approved Experience content and its exact direct evidence.
       operationId: get_experience
-      x-powercontext-access: {action: scope.read, resource: scope, scope_id_field: scope_id}
+      x-powercontext-access: {resolver: exact_experience_access}
       requestBody:
         required: true
         content:
@@ -872,7 +868,7 @@ paths:
       summary: Propose managed Skill content
       description: Persist a pending managed Skill Candidate without creating an Artifact Revision.
       operationId: propose_skill
-      x-powercontext-access: {action: scope.contribute, resource: scope, scope_id_field: scope_id}
+      x-powercontext-access: {action: scope.contribute, resource: {type: scope, scope-id-from: scope_id}}
       requestBody:
         required: true
         content:
@@ -907,7 +903,7 @@ paths:
       summary: Generate a managed Skill Candidate
       description: Use the configured model with an explicit provenance shape; persist only a schema-valid pending Candidate.
       operationId: generate_skill
-      x-powercontext-access: {action: scope.contribute, resource: scope, scope_id_field: scope_id}
+      x-powercontext-access: {action: scope.contribute, resource: {type: scope, scope-id-from: scope_id}}
       requestBody:
         required: true
         content:
@@ -942,7 +938,7 @@ paths:
       summary: Get an exact managed Skill Revision
       description: Read approved managed Skill content and its exact direct evidence.
       operationId: get_skill
-      x-powercontext-access: {action: scope.read, resource: scope, scope_id_field: scope_id}
+      x-powercontext-access: {resolver: exact_skill_access}
       requestBody:
         required: true
         content:
@@ -971,13 +967,85 @@ paths:
           $ref: "#/components/responses/Unavailable"
         "500":
           $ref: "#/components/responses/InternalError"
+  /v1/skills/publication-targets/list:
+    post:
+      tags: [skill]
+      summary: List safe publication targets for an exact managed Skill
+      description: Return only enabled opaque host-local targets after the exact Skill read and publish checks both allow.
+      operationId: list_skill_publication_targets
+      x-powercontext-access: {resolver: publish_managed_skill_access}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ListSkillPublicationTargetsRequest"
+      responses:
+        "200":
+          description: Enabled publication targets without host paths, locators, or credentials.
+          headers:
+            X-PowerContext-Request-ID:
+              $ref: "#/components/headers/RequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ListSkillPublicationTargetsResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/InvalidRequest"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /v1/skills/publish:
+    post:
+      tags: [skill]
+      summary: Publish an exact managed Skill to one configured target
+      description: Publish only after artifact.read and skill.publish both allow; target_id is resolved after authorization.
+      operationId: publish_managed_skill
+      x-powercontext-access: {resolver: publish_managed_skill_access}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PublishManagedSkillRequest"
+      responses:
+        "200":
+          description: Safe publication result for the selected exact Revision and opaque target.
+          headers:
+            X-PowerContext-Request-ID:
+              $ref: "#/components/headers/RequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ManagedSkillPublication"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/InvalidRequest"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+        "500":
+          $ref: "#/components/responses/InternalError"
   /v1/external-skills/scan:
     post:
       tags: [skill]
       summary: Scan configured external Skill roots
       description: Replace the current host-local Registry projection without copying or rewriting package content.
       operationId: scan_external_skills
-      x-powercontext-access: {action: server.admin, resource: server}
+      x-powercontext-access: {action: server.admin, resource: {type: server}}
       requestBody:
         required: true
         content:
@@ -1010,7 +1078,7 @@ paths:
       summary: List external Skills visible on this host
       description: Return live local resolutions; unavailable registrations are omitted unless explicitly requested.
       operationId: list_external_skills
-      x-powercontext-access: {action: server.observe, resource: server}
+      x-powercontext-access: {action: server.observe, resource: {type: server}}
       requestBody:
         required: true
         content:
@@ -1043,7 +1111,7 @@ paths:
       summary: Resolve an exact external Skill fingerprint
       description: Resolve only the registered local package version requested by the caller; never install or fall back.
       operationId: resolve_external_skill
-      x-powercontext-access: {action: server.observe, resource: server}
+      x-powercontext-access: {action: server.observe, resource: {type: server}}
       requestBody:
         required: true
         content:
@@ -1078,7 +1146,7 @@ paths:
       summary: Import or fork an external Skill into Review
       description: Capture one exact local snapshot and use the configured model to propose a new managed Skill Candidate.
       operationId: import_external_skill
-      x-powercontext-access: {action: scope.contribute, resource: scope, scope_id_field: scope_id}
+      x-powercontext-access: {action: scope.contribute, resource: {type: scope, scope-id-from: scope_id}}
       requestBody:
         required: true
         content:
@@ -1115,7 +1183,7 @@ paths:
       summary: List Artifact Candidates
       description: Page current Candidate heads; pending is the default Review Inbox view.
       operationId: list_artifact_candidates
-      x-powercontext-access: {action: scope.read, resource: scope, scope_id_field: scope_id}
+      x-powercontext-access: {action: scope.read, resource: {type: scope, scope-id-from: scope_id}}
       requestBody:
         required: true
         content:
@@ -1148,7 +1216,7 @@ paths:
       summary: Get an Artifact Candidate
       description: Read the current head and exact immutable proposal version.
       operationId: get_artifact_candidate
-      x-powercontext-access: {action: scope.read, resource: scope, scope_id_field: scope_id}
+      x-powercontext-access: {action: scope.read, resource: {type: scope, scope-id-from: scope_id}}
       requestBody:
         required: true
         content:
@@ -1183,7 +1251,7 @@ paths:
       summary: Approve an Artifact Candidate
       description: Commit the reviewed proposal and mark the Candidate approved in one transaction.
       operationId: approve_artifact_candidate
-      x-powercontext-access: {action: scope.review, resource: scope, scope_id_field: scope_id}
+      x-powercontext-access: {action: scope.review, resource: {type: scope, scope-id-from: scope_id}}
       requestBody:
         required: true
         content:
@@ -1220,7 +1288,7 @@ paths:
       summary: Reject an Artifact Candidate
       description: Move the exact pending version to its rejected terminal state without writing an Artifact.
       operationId: reject_artifact_candidate
-      x-powercontext-access: {action: scope.review, resource: scope, scope_id_field: scope_id}
+      x-powercontext-access: {action: scope.review, resource: {type: scope, scope-id-from: scope_id}}
       requestBody:
         required: true
         content:
@@ -1257,7 +1325,7 @@ paths:
       summary: Revise an Artifact Candidate
       description: Append a complete replacement proposal as the next immutable pending version.
       operationId: revise_artifact_candidate
-      x-powercontext-access: {action: scope.review, resource: scope, scope_id_field: scope_id}
+      x-powercontext-access: {action: scope.review, resource: {type: scope, scope-id-from: scope_id}}
       requestBody:
         required: true
         content:
@@ -1293,7 +1361,7 @@ paths:
       tags: [stats]
       summary: Get scoped product statistics
       operationId: get_stats
-      x-powercontext-access: {action: scope.read, resource: scope, scope_id_field: scope_id}
+      x-powercontext-access: {action: scope.read, resource: {type: scope, scope-id-from: scope_id}}
       parameters:
         - name: scope_id
           in: query
@@ -1338,7 +1406,7 @@ paths:
       tags: [handoff-reports]
       summary: Create a Handoff Report Project
       operationId: create_handoff_report_project
-      x-powercontext-access: {action: server.admin, resource: server}
+      x-powercontext-access: {action: server.admin, resource: {type: server}}
       requestBody:
         required: true
         content:
@@ -1370,7 +1438,7 @@ paths:
       tags: [handoff-reports]
       summary: List Handoff Report Projects
       operationId: list_handoff_report_projects
-      x-powercontext-access: {action: server.observe, resource: server}
+      x-powercontext-access: {action: server.observe, resource: {type: server}}
       requestBody:
         required: true
         content:
@@ -1400,7 +1468,7 @@ paths:
       tags: [handoff-reports]
       summary: List scopes that contain a committed Handoff
       operationId: list_handoff_report_known_scopes
-      x-powercontext-access: {action: server.observe, resource: server}
+      x-powercontext-access: {action: server.observe, resource: {type: server}}
       requestBody:
         required: true
         content:
@@ -1430,7 +1498,7 @@ paths:
       tags: [handoff-reports]
       summary: Get a Handoff Report Project
       operationId: get_handoff_report_project
-      x-powercontext-access: {action: server.observe, resource: server}
+      x-powercontext-access: {action: server.observe, resource: {type: server}}
       requestBody:
         required: true
         content:
@@ -1462,7 +1530,7 @@ paths:
       tags: [handoff-reports]
       summary: Update a Handoff Report Project
       operationId: update_handoff_report_project
-      x-powercontext-access: {action: server.admin, resource: server}
+      x-powercontext-access: {action: server.admin, resource: {type: server}}
       requestBody:
         required: true
         content:
@@ -1496,7 +1564,7 @@ paths:
       tags: [handoff-reports]
       summary: Register a Handoff Report Workstream
       operationId: register_handoff_report_workstream
-      x-powercontext-access: {action: scope.admin, resource: scope, scope_id_field: scope_id}
+      x-powercontext-access: {action: scope.admin, resource: {type: scope, scope-id-from: scope_id}}
       requestBody:
         required: true
         content:
@@ -1530,7 +1598,7 @@ paths:
       tags: [handoff-reports]
       summary: List Handoff Report Workstreams
       operationId: list_handoff_report_workstreams
-      x-powercontext-access: {action: server.observe, resource: server}
+      x-powercontext-access: {action: server.observe, resource: {type: server}}
       requestBody:
         required: true
         content:
@@ -1562,7 +1630,7 @@ paths:
       tags: [handoff-reports]
       summary: Update a Handoff Report Workstream
       operationId: update_handoff_report_workstream
-      x-powercontext-access: {action: scope.admin, resource: scope, scope_id_field: workstream.scope_id}
+      x-powercontext-access: {action: scope.admin, resource: {type: scope, scope-id-from: workstream.scope_id}}
       requestBody:
         required: true
         content:
@@ -1596,7 +1664,7 @@ paths:
       tags: [handoff-reports]
       summary: Generate a Handoff Report
       operationId: get_handoff_report
-      x-powercontext-access: {action: scope.read, resource: scope, scope_id_field: scope_id}
+      x-powercontext-access: {action: scope.read, resource: {type: scope, scope-id-from: scope_id}}
       requestBody:
         required: true
         content:
@@ -1654,7 +1722,7 @@ paths:
       tags: [handoff-reports]
       summary: Record a Handoff Report Activity
       operationId: record_handoff_report_activity
-      x-powercontext-access: {action: server.admin, resource: server}
+      x-powercontext-access: {action: server.admin, resource: {type: server}}
       requestBody:
         required: true
         content:
@@ -1688,7 +1756,7 @@ paths:
       tags: [handoff-reports]
       summary: List Handoff Report Activities
       operationId: list_handoff_report_activities
-      x-powercontext-access: {action: server.observe, resource: server}
+      x-powercontext-access: {action: server.observe, resource: {type: server}}
       requestBody:
         required: true
         content:
@@ -1720,7 +1788,7 @@ paths:
       tags: [handoff-reports]
       summary: Purge Handoff Report Activities
       operationId: purge_handoff_report_activities
-      x-powercontext-access: {action: server.admin, resource: server}
+      x-powercontext-access: {action: server.admin, resource: {type: server}}
       requestBody:
         required: true
         content:
@@ -1752,7 +1820,7 @@ paths:
       tags: [handoff-reports]
       summary: Get a Handoff Report Workspace Binding
       operationId: get_handoff_report_workspace
-      x-powercontext-access: {action: server.observe, resource: server}
+      x-powercontext-access: {action: server.observe, resource: {type: server}}
       requestBody:
         required: true
         content:
@@ -1784,7 +1852,7 @@ paths:
       tags: [handoff-reports]
       summary: Attach a Handoff Report Workspace Binding
       operationId: attach_handoff_report_workspace
-      x-powercontext-access: {action: server.admin, resource: server}
+      x-powercontext-access: {action: server.admin, resource: {type: server}}
       requestBody:
         required: true
         content:
@@ -1818,7 +1886,7 @@ paths:
       tags: [handoff-reports]
       summary: Detach a Handoff Report Workspace Binding
       operationId: detach_handoff_report_workspace
-      x-powercontext-access: {action: server.admin, resource: server}
+      x-powercontext-access: {action: server.admin, resource: {type: server}}
       requestBody:
         required: true
         content:
@@ -1850,16 +1918,16 @@ paths:
   /v1/access/me:
     get:
       tags: [access]
-      summary: Get the authenticated Principal
+      summary: Get the authenticated Principal and Access capabilities
       operationId: get_access_principal
-      x-powercontext-access: {action: access.self, resource: server}
+      x-powercontext-access: {action: access.self, resource: {type: server}}
       responses:
         "200":
-          description: The opaque Principal established by the authentication adapter.
+          description: The opaque Principal and enforceable deployment Access capabilities.
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/AccessPrincipal"
+                $ref: "#/components/schemas/AccessMeResponse"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
@@ -1871,7 +1939,7 @@ paths:
       tags: [access]
       summary: Check one authorization decision
       operationId: check_access
-      x-powercontext-access: {action: access.self, resource: server}
+      x-powercontext-access: {action: access.self, resource: {type: server}}
       requestBody:
         required: true
         content:
@@ -1898,7 +1966,7 @@ paths:
       tags: [access]
       summary: Check a bounded batch of authorization decisions
       operationId: check_access_batch
-      x-powercontext-access: {action: access.self, resource: server}
+      x-powercontext-access: {action: access.self, resource: {type: server}}
       requestBody:
         required: true
         content:
@@ -1925,7 +1993,7 @@ paths:
       tags: [access]
       summary: List only resources already visible to the Principal
       operationId: list_access_resources
-      x-powercontext-access: {action: access.self, resource: server}
+      x-powercontext-access: {action: access.self, resource: {type: server}}
       requestBody:
         required: true
         content:
@@ -1952,7 +2020,7 @@ paths:
       tags: [access]
       summary: List stable built-in role definitions
       operationId: list_access_roles
-      x-powercontext-access: {action: access.self, resource: server}
+      x-powercontext-access: {action: access.self, resource: {type: server}}
       requestBody:
         required: true
         content:
@@ -1977,7 +2045,7 @@ paths:
       tags: [access]
       summary: List Access Bindings under an administrative boundary
       operationId: list_access_bindings
-      x-powercontext-access: {action: access.self, resource: server}
+      x-powercontext-access: {action: access.self, resource: {type: server}}
       requestBody:
         required: true
         content:
@@ -2004,7 +2072,7 @@ paths:
       tags: [access]
       summary: Create an idempotent Access Binding
       operationId: create_access_binding
-      x-powercontext-access: {action: access.self, resource: server}
+      x-powercontext-access: {action: access.self, resource: {type: server}}
       requestBody:
         required: true
         content:
@@ -2033,7 +2101,7 @@ paths:
       tags: [access]
       summary: Revoke an Access Binding using compare-and-swap
       operationId: revoke_access_binding
-      x-powercontext-access: {action: access.self, resource: server}
+      x-powercontext-access: {action: access.self, resource: {type: server}}
       requestBody:
         required: true
         content:
@@ -2062,7 +2130,7 @@ paths:
       tags: [access]
       summary: List data-minimized Access audit events
       operationId: list_access_audit
-      x-powercontext-access: {action: server.admin, resource: server}
+      x-powercontext-access: {resolver: access_audit_access}
       requestBody:
         required: true
         content:
@@ -2184,10 +2252,78 @@ components:
         type: {type: string, minLength: 1, maxLength: 64}
         issuer: {type: string, minLength: 1, maxLength: 255}
         id: {type: string, minLength: 1, maxLength: 255}
+    AccessControlMode:
+      type: string
+      enum: [legacy-static-admin, enforced]
+    AccessProviderCapabilities:
+      type: object
+      additionalProperties: false
+      required: [safe_resource_filtering, multi_requirement_check, relationship_management]
+      properties:
+        safe_resource_filtering: {type: boolean}
+        multi_requirement_check: {type: boolean}
+        relationship_management: {type: boolean}
+    ArtifactFamilyAccessCapability:
+      type: object
+      additionalProperties: false
+      required: [family, enabled, share_unit, actions, grantable_roles]
+      properties:
+        family: {type: string, minLength: 1, maxLength: 128}
+        enabled: {type: boolean}
+        share_unit:
+          type: string
+          enum: [revision, memory_entry]
+        actions:
+          type: array
+          items:
+            $ref: "#/components/schemas/AccessAction"
+        grantable_roles:
+          type: array
+          items:
+            $ref: "#/components/schemas/AccessRole"
+    AccessOperationCapability:
+      type: object
+      additionalProperties: false
+      required: [enabled]
+      properties:
+        enabled: {type: boolean}
+    AccessOperationCapabilities:
+      type: object
+      additionalProperties: false
+      required: [skill_publication]
+      properties:
+        skill_publication:
+          $ref: "#/components/schemas/AccessOperationCapability"
+    AccessMeResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - principal
+        - mode
+        - resource_kinds
+        - provider_capabilities
+        - artifact_families
+        - operation_capabilities
+      properties:
+        principal:
+          $ref: "#/components/schemas/AccessPrincipal"
+        mode:
+          $ref: "#/components/schemas/AccessControlMode"
+        resource_kinds:
+          type: array
+          items:
+            $ref: "#/components/schemas/AccessResourceType"
+        provider_capabilities:
+          $ref: "#/components/schemas/AccessProviderCapabilities"
+        artifact_families:
+          type: array
+          items:
+            $ref: "#/components/schemas/ArtifactFamilyAccessCapability"
+        operation_capabilities:
+          $ref: "#/components/schemas/AccessOperationCapabilities"
     AccessAction:
       type: string
       enum:
-        - access.self
         - server.observe
         - server.admin
         - scope.read
@@ -2195,23 +2331,60 @@ components:
         - scope.review
         - scope.delegate
         - scope.admin
-        - handoff.read
+        - artifact.read
         - handoff.evidence.read
         - handoff.acknowledge
+        - prompt.use
+        - skill.publish
     AccessResourceType:
       type: string
-      enum: [server, scope, handoff]
-    AccessResource:
+      enum: [server, scope, artifact]
+    ServerAccessResource:
       type: object
       additionalProperties: false
-      required: [type]
+      required: [type, deployment_id]
       properties:
-        type:
-          $ref: "#/components/schemas/AccessResourceType"
-        scope_id: {type: string, minLength: 1, maxLength: 256, nullable: true}
-        family: {type: string, minLength: 1, maxLength: 64, nullable: true}
-        artifact_id: {type: string, minLength: 1, maxLength: 256, nullable: true}
-        revision: {type: integer, minimum: 1, nullable: true}
+        type: {type: string, enum: [server]}
+        deployment_id: {type: string, minLength: 1, maxLength: 128, pattern: '^[\x21-\x7E]+$'}
+    ScopeAccessResource:
+      type: object
+      additionalProperties: false
+      required: [type, scope_id]
+      properties:
+        type: {type: string, enum: [scope]}
+        scope_id: {type: string, minLength: 1, maxLength: 256, pattern: '.*\S.*'}
+    MemoryEntryAccessSelector:
+      type: object
+      additionalProperties: false
+      required: [type, entry_id, entry_version_id]
+      properties:
+        type: {type: string, enum: [memory_entry]}
+        entry_id: {type: string, minLength: 1, maxLength: 128, pattern: '^[\x21-\x7E]+$'}
+        entry_version_id: {type: string, minLength: 1, maxLength: 128, pattern: '^[\x21-\x7E]+$'}
+    ArtifactAccessResource:
+      type: object
+      additionalProperties: false
+      required: [type, scope_id, reference, selector]
+      properties:
+        type: {type: string, enum: [artifact]}
+        scope_id: {type: string, minLength: 1, maxLength: 256, pattern: '.*\S.*'}
+        reference:
+          $ref: "#/components/schemas/ArtifactReference"
+        selector:
+          allOf:
+            - $ref: "#/components/schemas/MemoryEntryAccessSelector"
+          nullable: true
+    AccessResource:
+      oneOf:
+        - $ref: "#/components/schemas/ServerAccessResource"
+        - $ref: "#/components/schemas/ScopeAccessResource"
+        - $ref: "#/components/schemas/ArtifactAccessResource"
+      discriminator:
+        propertyName: type
+        mapping:
+          server: "#/components/schemas/ServerAccessResource"
+          scope: "#/components/schemas/ScopeAccessResource"
+          artifact: "#/components/schemas/ArtifactAccessResource"
     AccessDecision:
       type: object
       additionalProperties: false
@@ -2259,24 +2432,29 @@ components:
           $ref: "#/components/schemas/AccessAction"
         resource_type:
           $ref: "#/components/schemas/AccessResourceType"
+        family: {type: string, minLength: 1, maxLength: 128, nullable: true}
         cursor: {type: string, nullable: true}
         limit: {type: integer, minimum: 1, maximum: 500, default: 100}
     AccessResourcePage:
       type: object
       additionalProperties: false
-      required: [items, next_cursor]
+      required: [items, total, next_cursor]
       properties:
         items:
           type: array
           maxItems: 500
           items:
             $ref: "#/components/schemas/AccessResource"
+        total: {type: integer, minimum: 0}
         next_cursor: {type: string, nullable: true}
     AccessRole:
       type: string
       enum:
         - handoff.viewer
         - handoff.receiver
+        - artifact.viewer
+        - prompt.user
+        - skill.publisher
         - scope.viewer
         - scope.contributor
         - scope.reviewer
@@ -2295,7 +2473,7 @@ components:
     AccessRoleDescriptor:
       type: object
       additionalProperties: false
-      required: [role, resource_type, actions]
+      required: [role, resource_type, actions, artifact_families]
       properties:
         role:
           $ref: "#/components/schemas/AccessRole"
@@ -2305,6 +2483,9 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/AccessAction"
+        artifact_families:
+          type: array
+          items: {type: string, minLength: 1, maxLength: 128}
     AccessRolePage:
       type: object
       additionalProperties: false
@@ -2407,6 +2588,7 @@ components:
       type: object
       additionalProperties: false
       properties:
+        scope_id: {type: string, minLength: 1, maxLength: 256, pattern: '.*\S.*', nullable: true}
         after: {type: integer, minimum: 0, nullable: true}
         limit: {type: integer, minimum: 1, maximum: 500, default: 100}
     AccessAuditEvent:
@@ -3746,6 +3928,50 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/ArtifactReference"
+    AgentKind:
+      type: string
+      enum: [codex, claude_code]
+    SkillPublicationTarget:
+      type: object
+      additionalProperties: false
+      required: [target_id, agent_kind, installation_scope, capabilities]
+      properties:
+        target_id: {type: string, minLength: 1, maxLength: 64}
+        agent_kind:
+          $ref: "#/components/schemas/AgentKind"
+        installation_scope:
+          $ref: "#/components/schemas/ExternalSkillInstallationScope"
+        capabilities:
+          type: array
+          items:
+            type: string
+            enum: [publish]
+    ListSkillPublicationTargetsResponse:
+      type: object
+      additionalProperties: false
+      required: [artifact, targets]
+      properties:
+        artifact:
+          $ref: "#/components/schemas/ArtifactReference"
+        targets:
+          type: array
+          maxItems: 100
+          items:
+            $ref: "#/components/schemas/SkillPublicationTarget"
+    ManagedSkillPublication:
+      type: object
+      additionalProperties: false
+      required: [artifact, target_id, agent_kind, installation_scope, state, applied_revision]
+      properties:
+        artifact:
+          $ref: "#/components/schemas/ArtifactReference"
+        target_id: {type: string, minLength: 1, maxLength: 64}
+        agent_kind:
+          $ref: "#/components/schemas/AgentKind"
+        installation_scope:
+          $ref: "#/components/schemas/ExternalSkillInstallationScope"
+        state: {type: string, enum: [published]}
+        applied_revision: {type: integer, minimum: 1}
     SkillProposal:
       type: object
       additionalProperties: false
@@ -3965,6 +4191,23 @@ components:
           pattern: '.*\S.*'
         artifact:
           $ref: "#/components/schemas/ArtifactReference"
+    ListSkillPublicationTargetsRequest:
+      type: object
+      additionalProperties: false
+      required: [scope_id, artifact]
+      properties:
+        scope_id: {type: string, minLength: 1, maxLength: 256, pattern: '.*\S.*'}
+        artifact:
+          $ref: "#/components/schemas/ArtifactReference"
+    PublishManagedSkillRequest:
+      type: object
+      additionalProperties: false
+      required: [scope_id, artifact, target_id]
+      properties:
+        scope_id: {type: string, minLength: 1, maxLength: 256, pattern: '.*\S.*'}
+        artifact:
+          $ref: "#/components/schemas/ArtifactReference"
+        target_id: {type: string, minLength: 1, maxLength: 64, pattern: '^[\x21-\x7E]+$'}
     CreateHandoffReportProjectRequest:
       type: object
       additionalProperties: false

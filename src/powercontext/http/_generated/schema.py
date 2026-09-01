@@ -59,7 +59,7 @@ OPENAPI_SCHEMA: dict[str, JsonValue] = {
                     "401": {"$ref": "#/components/responses/Unauthorized"},
                     "403": {"$ref": "#/components/responses/Forbidden"},
                 },
-                "x-powercontext-access": {"action": "server.observe", "resource": "server"},
+                "x-powercontext-access": {"action": "server.observe", "resource": {"type": "server"}},
             }
         },
         "/v1/sources/content": {
@@ -93,8 +93,7 @@ OPENAPI_SCHEMA: dict[str, JsonValue] = {
                 },
                 "x-powercontext-access": {
                     "action": "scope.contribute",
-                    "resource": "scope",
-                    "scope_id_field": "scope_id",
+                    "resource": {"type": "scope", "scope-id-from": "scope_id"},
                 },
             }
         },
@@ -122,7 +121,10 @@ OPENAPI_SCHEMA: dict[str, JsonValue] = {
                     "503": {"$ref": "#/components/responses/Unavailable"},
                     "500": {"$ref": "#/components/responses/InternalError"},
                 },
-                "x-powercontext-access": {"action": "scope.read", "resource": "scope", "scope_id_field": "scope_id"},
+                "x-powercontext-access": {
+                    "action": "scope.read",
+                    "resource": {"type": "scope", "scope-id-from": "scope_id"},
+                },
             }
         },
         "/v1/work/contracts/create": {
@@ -153,8 +155,7 @@ OPENAPI_SCHEMA: dict[str, JsonValue] = {
                 },
                 "x-powercontext-access": {
                     "action": "scope.contribute",
-                    "resource": "scope",
-                    "scope_id_field": "scope_id",
+                    "resource": {"type": "scope", "scope-id-from": "scope_id"},
                 },
             }
         },
@@ -192,8 +193,7 @@ OPENAPI_SCHEMA: dict[str, JsonValue] = {
                 },
                 "x-powercontext-access": {
                     "action": "scope.contribute",
-                    "resource": "scope",
-                    "scope_id_field": "scope_id",
+                    "resource": {"type": "scope", "scope-id-from": "scope_id"},
                 },
             }
         },
@@ -230,11 +230,7 @@ OPENAPI_SCHEMA: dict[str, JsonValue] = {
                     "503": {"$ref": "#/components/responses/Unavailable"},
                     "500": {"$ref": "#/components/responses/InternalError"},
                 },
-                "x-powercontext-access": {
-                    "action": "scope.contribute",
-                    "resource": "scope",
-                    "resolver": "acknowledge_handoff",
-                },
+                "x-powercontext-access": {"resolver": "acknowledge_handoff_access"},
             }
         },
         "/v1/work/outcomes/record": {
@@ -277,8 +273,7 @@ OPENAPI_SCHEMA: dict[str, JsonValue] = {
                 },
                 "x-powercontext-access": {
                     "action": "scope.contribute",
-                    "resource": "scope",
-                    "scope_id_field": "scope_id",
+                    "resource": {"type": "scope", "scope-id-from": "scope_id"},
                 },
             }
         },
@@ -317,8 +312,7 @@ OPENAPI_SCHEMA: dict[str, JsonValue] = {
                 },
                 "x-powercontext-access": {
                     "action": "scope.contribute",
-                    "resource": "scope",
-                    "scope_id_field": "scope_id",
+                    "resource": {"type": "scope", "scope-id-from": "scope_id"},
                 },
             }
         },
@@ -346,8 +340,7 @@ OPENAPI_SCHEMA: dict[str, JsonValue] = {
                 },
                 "x-powercontext-access": {
                     "action": "scope.contribute",
-                    "resource": "scope",
-                    "scope_id_field": "scope_id",
+                    "resource": {"type": "scope", "scope-id-from": "scope_id"},
                 },
             }
         },
@@ -377,8 +370,7 @@ OPENAPI_SCHEMA: dict[str, JsonValue] = {
                 },
                 "x-powercontext-access": {
                     "action": "scope.contribute",
-                    "resource": "scope",
-                    "scope_id_field": "scope_id",
+                    "resource": {"type": "scope", "scope-id-from": "scope_id"},
                 },
             }
         },
@@ -407,8 +399,7 @@ OPENAPI_SCHEMA: dict[str, JsonValue] = {
                 },
                 "x-powercontext-access": {
                     "action": "scope.contribute",
-                    "resource": "scope",
-                    "scope_id_field": "scope_id",
+                    "resource": {"type": "scope", "scope-id-from": "scope_id"},
                 },
             }
         },
@@ -436,7 +427,7 @@ OPENAPI_SCHEMA: dict[str, JsonValue] = {
                     "503": {"$ref": "#/components/responses/Unavailable"},
                     "500": {"$ref": "#/components/responses/InternalError"},
                 },
-                "x-powercontext-access": {"action": "scope.read", "resource": "scope", "resolver": "continue_handoff"},
+                "x-powercontext-access": {"resolver": "continue_handoff_access"},
             }
         },
         "/v1/memory/flush": {
@@ -465,8 +456,7 @@ OPENAPI_SCHEMA: dict[str, JsonValue] = {
                 },
                 "x-powercontext-access": {
                     "action": "scope.contribute",
-                    "resource": "scope",
-                    "scope_id_field": "scope_id",
+                    "resource": {"type": "scope", "scope-id-from": "scope_id"},
                 },
             }
         },
@@ -499,8 +489,7 @@ OPENAPI_SCHEMA: dict[str, JsonValue] = {
                 },
                 "x-powercontext-access": {
                     "action": "scope.contribute",
-                    "resource": "scope",
-                    "scope_id_field": "scope_id",
+                    "resource": {"type": "scope", "scope-id-from": "scope_id"},
                 },
             }
         },
@@ -529,7 +518,10 @@ OPENAPI_SCHEMA: dict[str, JsonValue] = {
                     "503": {"$ref": "#/components/responses/Unavailable"},
                     "500": {"$ref": "#/components/responses/InternalError"},
                 },
-                "x-powercontext-access": {"action": "scope.read", "resource": "scope", "scope_id_field": "scope_id"},
+                "x-powercontext-access": {
+                    "action": "scope.read",
+                    "resource": {"type": "scope", "scope-id-from": "scope_id"},
+                },
             }
         },
         "/v1/memory/entries/list": {
@@ -562,7 +554,10 @@ OPENAPI_SCHEMA: dict[str, JsonValue] = {
                     "503": {"$ref": "#/components/responses/Unavailable"},
                     "500": {"$ref": "#/components/responses/InternalError"},
                 },
-                "x-powercontext-access": {"action": "scope.read", "resource": "scope", "scope_id_field": "scope_id"},
+                "x-powercontext-access": {
+                    "action": "scope.read",
+                    "resource": {"type": "scope", "scope-id-from": "scope_id"},
+                },
             }
         },
         "/v1/memory/entries/get": {
@@ -588,7 +583,7 @@ OPENAPI_SCHEMA: dict[str, JsonValue] = {
                     "503": {"$ref": "#/components/responses/Unavailable"},
                     "500": {"$ref": "#/components/responses/InternalError"},
                 },
-                "x-powercontext-access": {"action": "scope.read", "resource": "scope", "scope_id_field": "scope_id"},
+                "x-powercontext-access": {"resolver": "exact_memory_access"},
             }
         },
         "/v1/memory/entries/revise": {
@@ -621,8 +616,7 @@ OPENAPI_SCHEMA: dict[str, JsonValue] = {
                 },
                 "x-powercontext-access": {
                     "action": "scope.contribute",
-                    "resource": "scope",
-                    "scope_id_field": "scope_id",
+                    "resource": {"type": "scope", "scope-id-from": "scope_id"},
                 },
             }
         },
@@ -658,8 +652,7 @@ OPENAPI_SCHEMA: dict[str, JsonValue] = {
                 },
                 "x-powercontext-access": {
                     "action": "scope.contribute",
-                    "resource": "scope",
-                    "scope_id_field": "scope_id",
+                    "resource": {"type": "scope", "scope-id-from": "scope_id"},
                 },
             }
         },
@@ -690,7 +683,10 @@ OPENAPI_SCHEMA: dict[str, JsonValue] = {
                     "503": {"$ref": "#/components/responses/Unavailable"},
                     "500": {"$ref": "#/components/responses/InternalError"},
                 },
-                "x-powercontext-access": {"action": "scope.read", "resource": "scope", "scope_id_field": "scope_id"},
+                "x-powercontext-access": {
+                    "action": "scope.read",
+                    "resource": {"type": "scope", "scope-id-from": "scope_id"},
+                },
             }
         },
         "/v1/experience/propose": {
@@ -720,8 +716,7 @@ OPENAPI_SCHEMA: dict[str, JsonValue] = {
                 },
                 "x-powercontext-access": {
                     "action": "scope.contribute",
-                    "resource": "scope",
-                    "scope_id_field": "scope_id",
+                    "resource": {"type": "scope", "scope-id-from": "scope_id"},
                 },
             }
         },
@@ -757,8 +752,7 @@ OPENAPI_SCHEMA: dict[str, JsonValue] = {
                 },
                 "x-powercontext-access": {
                     "action": "scope.contribute",
-                    "resource": "scope",
-                    "scope_id_field": "scope_id",
+                    "resource": {"type": "scope", "scope-id-from": "scope_id"},
                 },
             }
         },
@@ -787,7 +781,7 @@ OPENAPI_SCHEMA: dict[str, JsonValue] = {
                     "503": {"$ref": "#/components/responses/Unavailable"},
                     "500": {"$ref": "#/components/responses/InternalError"},
                 },
-                "x-powercontext-access": {"action": "scope.read", "resource": "scope", "scope_id_field": "scope_id"},
+                "x-powercontext-access": {"resolver": "exact_experience_access"},
             }
         },
         "/v1/skill/propose": {
@@ -815,8 +809,7 @@ OPENAPI_SCHEMA: dict[str, JsonValue] = {
                 },
                 "x-powercontext-access": {
                     "action": "scope.contribute",
-                    "resource": "scope",
-                    "scope_id_field": "scope_id",
+                    "resource": {"type": "scope", "scope-id-from": "scope_id"},
                 },
             }
         },
@@ -849,8 +842,7 @@ OPENAPI_SCHEMA: dict[str, JsonValue] = {
                 },
                 "x-powercontext-access": {
                     "action": "scope.contribute",
-                    "resource": "scope",
-                    "scope_id_field": "scope_id",
+                    "resource": {"type": "scope", "scope-id-from": "scope_id"},
                 },
             }
         },
@@ -877,7 +869,79 @@ OPENAPI_SCHEMA: dict[str, JsonValue] = {
                     "503": {"$ref": "#/components/responses/Unavailable"},
                     "500": {"$ref": "#/components/responses/InternalError"},
                 },
-                "x-powercontext-access": {"action": "scope.read", "resource": "scope", "scope_id_field": "scope_id"},
+                "x-powercontext-access": {"resolver": "exact_skill_access"},
+            }
+        },
+        "/v1/skills/publication-targets/list": {
+            "post": {
+                "tags": ["skill"],
+                "summary": "List safe publication targets for an exact managed Skill",
+                "description": "Return only enabled "
+                "opaque host-local "
+                "targets after the "
+                "exact Skill read and "
+                "publish checks both "
+                "allow.",
+                "operationId": "list_skill_publication_targets",
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {"$ref": "#/components/schemas/ListSkillPublicationTargetsRequest"}
+                        }
+                    },
+                    "required": True,
+                },
+                "responses": {
+                    "200": {
+                        "description": "Enabled publication targets without host paths, locators, or credentials.",
+                        "headers": {"X-PowerContext-Request-ID": {"$ref": "#/components/headers/RequestId"}},
+                        "content": {
+                            "application/json": {
+                                "schema": {"$ref": "#/components/schemas/ListSkillPublicationTargetsResponse"}
+                            }
+                        },
+                    },
+                    "401": {"$ref": "#/components/responses/Unauthorized"},
+                    "403": {"$ref": "#/components/responses/Forbidden"},
+                    "404": {"$ref": "#/components/responses/NotFound"},
+                    "422": {"$ref": "#/components/responses/InvalidRequest"},
+                    "503": {"$ref": "#/components/responses/Unavailable"},
+                    "500": {"$ref": "#/components/responses/InternalError"},
+                },
+                "x-powercontext-access": {"resolver": "publish_managed_skill_access"},
+            }
+        },
+        "/v1/skills/publish": {
+            "post": {
+                "tags": ["skill"],
+                "summary": "Publish an exact managed Skill to one configured target",
+                "description": "Publish only after artifact.read and "
+                "skill.publish both allow; target_id is "
+                "resolved after authorization.",
+                "operationId": "publish_managed_skill",
+                "requestBody": {
+                    "content": {
+                        "application/json": {"schema": {"$ref": "#/components/schemas/PublishManagedSkillRequest"}}
+                    },
+                    "required": True,
+                },
+                "responses": {
+                    "200": {
+                        "description": "Safe publication result for the selected exact Revision and opaque target.",
+                        "headers": {"X-PowerContext-Request-ID": {"$ref": "#/components/headers/RequestId"}},
+                        "content": {
+                            "application/json": {"schema": {"$ref": "#/components/schemas/ManagedSkillPublication"}}
+                        },
+                    },
+                    "401": {"$ref": "#/components/responses/Unauthorized"},
+                    "403": {"$ref": "#/components/responses/Forbidden"},
+                    "404": {"$ref": "#/components/responses/NotFound"},
+                    "409": {"$ref": "#/components/responses/Conflict"},
+                    "422": {"$ref": "#/components/responses/InvalidRequest"},
+                    "503": {"$ref": "#/components/responses/Unavailable"},
+                    "500": {"$ref": "#/components/responses/InternalError"},
+                },
+                "x-powercontext-access": {"resolver": "publish_managed_skill_access"},
             }
         },
         "/v1/external-skills/scan": {
@@ -909,7 +973,7 @@ OPENAPI_SCHEMA: dict[str, JsonValue] = {
                     "503": {"$ref": "#/components/responses/Unavailable"},
                     "500": {"$ref": "#/components/responses/InternalError"},
                 },
-                "x-powercontext-access": {"action": "server.admin", "resource": "server"},
+                "x-powercontext-access": {"action": "server.admin", "resource": {"type": "server"}},
             }
         },
         "/v1/external-skills/list": {
@@ -949,7 +1013,7 @@ OPENAPI_SCHEMA: dict[str, JsonValue] = {
                     "503": {"$ref": "#/components/responses/Unavailable"},
                     "500": {"$ref": "#/components/responses/InternalError"},
                 },
-                "x-powercontext-access": {"action": "server.observe", "resource": "server"},
+                "x-powercontext-access": {"action": "server.observe", "resource": {"type": "server"}},
             }
         },
         "/v1/external-skills/resolve": {
@@ -982,7 +1046,7 @@ OPENAPI_SCHEMA: dict[str, JsonValue] = {
                     "503": {"$ref": "#/components/responses/Unavailable"},
                     "500": {"$ref": "#/components/responses/InternalError"},
                 },
-                "x-powercontext-access": {"action": "server.observe", "resource": "server"},
+                "x-powercontext-access": {"action": "server.observe", "resource": {"type": "server"}},
             }
         },
         "/v1/external-skills/import": {
@@ -1018,8 +1082,7 @@ OPENAPI_SCHEMA: dict[str, JsonValue] = {
                 },
                 "x-powercontext-access": {
                     "action": "scope.contribute",
-                    "resource": "scope",
-                    "scope_id_field": "scope_id",
+                    "resource": {"type": "scope", "scope-id-from": "scope_id"},
                 },
             }
         },
@@ -1049,7 +1112,10 @@ OPENAPI_SCHEMA: dict[str, JsonValue] = {
                     "503": {"$ref": "#/components/responses/Unavailable"},
                     "500": {"$ref": "#/components/responses/InternalError"},
                 },
-                "x-powercontext-access": {"action": "scope.read", "resource": "scope", "scope_id_field": "scope_id"},
+                "x-powercontext-access": {
+                    "action": "scope.read",
+                    "resource": {"type": "scope", "scope-id-from": "scope_id"},
+                },
             }
         },
         "/v1/artifact-candidates/get": {
@@ -1077,7 +1143,10 @@ OPENAPI_SCHEMA: dict[str, JsonValue] = {
                     "503": {"$ref": "#/components/responses/Unavailable"},
                     "500": {"$ref": "#/components/responses/InternalError"},
                 },
-                "x-powercontext-access": {"action": "scope.read", "resource": "scope", "scope_id_field": "scope_id"},
+                "x-powercontext-access": {
+                    "action": "scope.read",
+                    "resource": {"type": "scope", "scope-id-from": "scope_id"},
+                },
             }
         },
         "/v1/artifact-candidates/approve": {
@@ -1106,7 +1175,10 @@ OPENAPI_SCHEMA: dict[str, JsonValue] = {
                     "503": {"$ref": "#/components/responses/Unavailable"},
                     "500": {"$ref": "#/components/responses/InternalError"},
                 },
-                "x-powercontext-access": {"action": "scope.review", "resource": "scope", "scope_id_field": "scope_id"},
+                "x-powercontext-access": {
+                    "action": "scope.review",
+                    "resource": {"type": "scope", "scope-id-from": "scope_id"},
+                },
             }
         },
         "/v1/artifact-candidates/reject": {
@@ -1138,7 +1210,10 @@ OPENAPI_SCHEMA: dict[str, JsonValue] = {
                     "503": {"$ref": "#/components/responses/Unavailable"},
                     "500": {"$ref": "#/components/responses/InternalError"},
                 },
-                "x-powercontext-access": {"action": "scope.review", "resource": "scope", "scope_id_field": "scope_id"},
+                "x-powercontext-access": {
+                    "action": "scope.review",
+                    "resource": {"type": "scope", "scope-id-from": "scope_id"},
+                },
             }
         },
         "/v1/artifact-candidates/revise": {
@@ -1167,7 +1242,10 @@ OPENAPI_SCHEMA: dict[str, JsonValue] = {
                     "503": {"$ref": "#/components/responses/Unavailable"},
                     "500": {"$ref": "#/components/responses/InternalError"},
                 },
-                "x-powercontext-access": {"action": "scope.review", "resource": "scope", "scope_id_field": "scope_id"},
+                "x-powercontext-access": {
+                    "action": "scope.review",
+                    "resource": {"type": "scope", "scope-id-from": "scope_id"},
+                },
             }
         },
         "/v1/stats": {
@@ -1175,7 +1253,10 @@ OPENAPI_SCHEMA: dict[str, JsonValue] = {
                 "tags": ["stats"],
                 "summary": "Get scoped product statistics",
                 "operationId": "get_stats",
-                "x-powercontext-access": {"action": "scope.read", "resource": "scope", "scope_id_field": "scope_id"},
+                "x-powercontext-access": {
+                    "action": "scope.read",
+                    "resource": {"type": "scope", "scope-id-from": "scope_id"},
+                },
                 "parameters": [
                     {
                         "name": "scope_id",
@@ -1235,7 +1316,7 @@ OPENAPI_SCHEMA: dict[str, JsonValue] = {
                     "422": {"$ref": "#/components/responses/InvalidRequest"},
                     "500": {"$ref": "#/components/responses/InternalError"},
                 },
-                "x-powercontext-access": {"action": "server.admin", "resource": "server"},
+                "x-powercontext-access": {"action": "server.admin", "resource": {"type": "server"}},
             }
         },
         "/v1/handoff-reports/projects/list": {
@@ -1262,7 +1343,7 @@ OPENAPI_SCHEMA: dict[str, JsonValue] = {
                     "422": {"$ref": "#/components/responses/InvalidRequest"},
                     "500": {"$ref": "#/components/responses/InternalError"},
                 },
-                "x-powercontext-access": {"action": "server.observe", "resource": "server"},
+                "x-powercontext-access": {"action": "server.observe", "resource": {"type": "server"}},
             }
         },
         "/v1/handoff-reports/scopes/list-known": {
@@ -1291,7 +1372,7 @@ OPENAPI_SCHEMA: dict[str, JsonValue] = {
                     "422": {"$ref": "#/components/responses/InvalidRequest"},
                     "500": {"$ref": "#/components/responses/InternalError"},
                 },
-                "x-powercontext-access": {"action": "server.observe", "resource": "server"},
+                "x-powercontext-access": {"action": "server.observe", "resource": {"type": "server"}},
             }
         },
         "/v1/handoff-reports/projects/get": {
@@ -1317,7 +1398,7 @@ OPENAPI_SCHEMA: dict[str, JsonValue] = {
                     "422": {"$ref": "#/components/responses/InvalidRequest"},
                     "500": {"$ref": "#/components/responses/InternalError"},
                 },
-                "x-powercontext-access": {"action": "server.observe", "resource": "server"},
+                "x-powercontext-access": {"action": "server.observe", "resource": {"type": "server"}},
             }
         },
         "/v1/handoff-reports/projects/update": {
@@ -1346,7 +1427,7 @@ OPENAPI_SCHEMA: dict[str, JsonValue] = {
                     "422": {"$ref": "#/components/responses/InvalidRequest"},
                     "500": {"$ref": "#/components/responses/InternalError"},
                 },
-                "x-powercontext-access": {"action": "server.admin", "resource": "server"},
+                "x-powercontext-access": {"action": "server.admin", "resource": {"type": "server"}},
             }
         },
         "/v1/handoff-reports/workstreams/register": {
@@ -1377,7 +1458,10 @@ OPENAPI_SCHEMA: dict[str, JsonValue] = {
                     "422": {"$ref": "#/components/responses/InvalidRequest"},
                     "500": {"$ref": "#/components/responses/InternalError"},
                 },
-                "x-powercontext-access": {"action": "scope.admin", "resource": "scope", "scope_id_field": "scope_id"},
+                "x-powercontext-access": {
+                    "action": "scope.admin",
+                    "resource": {"type": "scope", "scope-id-from": "scope_id"},
+                },
             }
         },
         "/v1/handoff-reports/workstreams/list": {
@@ -1405,7 +1489,7 @@ OPENAPI_SCHEMA: dict[str, JsonValue] = {
                     "422": {"$ref": "#/components/responses/InvalidRequest"},
                     "500": {"$ref": "#/components/responses/InternalError"},
                 },
-                "x-powercontext-access": {"action": "server.observe", "resource": "server"},
+                "x-powercontext-access": {"action": "server.observe", "resource": {"type": "server"}},
             }
         },
         "/v1/handoff-reports/workstreams/update": {
@@ -1438,8 +1522,7 @@ OPENAPI_SCHEMA: dict[str, JsonValue] = {
                 },
                 "x-powercontext-access": {
                     "action": "scope.admin",
-                    "resource": "scope",
-                    "scope_id_field": "workstream.scope_id",
+                    "resource": {"type": "scope", "scope-id-from": "workstream.scope_id"},
                 },
             }
         },
@@ -1489,7 +1572,10 @@ OPENAPI_SCHEMA: dict[str, JsonValue] = {
                     "503": {"$ref": "#/components/responses/Unavailable"},
                     "500": {"$ref": "#/components/responses/InternalError"},
                 },
-                "x-powercontext-access": {"action": "scope.read", "resource": "scope", "scope_id_field": "scope_id"},
+                "x-powercontext-access": {
+                    "action": "scope.read",
+                    "resource": {"type": "scope", "scope-id-from": "scope_id"},
+                },
             }
         },
         "/v1/handoff-reports/activities/record": {
@@ -1520,7 +1606,7 @@ OPENAPI_SCHEMA: dict[str, JsonValue] = {
                     "422": {"$ref": "#/components/responses/InvalidRequest"},
                     "500": {"$ref": "#/components/responses/InternalError"},
                 },
-                "x-powercontext-access": {"action": "server.admin", "resource": "server"},
+                "x-powercontext-access": {"action": "server.admin", "resource": {"type": "server"}},
             }
         },
         "/v1/handoff-reports/activities/list": {
@@ -1550,7 +1636,7 @@ OPENAPI_SCHEMA: dict[str, JsonValue] = {
                     "422": {"$ref": "#/components/responses/InvalidRequest"},
                     "500": {"$ref": "#/components/responses/InternalError"},
                 },
-                "x-powercontext-access": {"action": "server.observe", "resource": "server"},
+                "x-powercontext-access": {"action": "server.observe", "resource": {"type": "server"}},
             }
         },
         "/v1/handoff-reports/activities/purge": {
@@ -1582,7 +1668,7 @@ OPENAPI_SCHEMA: dict[str, JsonValue] = {
                     "422": {"$ref": "#/components/responses/InvalidRequest"},
                     "500": {"$ref": "#/components/responses/InternalError"},
                 },
-                "x-powercontext-access": {"action": "server.admin", "resource": "server"},
+                "x-powercontext-access": {"action": "server.admin", "resource": {"type": "server"}},
             }
         },
         "/v1/handoff-reports/workspace-bindings/get": {
@@ -1614,7 +1700,7 @@ OPENAPI_SCHEMA: dict[str, JsonValue] = {
                     "422": {"$ref": "#/components/responses/InvalidRequest"},
                     "500": {"$ref": "#/components/responses/InternalError"},
                 },
-                "x-powercontext-access": {"action": "server.observe", "resource": "server"},
+                "x-powercontext-access": {"action": "server.observe", "resource": {"type": "server"}},
             }
         },
         "/v1/handoff-reports/workspace-bindings/attach": {
@@ -1647,7 +1733,7 @@ OPENAPI_SCHEMA: dict[str, JsonValue] = {
                     "422": {"$ref": "#/components/responses/InvalidRequest"},
                     "500": {"$ref": "#/components/responses/InternalError"},
                 },
-                "x-powercontext-access": {"action": "server.admin", "resource": "server"},
+                "x-powercontext-access": {"action": "server.admin", "resource": {"type": "server"}},
             }
         },
         "/v1/handoff-reports/workspace-bindings/detach": {
@@ -1680,24 +1766,24 @@ OPENAPI_SCHEMA: dict[str, JsonValue] = {
                     "422": {"$ref": "#/components/responses/InvalidRequest"},
                     "500": {"$ref": "#/components/responses/InternalError"},
                 },
-                "x-powercontext-access": {"action": "server.admin", "resource": "server"},
+                "x-powercontext-access": {"action": "server.admin", "resource": {"type": "server"}},
             }
         },
         "/v1/access/me": {
             "get": {
                 "tags": ["access"],
-                "summary": "Get the authenticated Principal",
+                "summary": "Get the authenticated Principal and Access capabilities",
                 "operationId": "get_access_principal",
                 "responses": {
                     "200": {
-                        "description": "The opaque Principal established by the authentication adapter.",
-                        "content": {"application/json": {"schema": {"$ref": "#/components/schemas/AccessPrincipal"}}},
+                        "description": "The opaque Principal and enforceable deployment Access capabilities.",
+                        "content": {"application/json": {"schema": {"$ref": "#/components/schemas/AccessMeResponse"}}},
                     },
                     "401": {"$ref": "#/components/responses/Unauthorized"},
                     "403": {"$ref": "#/components/responses/Forbidden"},
                     "503": {"$ref": "#/components/responses/Unavailable"},
                 },
-                "x-powercontext-access": {"action": "access.self", "resource": "server"},
+                "x-powercontext-access": {"action": "access.self", "resource": {"type": "server"}},
             }
         },
         "/v1/access/check": {
@@ -1719,7 +1805,7 @@ OPENAPI_SCHEMA: dict[str, JsonValue] = {
                     "422": {"$ref": "#/components/responses/InvalidRequest"},
                     "503": {"$ref": "#/components/responses/Unavailable"},
                 },
-                "x-powercontext-access": {"action": "access.self", "resource": "server"},
+                "x-powercontext-access": {"action": "access.self", "resource": {"type": "server"}},
             }
         },
         "/v1/access/check-batch": {
@@ -1745,7 +1831,7 @@ OPENAPI_SCHEMA: dict[str, JsonValue] = {
                     "422": {"$ref": "#/components/responses/InvalidRequest"},
                     "503": {"$ref": "#/components/responses/Unavailable"},
                 },
-                "x-powercontext-access": {"action": "access.self", "resource": "server"},
+                "x-powercontext-access": {"action": "access.self", "resource": {"type": "server"}},
             }
         },
         "/v1/access/resources/list": {
@@ -1771,7 +1857,7 @@ OPENAPI_SCHEMA: dict[str, JsonValue] = {
                     "422": {"$ref": "#/components/responses/InvalidRequest"},
                     "503": {"$ref": "#/components/responses/Unavailable"},
                 },
-                "x-powercontext-access": {"action": "access.self", "resource": "server"},
+                "x-powercontext-access": {"action": "access.self", "resource": {"type": "server"}},
             }
         },
         "/v1/access/roles/list": {
@@ -1794,7 +1880,7 @@ OPENAPI_SCHEMA: dict[str, JsonValue] = {
                     "403": {"$ref": "#/components/responses/Forbidden"},
                     "422": {"$ref": "#/components/responses/InvalidRequest"},
                 },
-                "x-powercontext-access": {"action": "access.self", "resource": "server"},
+                "x-powercontext-access": {"action": "access.self", "resource": {"type": "server"}},
             }
         },
         "/v1/access/bindings/list": {
@@ -1818,7 +1904,7 @@ OPENAPI_SCHEMA: dict[str, JsonValue] = {
                     "422": {"$ref": "#/components/responses/InvalidRequest"},
                     "503": {"$ref": "#/components/responses/Unavailable"},
                 },
-                "x-powercontext-access": {"action": "access.self", "resource": "server"},
+                "x-powercontext-access": {"action": "access.self", "resource": {"type": "server"}},
             }
         },
         "/v1/access/bindings/create": {
@@ -1843,7 +1929,7 @@ OPENAPI_SCHEMA: dict[str, JsonValue] = {
                     "422": {"$ref": "#/components/responses/InvalidRequest"},
                     "503": {"$ref": "#/components/responses/Unavailable"},
                 },
-                "x-powercontext-access": {"action": "access.self", "resource": "server"},
+                "x-powercontext-access": {"action": "access.self", "resource": {"type": "server"}},
             }
         },
         "/v1/access/bindings/revoke": {
@@ -1868,7 +1954,7 @@ OPENAPI_SCHEMA: dict[str, JsonValue] = {
                     "422": {"$ref": "#/components/responses/InvalidRequest"},
                     "503": {"$ref": "#/components/responses/Unavailable"},
                 },
-                "x-powercontext-access": {"action": "access.self", "resource": "server"},
+                "x-powercontext-access": {"action": "access.self", "resource": {"type": "server"}},
             }
         },
         "/v1/access/audit/list": {
@@ -1892,7 +1978,7 @@ OPENAPI_SCHEMA: dict[str, JsonValue] = {
                     "422": {"$ref": "#/components/responses/InvalidRequest"},
                     "503": {"$ref": "#/components/responses/Unavailable"},
                 },
-                "x-powercontext-access": {"action": "server.admin", "resource": "server"},
+                "x-powercontext-access": {"resolver": "access_audit_access"},
             }
         },
     },
@@ -1908,10 +1994,67 @@ OPENAPI_SCHEMA: dict[str, JsonValue] = {
                 "type": "object",
                 "required": ["type", "issuer", "id"],
             },
+            "AccessControlMode": {"type": "string", "enum": ["legacy-static-admin", "enforced"]},
+            "AccessProviderCapabilities": {
+                "properties": {
+                    "safe_resource_filtering": {"type": "boolean"},
+                    "multi_requirement_check": {"type": "boolean"},
+                    "relationship_management": {"type": "boolean"},
+                },
+                "additionalProperties": False,
+                "type": "object",
+                "required": ["safe_resource_filtering", "multi_requirement_check", "relationship_management"],
+            },
+            "ArtifactFamilyAccessCapability": {
+                "properties": {
+                    "family": {"type": "string", "maxLength": 128, "minLength": 1},
+                    "enabled": {"type": "boolean"},
+                    "share_unit": {"type": "string", "enum": ["revision", "memory_entry"]},
+                    "actions": {"items": {"$ref": "#/components/schemas/AccessAction"}, "type": "array"},
+                    "grantable_roles": {"items": {"$ref": "#/components/schemas/AccessRole"}, "type": "array"},
+                },
+                "additionalProperties": False,
+                "type": "object",
+                "required": ["family", "enabled", "share_unit", "actions", "grantable_roles"],
+            },
+            "AccessOperationCapability": {
+                "properties": {"enabled": {"type": "boolean"}},
+                "additionalProperties": False,
+                "type": "object",
+                "required": ["enabled"],
+            },
+            "AccessOperationCapabilities": {
+                "properties": {"skill_publication": {"$ref": "#/components/schemas/AccessOperationCapability"}},
+                "additionalProperties": False,
+                "type": "object",
+                "required": ["skill_publication"],
+            },
+            "AccessMeResponse": {
+                "properties": {
+                    "principal": {"$ref": "#/components/schemas/AccessPrincipal"},
+                    "mode": {"$ref": "#/components/schemas/AccessControlMode"},
+                    "resource_kinds": {"items": {"$ref": "#/components/schemas/AccessResourceType"}, "type": "array"},
+                    "provider_capabilities": {"$ref": "#/components/schemas/AccessProviderCapabilities"},
+                    "artifact_families": {
+                        "items": {"$ref": "#/components/schemas/ArtifactFamilyAccessCapability"},
+                        "type": "array",
+                    },
+                    "operation_capabilities": {"$ref": "#/components/schemas/AccessOperationCapabilities"},
+                },
+                "additionalProperties": False,
+                "type": "object",
+                "required": [
+                    "principal",
+                    "mode",
+                    "resource_kinds",
+                    "provider_capabilities",
+                    "artifact_families",
+                    "operation_capabilities",
+                ],
+            },
             "AccessAction": {
                 "type": "string",
                 "enum": [
-                    "access.self",
                     "server.observe",
                     "server.admin",
                     "scope.read",
@@ -1919,23 +2062,80 @@ OPENAPI_SCHEMA: dict[str, JsonValue] = {
                     "scope.review",
                     "scope.delegate",
                     "scope.admin",
-                    "handoff.read",
+                    "artifact.read",
                     "handoff.evidence.read",
                     "handoff.acknowledge",
+                    "prompt.use",
+                    "skill.publish",
                 ],
             },
-            "AccessResourceType": {"type": "string", "enum": ["server", "scope", "handoff"]},
-            "AccessResource": {
+            "AccessResourceType": {"type": "string", "enum": ["server", "scope", "artifact"]},
+            "ServerAccessResource": {
                 "properties": {
-                    "type": {"$ref": "#/components/schemas/AccessResourceType"},
-                    "scope_id": {"type": "string", "maxLength": 256, "minLength": 1, "nullable": True},
-                    "family": {"type": "string", "maxLength": 64, "minLength": 1, "nullable": True},
-                    "artifact_id": {"type": "string", "maxLength": 256, "minLength": 1, "nullable": True},
-                    "revision": {"type": "integer", "minimum": 1.0, "nullable": True},
+                    "type": {"type": "string", "enum": ["server"]},
+                    "deployment_id": {
+                        "type": "string",
+                        "maxLength": 128,
+                        "minLength": 1,
+                        "pattern": "^[\\x21-\\x7E]+$",
+                    },
                 },
                 "additionalProperties": False,
                 "type": "object",
-                "required": ["type"],
+                "required": ["type", "deployment_id"],
+            },
+            "ScopeAccessResource": {
+                "properties": {
+                    "type": {"type": "string", "enum": ["scope"]},
+                    "scope_id": {"type": "string", "maxLength": 256, "minLength": 1, "pattern": ".*\\S.*"},
+                },
+                "additionalProperties": False,
+                "type": "object",
+                "required": ["type", "scope_id"],
+            },
+            "MemoryEntryAccessSelector": {
+                "properties": {
+                    "type": {"type": "string", "enum": ["memory_entry"]},
+                    "entry_id": {"type": "string", "maxLength": 128, "minLength": 1, "pattern": "^[\\x21-\\x7E]+$"},
+                    "entry_version_id": {
+                        "type": "string",
+                        "maxLength": 128,
+                        "minLength": 1,
+                        "pattern": "^[\\x21-\\x7E]+$",
+                    },
+                },
+                "additionalProperties": False,
+                "type": "object",
+                "required": ["type", "entry_id", "entry_version_id"],
+            },
+            "ArtifactAccessResource": {
+                "properties": {
+                    "type": {"type": "string", "enum": ["artifact"]},
+                    "scope_id": {"type": "string", "maxLength": 256, "minLength": 1, "pattern": ".*\\S.*"},
+                    "reference": {"$ref": "#/components/schemas/ArtifactReference"},
+                    "selector": {
+                        "allOf": [{"$ref": "#/components/schemas/MemoryEntryAccessSelector"}],
+                        "nullable": True,
+                    },
+                },
+                "additionalProperties": False,
+                "type": "object",
+                "required": ["type", "scope_id", "reference", "selector"],
+            },
+            "AccessResource": {
+                "oneOf": [
+                    {"$ref": "#/components/schemas/ServerAccessResource"},
+                    {"$ref": "#/components/schemas/ScopeAccessResource"},
+                    {"$ref": "#/components/schemas/ArtifactAccessResource"},
+                ],
+                "discriminator": {
+                    "propertyName": "type",
+                    "mapping": {
+                        "server": "#/components/schemas/ServerAccessResource",
+                        "scope": "#/components/schemas/ScopeAccessResource",
+                        "artifact": "#/components/schemas/ArtifactAccessResource",
+                    },
+                },
             },
             "AccessDecision": {
                 "properties": {
@@ -1985,6 +2185,7 @@ OPENAPI_SCHEMA: dict[str, JsonValue] = {
                 "properties": {
                     "action": {"$ref": "#/components/schemas/AccessAction"},
                     "resource_type": {"$ref": "#/components/schemas/AccessResourceType"},
+                    "family": {"type": "string", "maxLength": 128, "minLength": 1, "nullable": True},
                     "cursor": {"type": "string", "nullable": True},
                     "limit": {"type": "integer", "maximum": 500.0, "minimum": 1.0, "default": 100},
                 },
@@ -1999,17 +2200,21 @@ OPENAPI_SCHEMA: dict[str, JsonValue] = {
                         "type": "array",
                         "maxItems": 500,
                     },
+                    "total": {"type": "integer", "minimum": 0.0},
                     "next_cursor": {"type": "string", "nullable": True},
                 },
                 "additionalProperties": False,
                 "type": "object",
-                "required": ["items", "next_cursor"],
+                "required": ["items", "total", "next_cursor"],
             },
             "AccessRole": {
                 "type": "string",
                 "enum": [
                     "handoff.viewer",
                     "handoff.receiver",
+                    "artifact.viewer",
+                    "prompt.user",
+                    "skill.publisher",
                     "scope.viewer",
                     "scope.contributor",
                     "scope.reviewer",
@@ -2031,10 +2236,14 @@ OPENAPI_SCHEMA: dict[str, JsonValue] = {
                     "role": {"$ref": "#/components/schemas/AccessRole"},
                     "resource_type": {"$ref": "#/components/schemas/AccessResourceType"},
                     "actions": {"items": {"$ref": "#/components/schemas/AccessAction"}, "type": "array"},
+                    "artifact_families": {
+                        "items": {"type": "string", "maxLength": 128, "minLength": 1},
+                        "type": "array",
+                    },
                 },
                 "additionalProperties": False,
                 "type": "object",
-                "required": ["role", "resource_type", "actions"],
+                "required": ["role", "resource_type", "actions", "artifact_families"],
             },
             "AccessRolePage": {
                 "properties": {
@@ -2126,6 +2335,13 @@ OPENAPI_SCHEMA: dict[str, JsonValue] = {
             },
             "ListAccessAuditRequest": {
                 "properties": {
+                    "scope_id": {
+                        "type": "string",
+                        "maxLength": 256,
+                        "minLength": 1,
+                        "pattern": ".*\\S.*",
+                        "nullable": True,
+                    },
                     "after": {"type": "integer", "minimum": 0.0, "nullable": True},
                     "limit": {"type": "integer", "maximum": 500.0, "minimum": 1.0, "default": 100},
                 },
@@ -3183,6 +3399,44 @@ OPENAPI_SCHEMA: dict[str, JsonValue] = {
                 "type": "object",
                 "required": ["artifact", "content", "source_refs", "artifact_refs"],
             },
+            "AgentKind": {"type": "string", "enum": ["codex", "claude_code"]},
+            "SkillPublicationTarget": {
+                "properties": {
+                    "target_id": {"type": "string", "maxLength": 64, "minLength": 1},
+                    "agent_kind": {"$ref": "#/components/schemas/AgentKind"},
+                    "installation_scope": {"$ref": "#/components/schemas/ExternalSkillInstallationScope"},
+                    "capabilities": {"items": {"type": "string", "enum": ["publish"]}, "type": "array"},
+                },
+                "additionalProperties": False,
+                "type": "object",
+                "required": ["target_id", "agent_kind", "installation_scope", "capabilities"],
+            },
+            "ListSkillPublicationTargetsResponse": {
+                "properties": {
+                    "artifact": {"$ref": "#/components/schemas/ArtifactReference"},
+                    "targets": {
+                        "items": {"$ref": "#/components/schemas/SkillPublicationTarget"},
+                        "type": "array",
+                        "maxItems": 100,
+                    },
+                },
+                "additionalProperties": False,
+                "type": "object",
+                "required": ["artifact", "targets"],
+            },
+            "ManagedSkillPublication": {
+                "properties": {
+                    "artifact": {"$ref": "#/components/schemas/ArtifactReference"},
+                    "target_id": {"type": "string", "maxLength": 64, "minLength": 1},
+                    "agent_kind": {"$ref": "#/components/schemas/AgentKind"},
+                    "installation_scope": {"$ref": "#/components/schemas/ExternalSkillInstallationScope"},
+                    "state": {"type": "string", "enum": ["published"]},
+                    "applied_revision": {"type": "integer", "minimum": 1.0},
+                },
+                "additionalProperties": False,
+                "type": "object",
+                "required": ["artifact", "target_id", "agent_kind", "installation_scope", "state", "applied_revision"],
+            },
             "SkillProposal": {
                 "properties": {
                     "name": {"type": "string", "maxLength": 128, "minLength": 1, "pattern": "^\\S(?:.*\\S)?$"},
@@ -3351,6 +3605,25 @@ OPENAPI_SCHEMA: dict[str, JsonValue] = {
                 "additionalProperties": False,
                 "type": "object",
                 "required": ["scope_id", "artifact"],
+            },
+            "ListSkillPublicationTargetsRequest": {
+                "properties": {
+                    "scope_id": {"type": "string", "maxLength": 256, "minLength": 1, "pattern": ".*\\S.*"},
+                    "artifact": {"$ref": "#/components/schemas/ArtifactReference"},
+                },
+                "additionalProperties": False,
+                "type": "object",
+                "required": ["scope_id", "artifact"],
+            },
+            "PublishManagedSkillRequest": {
+                "properties": {
+                    "scope_id": {"type": "string", "maxLength": 256, "minLength": 1, "pattern": ".*\\S.*"},
+                    "artifact": {"$ref": "#/components/schemas/ArtifactReference"},
+                    "target_id": {"type": "string", "maxLength": 64, "minLength": 1, "pattern": "^[\\x21-\\x7E]+$"},
+                },
+                "additionalProperties": False,
+                "type": "object",
+                "required": ["scope_id", "artifact", "target_id"],
             },
             "CreateHandoffReportProjectRequest": {
                 "properties": {

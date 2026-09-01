@@ -45,6 +45,8 @@ export const OPERATIONS = {
   propose_skill: { method: 'POST', path: '/v1/skill/propose', location: "body", scope: true },
   generate_skill: { method: 'POST', path: '/v1/skill/generate', location: "body", scope: true },
   get_skill: { method: 'POST', path: '/v1/skill/get', location: "body", scope: true },
+  list_skill_publication_targets: { method: 'POST', path: '/v1/skills/publication-targets/list', location: "body", scope: true },
+  publish_managed_skill: { method: 'POST', path: '/v1/skills/publish', location: "body", scope: true },
   scan_external_skills: { method: 'POST', path: '/v1/external-skills/scan', location: "body", scope: true },
   list_external_skills: { method: 'POST', path: '/v1/external-skills/list', location: "body", scope: true },
   resolve_external_skill: { method: 'POST', path: '/v1/external-skills/resolve', location: "body", scope: true },
@@ -78,7 +80,7 @@ export const OPERATIONS = {
   list_access_bindings: { method: 'POST', path: '/v1/access/bindings/list', location: "body", scope: false },
   create_access_binding: { method: 'POST', path: '/v1/access/bindings/create', location: "body", scope: false },
   revoke_access_binding: { method: 'POST', path: '/v1/access/bindings/revoke', location: "body", scope: false },
-  list_access_audit: { method: 'POST', path: '/v1/access/audit/list', location: "body", scope: false },
+  list_access_audit: { method: 'POST', path: '/v1/access/audit/list', location: "body", scope: true },
 } as const
 
 export type OperationId = keyof typeof OPERATIONS

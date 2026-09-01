@@ -22,7 +22,7 @@ from collections.abc import AsyncIterator, Sequence
 from contextlib import AsyncExitStack, asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, Response
+from fastapi import FastAPI, Request, Response
 from fastapi.routing import APIRoute
 from starlette.middleware import Middleware
 
@@ -41,8 +41,9 @@ from powercontext.http import Capabilities, MemorySearchMode, PreparedContextSch
 from powercontext.paths import default_scheduler_path
 from powercontext.server.access import HttpAccessLogMiddleware
 from powercontext.server.app import create_app
-from powercontext.server.authz import AccessControlService, PrincipalRef
+from powercontext.server.authz import AccessAction, AccessAuditContext, AccessControlService, PrincipalRef, ResourceRef
 from powercontext.server.authz.composition import open_builtin_access_control
+from powercontext.server.context import current_principal, current_request_id
 from powercontext.server.mcp import mount_mcp
 from powercontext.server.metrics import CONTENT_TYPE_LATEST, HttpMetricsMiddleware, ServerMetrics
 from powercontext.server.middleware import StaticBearerMiddleware
@@ -51,6 +52,26 @@ from powercontext.server.tracing import HttpTracingMiddleware, ServerTracing
 from powercontext.server.web import mount_web_ui
 
 logger = logging.getLogger(__name__)
+
+
+class _MetricsEndpoint:
+    def __init__(self, metrics: ServerMetrics) -> None:
+        self._metrics = metrics
+
+    async def __call__(self, request: Request) -> Response:
+        access: AccessControlService | None = request.app.state.access_control
+        if access is not None:
+            await access.require(
+                current_principal(),
+                AccessAction.SERVER_OBSERVE,
+                ResourceRef.server(access.deployment_id),
+                context=AccessAuditContext(
+                    transport="http",
+                    operation="get_metrics",
+                    request_id=current_request_id(),
+                ),
+            )
+        return Response(self._metrics.render(), media_type=CONTENT_TYPE_LATEST)
 
 
 def create_server_app(
@@ -71,6 +92,10 @@ def create_server_app(
     """Build the Server process and mount MCP when configured."""
 
     resolved = ServerSettings() if settings is None else settings
+    if resolved.access.mode == "enforced" and not resolved.auth.enabled and access_control is None:
+        raise ValueError(  # noqa: TRY003
+            "enforced Access Control requires authentication and an Authorization Provider"
+        )
     config = BuiltinConfig(
         runtime=resolved.runtime,
         database=resolved.database,
@@ -83,7 +108,11 @@ def create_server_app(
     if metrics is not None:
         metrics.set_ready(False)
     readiness_probe = _ServerReadinessProbe(metrics, tracing=resolved_tracing)
-    static_principal = PrincipalRef(type="service", issuer="powercontext:static", id="server-token")
+    static_principal = PrincipalRef(
+        type="service",
+        issuer=f"powercontext:{resolved.access.deployment_id}:static",
+        id="server-token",
+    )
     configured_access_control = None if resolved.access.mode == "disabled" else access_control
 
     @asynccontextmanager
@@ -115,6 +144,8 @@ def create_server_app(
                     open_builtin_access_control(
                         resolved.database,
                         bootstrap_administrators=administrators,
+                        deployment_id=resolved.access.deployment_id,
+                        mode=resolved.access.mode,
                     )
                 )
             readiness_probe.bind(runtime)
@@ -162,12 +193,14 @@ def create_server_app(
         tracing=resolved_tracing,
         handoff_report_enabled=resolved.handoff_report.enabled,
         access_control=configured_access_control,
+        access_mode=resolved.access.mode,
+        agent_skill_targets=config.external_skills.agent_targets,
     )
     _mount_optional_web_ui(app, resolved)
     if metrics is not None:
         app.add_api_route(
             "/metrics",
-            lambda: Response(metrics.render(), media_type=CONTENT_TYPE_LATEST),
+            _MetricsEndpoint(metrics),
             include_in_schema=False,
         )
         operations = _http_operations(app)

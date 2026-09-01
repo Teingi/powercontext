@@ -89,10 +89,12 @@ from powercontext.http._generated.operations import (
     LIST_EXTERNAL_SKILLS,
     LIST_MEMORY_CHANGES,
     LIST_MEMORY_ENTRIES,
+    LIST_SKILL_PUBLICATION_TARGETS,
     PREPARE_CONTEXT,
     PREPARE_HANDOFF,
     PROPOSE_EXPERIENCE,
     PROPOSE_SKILL,
+    PUBLISH_MANAGED_SKILL,
     RECORD_TASK_OUTCOME,
     REJECT_ARTIFACT_CANDIDATE,
     REMEMBER_MEMORY,
@@ -216,11 +218,37 @@ def test_memory_search_declares_the_revision_conflict_response() -> None:
 
 def test_handoff_access_metadata_preserves_exact_revision_authorization() -> None:
     assert CONTINUE_HANDOFF.access is not None
-    assert CONTINUE_HANDOFF.access.action == "scope.read"
-    assert CONTINUE_HANDOFF.access.resolver == "continue_handoff"
+    assert CONTINUE_HANDOFF.access.action is None
+    assert CONTINUE_HANDOFF.access.resolver == "continue_handoff_access"
     assert ACKNOWLEDGE_HANDOFF.access is not None
-    assert ACKNOWLEDGE_HANDOFF.access.action == "scope.contribute"
-    assert ACKNOWLEDGE_HANDOFF.access.resolver == "acknowledge_handoff"
+    assert ACKNOWLEDGE_HANDOFF.access.action is None
+    assert ACKNOWLEDGE_HANDOFF.access.resolver == "acknowledge_handoff_access"
+
+
+def test_access_contract_uses_stable_resource_kinds_family_profiles_and_skill_publication() -> None:
+    contract = yaml.safe_load(CONTRACT_PATH.read_text())
+    schemas = contract["components"]["schemas"]
+
+    assert schemas["AccessResourceType"]["enum"] == ["server", "scope", "artifact"]
+    assert "access.self" not in schemas["AccessAction"]["enum"]
+    artifact = schemas["ArtifactAccessResource"]
+    assert artifact["required"] == ["type", "scope_id", "reference", "selector"]
+    assert set(artifact["properties"]) == {"type", "scope_id", "reference", "selector"}
+    selector = schemas["MemoryEntryAccessSelector"]
+    assert selector["required"] == ["type", "entry_id", "entry_version_id"]
+
+    assert GET_MEMORY_ENTRY.access is not None
+    assert GET_MEMORY_ENTRY.access.resolver == "exact_memory_access"
+    assert GET_EXPERIENCE.access is not None
+    assert GET_EXPERIENCE.access.resolver == "exact_experience_access"
+    assert GET_SKILL.access is not None
+    assert GET_SKILL.access.resolver == "exact_skill_access"
+    assert LIST_SKILL_PUBLICATION_TARGETS.path == "/v1/skills/publication-targets/list"
+    assert PUBLISH_MANAGED_SKILL.path == "/v1/skills/publish"
+    assert LIST_SKILL_PUBLICATION_TARGETS.access is not None
+    assert LIST_SKILL_PUBLICATION_TARGETS.access.resolver == "publish_managed_skill_access"
+    assert PUBLISH_MANAGED_SKILL.access is not None
+    assert PUBLISH_MANAGED_SKILL.access.resolver == "publish_managed_skill_access"
 
 
 def test_prepared_context_is_a_generic_typed_operation_outside_the_mcp_memory_tools() -> None:

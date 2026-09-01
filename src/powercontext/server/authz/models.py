@@ -16,16 +16,20 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
 
 from powercontext.server.authz.errors import AccessInvalidRequestError
 
+DEFAULT_DEPLOYMENT_ID = "powercontext"
+
 
 class AccessAction(StrEnum):
     """Stable actions checked by Server business operations."""
 
+    # Internal authentication-only requirement used by Access self-service routes.
     ACCESS_SELF = "access.self"
     SERVER_OBSERVE = "server.observe"
     SERVER_ADMIN = "server.admin"
@@ -34,17 +38,22 @@ class AccessAction(StrEnum):
     SCOPE_REVIEW = "scope.review"
     SCOPE_DELEGATE = "scope.delegate"
     SCOPE_ADMIN = "scope.admin"
-    HANDOFF_READ = "handoff.read"
+    ARTIFACT_READ = "artifact.read"
     HANDOFF_EVIDENCE_READ = "handoff.evidence.read"
     HANDOFF_ACKNOWLEDGE = "handoff.acknowledge"
+    PROMPT_USE = "prompt.use"
+    SKILL_PUBLISH = "skill.publish"
+
+
+PUBLIC_ACCESS_ACTIONS = tuple(action for action in AccessAction if action is not AccessAction.ACCESS_SELF)
 
 
 class AccessResourceType(StrEnum):
-    """Resource types understood by the first authorization profile."""
+    """Stable Resource Kinds understood by the authorization boundary."""
 
     SERVER = "server"
     SCOPE = "scope"
-    HANDOFF = "handoff"
+    ARTIFACT = "artifact"
 
 
 class AccessRole(StrEnum):
@@ -52,6 +61,9 @@ class AccessRole(StrEnum):
 
     HANDOFF_VIEWER = "handoff.viewer"
     HANDOFF_RECEIVER = "handoff.receiver"
+    ARTIFACT_VIEWER = "artifact.viewer"
+    PROMPT_USER = "prompt.user"
+    SKILL_PUBLISHER = "skill.publisher"
     SCOPE_VIEWER = "scope.viewer"
     SCOPE_CONTRIBUTOR = "scope.contributor"
     SCOPE_REVIEWER = "scope.reviewer"
@@ -77,12 +89,45 @@ class PrincipalRef:
     id: str
 
     def __post_init__(self) -> None:
-        if not all(isinstance(value, str) and value and value.strip() for value in (self.type, self.issuer, self.id)):
+        if not (
+            _valid_text(self.type, maximum=64)
+            and _valid_text(self.issuer, maximum=255)
+            and _valid_text(self.id, maximum=255)
+        ):
             raise AccessInvalidRequestError("principal")
 
     @property
     def key(self) -> str:
-        return "\x1f".join((self.type, self.issuer, self.id))
+        return _canonical_json({"id": self.id, "issuer": self.issuer, "type": self.type})
+
+
+@dataclass(frozen=True, slots=True)
+class AccessArtifactReference:
+    """Exact immutable Artifact identity used by one Access resource."""
+
+    family: str
+    artifact_id: str
+    revision: int
+
+    def __post_init__(self) -> None:
+        if not _valid_text(self.family, maximum=128) or not _valid_text(self.artifact_id, maximum=128):
+            raise AccessInvalidRequestError("artifact-reference")
+        if isinstance(self.revision, bool) or not isinstance(self.revision, int) or self.revision < 1:
+            raise AccessInvalidRequestError("artifact-reference")
+
+
+@dataclass(frozen=True, slots=True)
+class MemoryEntrySelector:
+    """Exact Memory Entry Version selected inside one Memory Revision."""
+
+    entry_id: str
+    entry_version_id: str
+
+    type: str = "memory_entry"
+
+    def __post_init__(self) -> None:
+        if not _valid_text(self.entry_id, maximum=128) or not _valid_text(self.entry_version_id, maximum=128):
+            raise AccessInvalidRequestError("memory-entry-selector")
 
 
 @dataclass(frozen=True, slots=True)
@@ -90,36 +135,61 @@ class ResourceRef:
     """Canonical structured target of one authorization decision."""
 
     type: AccessResourceType
+    deployment_id: str | None = None
     scope_id: str | None = None
-    family: str | None = None
-    artifact_id: str | None = None
-    revision: int | None = None
+    reference: AccessArtifactReference | None = None
+    selector: MemoryEntrySelector | None = None
 
     def __post_init__(self) -> None:
         if self.type is AccessResourceType.SERVER:
-            valid = self.scope_id is None and self.family is None and self.artifact_id is None and self.revision is None
+            valid = (
+                _valid_text(self.deployment_id, maximum=128)
+                and self.scope_id is None
+                and self.reference is None
+                and self.selector is None
+            )
         elif self.type is AccessResourceType.SCOPE:
-            valid = bool(self.scope_id) and self.family is None and self.artifact_id is None and self.revision is None
+            valid = (
+                self.deployment_id is None
+                and _valid_text(self.scope_id, maximum=256)
+                and self.reference is None
+                and self.selector is None
+            )
         else:
             valid = (
-                bool(self.scope_id)
-                and self.family == "handoff"
-                and bool(self.artifact_id)
-                and self.revision is not None
-                and self.revision > 0
+                self.deployment_id is None and _valid_text(self.scope_id, maximum=256) and self.reference is not None
             )
         if not valid:
-            raise AccessInvalidRequestError(
-                "handoff-reference" if self.type is AccessResourceType.HANDOFF else "resource"
-            )
+            raise AccessInvalidRequestError("resource")
 
     @classmethod
-    def server(cls) -> ResourceRef:
-        return cls(type=AccessResourceType.SERVER)
+    def server(cls, deployment_id: str = DEFAULT_DEPLOYMENT_ID) -> ResourceRef:
+        return cls(type=AccessResourceType.SERVER, deployment_id=deployment_id)
 
     @classmethod
     def scope(cls, scope_id: str) -> ResourceRef:
         return cls(type=AccessResourceType.SCOPE, scope_id=scope_id)
+
+    @classmethod
+    def artifact(
+        cls,
+        scope_id: str,
+        *,
+        family: str,
+        artifact_id: str,
+        revision: int,
+        selector: MemoryEntrySelector | None = None,
+    ) -> ResourceRef:
+        return cls(
+            type=AccessResourceType.ARTIFACT,
+            scope_id=scope_id,
+            reference=AccessArtifactReference(
+                family=family,
+                artifact_id=artifact_id,
+                revision=revision,
+            ),
+            selector=selector,
+        )
 
     @classmethod
     def handoff(
@@ -129,24 +199,55 @@ class ResourceRef:
         artifact_id: str,
         revision: int,
     ) -> ResourceRef:
-        return cls(
-            type=AccessResourceType.HANDOFF,
-            scope_id=scope_id,
+        """Build an exact Handoff Artifact resource."""
+
+        return cls.artifact(
+            scope_id,
             family="handoff",
             artifact_id=artifact_id,
             revision=revision,
         )
 
     @property
+    def family(self) -> str | None:
+        return None if self.reference is None else self.reference.family
+
+    @property
+    def artifact_id(self) -> str | None:
+        return None if self.reference is None else self.reference.artifact_id
+
+    @property
+    def revision(self) -> int | None:
+        return None if self.reference is None else self.reference.revision
+
+    @property
     def key(self) -> str:
-        values = (
-            self.type.value,
-            self.scope_id or "",
-            self.family or "",
-            self.artifact_id or "",
-            "" if self.revision is None else str(self.revision),
-        )
-        return "\x1f".join(values)
+        if self.type is AccessResourceType.SERVER:
+            value: dict[str, object] = {"deployment_id": self.deployment_id, "type": self.type.value}
+        elif self.type is AccessResourceType.SCOPE:
+            value = {"scope_id": self.scope_id, "type": self.type.value}
+        else:
+            if self.reference is None:
+                raise AccessInvalidRequestError("artifact-reference")
+            value = {
+                "reference": {
+                    "artifact_id": self.reference.artifact_id,
+                    "family": self.reference.family,
+                    "revision": self.reference.revision,
+                },
+                "scope_id": self.scope_id,
+                "selector": (
+                    None
+                    if self.selector is None
+                    else {
+                        "entry_id": self.selector.entry_id,
+                        "entry_version_id": self.selector.entry_version_id,
+                        "type": self.selector.type,
+                    }
+                ),
+                "type": self.type.value,
+            }
+        return _canonical_json(value)
 
     @property
     def parent_scope(self) -> ResourceRef | None:
@@ -207,35 +308,42 @@ class AccessAuditEvent:
 
 
 ROLE_ACTIONS: dict[AccessRole, frozenset[AccessAction]] = {
-    AccessRole.HANDOFF_VIEWER: frozenset({AccessAction.HANDOFF_READ, AccessAction.HANDOFF_EVIDENCE_READ}),
+    AccessRole.HANDOFF_VIEWER: frozenset({AccessAction.ARTIFACT_READ, AccessAction.HANDOFF_EVIDENCE_READ}),
     AccessRole.HANDOFF_RECEIVER: frozenset({
-        AccessAction.HANDOFF_READ,
+        AccessAction.ARTIFACT_READ,
         AccessAction.HANDOFF_EVIDENCE_READ,
         AccessAction.HANDOFF_ACKNOWLEDGE,
     }),
+    AccessRole.ARTIFACT_VIEWER: frozenset({AccessAction.ARTIFACT_READ}),
+    AccessRole.PROMPT_USER: frozenset({AccessAction.ARTIFACT_READ, AccessAction.PROMPT_USE}),
+    AccessRole.SKILL_PUBLISHER: frozenset({AccessAction.ARTIFACT_READ, AccessAction.SKILL_PUBLISH}),
     AccessRole.SCOPE_VIEWER: frozenset({
         AccessAction.SCOPE_READ,
-        AccessAction.HANDOFF_READ,
+        AccessAction.ARTIFACT_READ,
         AccessAction.HANDOFF_EVIDENCE_READ,
+        AccessAction.PROMPT_USE,
     }),
     AccessRole.SCOPE_CONTRIBUTOR: frozenset({
         AccessAction.SCOPE_READ,
         AccessAction.SCOPE_CONTRIBUTE,
-        AccessAction.HANDOFF_READ,
+        AccessAction.ARTIFACT_READ,
         AccessAction.HANDOFF_EVIDENCE_READ,
         AccessAction.HANDOFF_ACKNOWLEDGE,
+        AccessAction.PROMPT_USE,
     }),
     AccessRole.SCOPE_REVIEWER: frozenset({
         AccessAction.SCOPE_READ,
         AccessAction.SCOPE_REVIEW,
-        AccessAction.HANDOFF_READ,
+        AccessAction.ARTIFACT_READ,
         AccessAction.HANDOFF_EVIDENCE_READ,
+        AccessAction.PROMPT_USE,
     }),
     AccessRole.SCOPE_DELEGATOR: frozenset({
         AccessAction.SCOPE_READ,
         AccessAction.SCOPE_DELEGATE,
-        AccessAction.HANDOFF_READ,
+        AccessAction.ARTIFACT_READ,
         AccessAction.HANDOFF_EVIDENCE_READ,
+        AccessAction.PROMPT_USE,
     }),
     AccessRole.SCOPE_ADMIN: frozenset({
         AccessAction.SCOPE_READ,
@@ -243,17 +351,22 @@ ROLE_ACTIONS: dict[AccessRole, frozenset[AccessAction]] = {
         AccessAction.SCOPE_REVIEW,
         AccessAction.SCOPE_DELEGATE,
         AccessAction.SCOPE_ADMIN,
-        AccessAction.HANDOFF_READ,
+        AccessAction.ARTIFACT_READ,
         AccessAction.HANDOFF_EVIDENCE_READ,
         AccessAction.HANDOFF_ACKNOWLEDGE,
+        AccessAction.PROMPT_USE,
+        AccessAction.SKILL_PUBLISH,
     }),
     AccessRole.SERVER_OBSERVER: frozenset({AccessAction.SERVER_OBSERVE}),
     AccessRole.SERVER_ADMIN: frozenset(AccessAction),
 }
 
 ROLE_RESOURCE_TYPES: dict[AccessRole, AccessResourceType] = {
-    AccessRole.HANDOFF_VIEWER: AccessResourceType.HANDOFF,
-    AccessRole.HANDOFF_RECEIVER: AccessResourceType.HANDOFF,
+    AccessRole.HANDOFF_VIEWER: AccessResourceType.ARTIFACT,
+    AccessRole.HANDOFF_RECEIVER: AccessResourceType.ARTIFACT,
+    AccessRole.ARTIFACT_VIEWER: AccessResourceType.ARTIFACT,
+    AccessRole.PROMPT_USER: AccessResourceType.ARTIFACT,
+    AccessRole.SKILL_PUBLISHER: AccessResourceType.ARTIFACT,
     AccessRole.SCOPE_VIEWER: AccessResourceType.SCOPE,
     AccessRole.SCOPE_CONTRIBUTOR: AccessResourceType.SCOPE,
     AccessRole.SCOPE_REVIEWER: AccessResourceType.SCOPE,
@@ -264,16 +377,28 @@ ROLE_RESOURCE_TYPES: dict[AccessRole, AccessResourceType] = {
 }
 
 
+def _valid_text(value: object, *, maximum: int) -> bool:
+    return isinstance(value, str) and bool(value.strip()) and value == value.strip() and len(value) <= maximum
+
+
+def _canonical_json(value: object) -> str:
+    return json.dumps(value, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
+
+
 __all__ = (
+    "DEFAULT_DEPLOYMENT_ID",
+    "PUBLIC_ACCESS_ACTIONS",
     "ROLE_ACTIONS",
     "ROLE_RESOURCE_TYPES",
     "AccessAction",
+    "AccessArtifactReference",
     "AccessAuditEvent",
     "AccessBinding",
     "AccessBindingState",
     "AccessDecision",
     "AccessResourceType",
     "AccessRole",
+    "MemoryEntrySelector",
     "PrincipalRef",
     "ResourceRef",
 )

@@ -19,13 +19,22 @@ import httpx
 import pytest
 from pydantic import ValidationError
 
-from powercontext.client import InvalidResponseError, PowerContextClient, ServerResponseError, TransportError
+from powercontext.client import (
+    ForbiddenResponseError,
+    InvalidResponseError,
+    PowerContextClient,
+    ServerResponseError,
+    TransportError,
+    UnauthorizedResponseError,
+    UnavailableResponseError,
+)
 from powercontext.client.settings import ClientSettings
 from powercontext.http import (
     AccessAction,
     AccessCheckRequest,
     AccessResource,
-    AccessResourceType,
+    ArtifactAccessResource,
+    ArtifactReference,
     CaptureContentSourceRequest,
     GetHandoffReportRequest,
 )
@@ -46,20 +55,21 @@ def test_client_exposes_typed_access_check() -> None:
             client = PowerContextClient("https://memory.example", http_client=http_client)
             decision = await client.check_access(
                 AccessCheckRequest(
-                    action=AccessAction.HANDOFF_READ,
+                    action=AccessAction.ARTIFACT_READ,
                     resource=AccessResource(
-                        type=AccessResourceType.HANDOFF,
-                        scope_id="scope-a",
-                        family="handoff",
-                        artifact_id="handoff-a",
-                        revision=3,
+                        root=ArtifactAccessResource(
+                            type="artifact",
+                            scope_id="scope-a",
+                            reference=ArtifactReference(family="handoff", artifact_id="handoff-a", revision=3),
+                            selector=None,
+                        )
                     ),
                 )
             )
 
         assert decision.allowed is True
         assert requests[0].url.path == "/v1/access/check"
-        assert json.loads(requests[0].content)["resource"]["artifact_id"] == "handoff-a"
+        assert json.loads(requests[0].content)["resource"]["reference"]["artifact_id"] == "handoff-a"
 
     asyncio.run(scenario())
 
@@ -111,6 +121,32 @@ def test_client_preserves_server_error_context() -> None:
         assert caught.value.code == "runtime_not_ready"
         assert caught.value.server_message == "The Runtime is not ready."
         assert caught.value.details == {"component": "memory"}
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize(
+    ("status_code", "error_type"),
+    [
+        (401, UnauthorizedResponseError),
+        (403, ForbiddenResponseError),
+        (503, UnavailableResponseError),
+    ],
+)
+def test_client_maps_access_statuses_to_distinct_stable_exceptions(
+    status_code: int,
+    error_type: type[ServerResponseError],
+) -> None:
+    async def scenario() -> None:
+        response = httpx.Response(
+            status_code,
+            json={"error": {"code": "access_failure", "message": "Access failed.", "details": None}},
+        )
+        async with httpx.AsyncClient(transport=httpx.MockTransport(lambda request: response)) as http_client:
+            client = PowerContextClient("https://memory.example", http_client=http_client)
+            with pytest.raises(error_type) as caught:
+                await client.get_readiness()
+        assert caught.value.status_code == status_code
 
     asyncio.run(scenario())
 

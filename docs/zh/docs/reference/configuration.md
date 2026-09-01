@@ -54,6 +54,7 @@ Server 配置使用 `POWERCONTEXT_SERVER_` 前缀。
 | `POWERCONTEXT_SERVER_AUTH_TOKEN` | 未设置 | 静态 Bearer token；启用鉴权时必须设置 |
 | `POWERCONTEXT_SERVER_ACCESS_MODE` | `legacy-static-admin` | 权限启用模式：`disabled`、`legacy-static-admin` 或 `enforced` |
 | `POWERCONTEXT_SERVER_ACCESS_BOOTSTRAP_STATIC_PRINCIPAL` | `true` | 是否把部署本地静态 token 的 Principal 作为初始 Server 管理员 |
+| `POWERCONTEXT_SERVER_ACCESS_DEPLOYMENT_ID` | `powercontext` | `server` Access Resource 与静态 Principal issuer 使用的稳定部署标识 |
 | `POWERCONTEXT_SERVER_ALLOW_UNAUTHENTICATED_NON_LOOPBACK` | `false` | 在鉴权关闭时显式允许绑定非 loopback 地址 |
 | `POWERCONTEXT_SERVER_DASHBOARD_ENABLED` | `true` | 在 Server 根路径 `/` 启用 Dashboard |
 | `POWERCONTEXT_SERVER_DASHBOARD_SCOPES` | `[]` | Dashboard 可选择的 scope JSON 数组 |
@@ -98,10 +99,22 @@ Server 管理员，以保持单用户本地部署的兼容行为。`enforced` �
 多用户 authentication 与 Authorization Provider 使用。在已有其他管理员关系后，可设置
 `bootstrap_static_principal=false`。`disabled` 会跳过授权决策，只应作为可信网络边界内的显式兼容回退。
 
+远程、多用户或共享 Dashboard 必须使用 `enforced`。此模式下，HTTP、MCP、Dashboard 数据路由和 metrics 共用同一个
+Server PEP；Dashboard 配置的 scope 会在返回前按当前 Principal 的 `scope.read` 判定过滤。`/v1/access/me` 返回
+`server`/`scope`/`artifact` Resource Kind、Provider 的 batch/list/relationship 能力、Family profile，以及当前部署是否
+具备受双重授权保护的 managed Skill publication operation。
+
 内置 Access schema 使用配置好的 SQLite、seekDB 或 OceanBase，但由 Server 独立持有，不进入 Runtime 领域。自定义部署
-可以向 `create_server_app` 注入 `AccessControlService`，并用 OpenFGA、Casbin、Oso 或其他策略系统实现
-`AuthorizationProvider` 与 `RelationshipWriter` protocol。authentication middleware 必须绑定不透明的
-`PrincipalRef`；`scope_id` 只用于资源分区，不能建立身份。
+可以向 `create_server_app` 注入 `AccessControlService`。内置的可写外部 adapter `CasbinAuthorizationProvider` 使用
+embedded Casbin 判定固定 action vocabulary，并把 canonical Binding Store 作为持久化 adapter，因此在不维护第二份影子
+策略的前提下支持 point/batch check、safe resource filter、create/revoke、过期和 CAS。组装时将它同时作为 decision
+provider 与 `relationships`，relational repository 仍作为 audit store。
+
+`AuthZenAuthorizationProvider` 是对接 OpenID AuthZEN Authorization API 1.0 `evaluation`/`evaluations` endpoint 的
+decision-only adapter。其 capability 应配置为 `multi_requirement_check=true`、`relationship_management=false` 和
+`safe_resource_filtering=false`；此时 self-service Binding mutation 和授权资源列表会返回 503，而不会虚报不安全的能力。
+该 adapter 只接受 HTTPS endpoint 或 loopback HTTP，拒绝 URL 内嵌 credential，也不会把 PDP response body 或原始错误
+暴露出去。authentication middleware 仍必须绑定不透明的 `PrincipalRef`；`scope_id` 只用于资源分区，不能建立身份。
 
 Python Client 和 CLI 对出站请求应用相同规则：配置的明文 `http://` Server URL 仅接受 loopback 主机，并且 Client 拒绝
 通过明文的非 loopback HTTP 发送任何请求，无论是否携带 Bearer token。当代码的 `http://` base URL 只是路由标签、

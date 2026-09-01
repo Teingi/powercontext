@@ -249,6 +249,18 @@ const OPERATIONS = {
 		location: "body",
 		scope: true
 	},
+	list_skill_publication_targets: {
+		method: "POST",
+		path: "/v1/skills/publication-targets/list",
+		location: "body",
+		scope: true
+	},
+	publish_managed_skill: {
+		method: "POST",
+		path: "/v1/skills/publish",
+		location: "body",
+		scope: true
+	},
 	scan_external_skills: {
 		method: "POST",
 		path: "/v1/external-skills/scan",
@@ -451,7 +463,7 @@ const OPERATIONS = {
 		method: "POST",
 		path: "/v1/access/audit/list",
 		location: "body",
-		scope: false
+		scope: true
 	}
 };
 const OPERATION_IDS = Object.keys(OPERATIONS);

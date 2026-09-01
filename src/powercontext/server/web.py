@@ -42,6 +42,8 @@ from powercontext.builtin.review import CandidateStatus
 from powercontext.builtin.runtime import GetArtifactCandidateRequest, GetSkillRequest, ListExternalSkillsRequest
 from powercontext.http import ErrorDetail, ErrorResponse
 from powercontext.limits import MAX_ARTIFACT_ID_LENGTH
+from powercontext.server.authz import AccessAction, AccessAuditContext, AccessControlService, ResourceRef
+from powercontext.server.context import current_principal, current_request_id
 
 logger = logging.getLogger(__name__)
 
@@ -93,10 +95,10 @@ class DashboardSkillProjectionTarget(BaseModel):
     target_id: str
     agent_kind: AgentKind
     installation_scope: Literal["user", "project", "plugin"]
-    destination: str
+    capabilities: tuple[Literal["publish"], ...] = ("publish",)
     state: AgentSkillProjectionState
     published_revision: int | None = None
-    reason: str | None = None
+    reason_code: str | None = None
     discovery: Literal["available", "unavailable", "not_published"]
     external_skill_id: str | None = None
 
@@ -121,6 +123,7 @@ class _DashboardSkillProjectionRoutes:
         request: DashboardSkillProjectionRequest,
         http_request: Request,
     ) -> DashboardSkillProjection | JSONResponse:
+        await _authorize_dashboard_skill(http_request, request, operation="dashboard_skill_projection_status")
         resolved = await _dashboard_managed_skill(http_request, request, self._scope_ids)
         if isinstance(resolved, JSONResponse):
             return resolved
@@ -132,6 +135,12 @@ class _DashboardSkillProjectionRoutes:
         request: DashboardSkillPublishRequest,
         http_request: Request,
     ) -> DashboardSkillProjection | JSONResponse:
+        await _authorize_dashboard_skill(
+            http_request,
+            request,
+            operation="dashboard_skill_projection_publish",
+            publish=True,
+        )
         resolved = await _dashboard_managed_skill(http_request, request, self._scope_ids)
         if isinstance(resolved, JSONResponse):
             return resolved
@@ -155,22 +164,28 @@ class _DashboardSkillProjectionRoutes:
                 409,
                 "skill_projection_conflict",
                 "The Agent Skill publication target changed or cannot be updated safely.",
-                details={"state": error.status.state.value, "reason": error.status.reason},
+                details={
+                    "state": error.status.state.value,
+                    "reason_code": _projection_reason_code(error.status.state),
+                },
             )
-        except (OSError, UnicodeError, ValueError) as error:
+        except (OSError, UnicodeError, ValueError):
             return _web_error(
                 422,
                 "skill_projection_failed",
                 "The approved managed Skill could not be published to the configured Agent target.",
-                details={"reason": str(error)},
+                details={"reason_code": "projection_failed"},
             )
         # The publication itself succeeded above; registry bookkeeping failure must not turn the
         # response into a 500 because _skill_projection_response reports on-disk state anyway.
         try:
             await application.external_skills.for_scope(request.scope_id).scan()
-        except Exception as error:
+        except Exception:
             log_safely(
-                logger, logging.WARNING, "PowerContext external Skill scan failed after publication", exc_info=error
+                logger,
+                logging.WARNING,
+                "PowerContext external Skill scan failed after publication",
+                extra={"error_code": "external_skill_scan_failed"},
             )
         return await _skill_projection_response(application, request.scope_id, skill, self._targets)
 
@@ -265,9 +280,9 @@ def mount_web_ui(
             headers=_PAGE_HEADERS,
         )
 
-    async def list_dashboard_scopes(response: Response) -> tuple[DashboardScope, ...]:
+    async def list_dashboard_scopes(request: Request, response: Response) -> tuple[DashboardScope, ...]:
         response.headers["Cache-Control"] = "no-store"
-        return dashboard_scopes
+        return await _visible_dashboard_scopes(request, dashboard_scopes)
 
     if dashboard_enabled:
         router.add_api_route(
@@ -365,6 +380,55 @@ async def _dashboard_managed_skill(
     return application, skill
 
 
+async def _visible_dashboard_scopes(
+    request: Request,
+    dashboard_scopes: tuple[DashboardScope, ...],
+) -> tuple[DashboardScope, ...]:
+    access: AccessControlService | None = request.app.state.access_control
+    if access is None or not dashboard_scopes:
+        return dashboard_scopes
+    checks = tuple((AccessAction.SCOPE_READ, ResourceRef.scope(item.scope_id)) for item in dashboard_scopes)
+    decisions = await access.check_batch(
+        current_principal(),
+        checks,
+        context=_dashboard_access_context("dashboard_scopes"),
+    )
+    return tuple(item for item, decision in zip(dashboard_scopes, decisions, strict=True) if decision.allowed)
+
+
+async def _authorize_dashboard_skill(
+    request: Request,
+    selection: DashboardSkillProjectionRequest,
+    *,
+    operation: str,
+    publish: bool = False,
+) -> None:
+    access: AccessControlService | None = request.app.state.access_control
+    if access is None:
+        return
+    resource = ResourceRef.artifact(
+        selection.scope_id,
+        family=selection.artifact.family,
+        artifact_id=selection.artifact.artifact_id,
+        revision=selection.artifact.revision,
+    )
+    checks = [
+        (AccessAction.SERVER_OBSERVE, ResourceRef.server(access.deployment_id)),
+        (AccessAction.ARTIFACT_READ, resource),
+    ]
+    if publish:
+        checks.append((AccessAction.SKILL_PUBLISH, resource))
+    await access.require_all(
+        current_principal(),
+        checks,
+        context=_dashboard_access_context(operation),
+    )
+
+
+def _dashboard_access_context(operation: str) -> AccessAuditContext:
+    return AccessAuditContext(transport="http", operation=operation, request_id=current_request_id())
+
+
 async def _skill_projection_response(
     application,
     scope_id: str,
@@ -381,8 +445,13 @@ async def _skill_projection_response(
             registrations = await application.external_skills.for_scope(scope_id).list(
                 ListExternalSkillsRequest(include_unavailable=True)
             )
-        except Exception as error:
-            log_safely(logger, logging.WARNING, "PowerContext external Skill registry discovery failed", exc_info=error)
+        except Exception:
+            log_safely(
+                logger,
+                logging.WARNING,
+                "PowerContext external Skill registry discovery failed",
+                extra={"error_code": "external_skill_registry_discovery_failed"},
+            )
             registrations = ()
     targets = []
     for target in targets_config:
@@ -406,15 +475,22 @@ async def _skill_projection_response(
                 target_id=target.target_id,
                 agent_kind=target.agent_kind,
                 installation_scope=target.installation_scope,
-                destination=str(status.destination),
                 state=status.state,
                 published_revision=(None if status.published_artifact is None else status.published_artifact.revision),
-                reason=status.reason,
+                reason_code=_projection_reason_code(status.state),
                 discovery=discovery,
                 external_skill_id=(None if registration is None else registration.registration.external_skill_id),
             )
         )
     return DashboardSkillProjection(artifact=skill.as_ref(), name=skill.content.name, targets=targets)
+
+
+def _projection_reason_code(state: AgentSkillProjectionState) -> str | None:
+    return {
+        AgentSkillProjectionState.CONFLICT: "projection_conflict",
+        AgentSkillProjectionState.DRIFTED: "projection_drifted",
+        AgentSkillProjectionState.INCOMPATIBLE: "projection_incompatible",
+    }.get(state)
 
 
 def _web_error(

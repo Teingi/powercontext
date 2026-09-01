@@ -113,6 +113,7 @@ class AccessControlConfig(BaseModel):
 
     mode: Literal["disabled", "legacy-static-admin", "enforced"] = "legacy-static-admin"
     bootstrap_static_principal: bool = True
+    deployment_id: str = Field(default="powercontext", min_length=1, max_length=128, pattern=r"^[\x21-\x7E]+$")
 
 
 class DashboardScopeConfig(BaseModel):

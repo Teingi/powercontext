@@ -107,11 +107,10 @@ curl --fail \
   --data '{
     "subject": {"type": "user", "issuer": "https://id.example", "id": "user-b"},
     "resource": {
-      "type": "handoff",
+      "type": "artifact",
       "scope_id": "project:example",
-      "family": "handoff",
-      "artifact_id": "handoff-42",
-      "revision": 3
+      "reference": {"family": "handoff", "artifact_id": "handoff-42", "revision": 3},
+      "selector": null
     },
     "role": "handoff.receiver",
     "idempotency_key": "handoff-42-r3-to-user-b"
@@ -125,6 +124,17 @@ verify which Principal the deployment established, `/v1/access/check` for one de
 `/v1/access/resources/list` for a non-discovering list of already visible resources. Creation is idempotent per
 grantor and key; revocation uses `binding_id` plus `expected_version`. Relationship and decision events are available
 to Server administrators through `/v1/access/audit/list`.
+
+The Access wire contract has only three Resource Kinds: `server`, `scope`, and `artifact`. An Artifact `reference`
+must identify one exact Revision. Memory also requires a complete `memory_entry` selector containing `entry_id` and
+`entry_version_id`. Unknown Families, `prompt` when no Prompt lifecycle is implemented, mismatched selectors or roles,
+and `latest` never create a Binding. `/v1/access/me` reports the current mode, Provider capabilities, and each Artifact
+Family's enabled state.
+
+Reading a managed Skill and publishing it are separate permissions. Both `/v1/skills/publication-targets/list` and
+`/v1/skills/publish` require `artifact.read` plus `skill.publish` on the same exact Skill Revision. Requests submit only
+an opaque `target_id`; public responses and errors omit host paths, Agent homes, credentials, and locators. Detailed
+Dashboard publication status is separately protected by `server.observe`.
 
 The built-in static token represents one local administrator and cannot model different A/B users. A real multi-user
 deployment must authenticate each caller to a different Principal and inject an Authorization Provider. HTTP and MCP
@@ -140,7 +150,7 @@ use the same policy enforcement point; MCP tool visibility is not permission.
 | Work continuity | `/v1/work/*` | Create work contracts, prepare or acknowledge Handoffs, and record outcomes |
 | Low-level Handoff | `/v1/handoff/*` | Activate, prepare, finalize, commit, or continue a Handoff |
 | Memory | `/v1/memory/*` | Flush, remember, search, list, get, revise, retire, and inspect changes |
-| Experience and Skill | `/v1/experience/*`, `/v1/skill/*` | Propose, generate, and read Artifact revisions |
+| Experience and Skill | `/v1/experience/*`, `/v1/skill/*`, `/v1/skills/*` | Propose, generate, read Artifact revisions, and publish managed Skills under dual authorization |
 | Review | `/v1/artifact-candidates/*` | List, inspect, revise, approve, or reject pending Candidates |
 | External Skills | `/v1/external-skills/*` | Scan configured targets and resolve or import packages |
 | Handoff Reports | `/v1/handoff-reports/*` | Manage Projects, Workstreams, activities, reports, and workspace bindings |

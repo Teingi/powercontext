@@ -38,8 +38,15 @@ class AccessDeniedError(AccessControlError, PermissionError):
 class AccessUnavailableError(AccessControlError, RuntimeError):
     """A required authorization dependency is unavailable."""
 
-    def __init__(self) -> None:
-        super().__init__("the authorization service is unavailable")
+    def __init__(self, code: str = "access_unavailable") -> None:
+        self.code = code
+        messages = {
+            "access_unavailable": "the authorization service is unavailable",
+            "multi_requirement_check_unavailable": "multi-requirement Access checks are unavailable",
+            "relationship_management_unavailable": "Access relationship management is unavailable",
+            "safe_resource_filtering_unavailable": "safe Access resource filtering is unavailable",
+        }
+        super().__init__(messages.get(code, messages["access_unavailable"]))
 
 
 class AccessConflictError(AccessControlError, RuntimeError):
@@ -60,11 +67,23 @@ class AccessInvalidRequestError(AccessControlError, ValueError):
     def __init__(self, code: str) -> None:
         self.code = code
         messages = {
+            "action-resource": "the action is not valid for this Access resource",
+            "artifact-family": "the Artifact Family is not registered for Access sharing",
+            "artifact-family-disabled": "the Artifact Family Access Profile is disabled",
+            "artifact-reference": "an Artifact resource requires one exact ArtifactReference",
+            "artifact-selector": "the Artifact Family does not accept this selector",
+            "artifact-state": "the Artifact resource is not in a shareable lifecycle state",
             "binding-role": "the role cannot be bound to this resource type",
             "binding-expired": "expires_at must be later than the current Server time",
+            "cursor": "the Access cursor is invalid",
+            "deployment": "the Server resource does not identify this deployment",
             "handoff-reference": "a Handoff resource requires one exact Handoff ArtifactReference",
+            "idempotency-key": "the Access Binding idempotency key is invalid",
+            "memory-entry-selector": "a Memory Access resource requires one exact Memory Entry Version selector",
             "principal": "the Access Principal is invalid",
             "resource": "the Access resource is invalid",
+            "receiver-principal": "an accepted Handoff receiver must match the authenticated Principal",
+            "reason": "the Access Binding reason exceeds its limit",
         }
         super().__init__(messages.get(code, f"invalid Access request: {code}"))
 

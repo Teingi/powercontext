@@ -48,6 +48,22 @@ from powercontext.server.factory import create_server_app
 from powercontext.server.settings import BearerAuthConfig, McpConfig, ServerSettings
 from powercontext.sources import Source
 
+_ACCESS_FAMILIES = "experience:enabled,handoff:enabled,memory:enabled,prompt:disabled,skill:enabled"
+
+
+def _access_readiness_checks(
+    *,
+    mode: str = "legacy-static-admin",
+    provider: str = "disabled",
+) -> dict[str, str]:
+    return {
+        "access_mode": mode,
+        "access_provider": provider,
+        "access_resource_kinds": "server,scope,artifact",
+        "access_artifact_families": _ACCESS_FAMILIES,
+        "access_skill_publication": "disabled",
+    }
+
 
 class _NoopExperiencePipeline:
     async def incubate(self, _sources: tuple[Source, ...], /) -> tuple[ExperienceCandidateInput, ...]:
@@ -345,10 +361,18 @@ def test_server_factory_maps_static_token_to_bootstrap_principal() -> None:
         response = client.get("/v1/access/me", headers={"Authorization": "Bearer server-secret"})
 
     assert response.status_code == 200
-    assert response.json() == {
+    payload = response.json()
+    assert payload["principal"] == {
         "type": "service",
-        "issuer": "powercontext:static",
+        "issuer": "powercontext:powercontext:static",
         "id": "server-token",
+    }
+    assert payload["mode"] == "legacy-static-admin"
+    assert payload["resource_kinds"] == ["server", "scope", "artifact"]
+    assert payload["provider_capabilities"] == {
+        "safe_resource_filtering": True,
+        "multi_requirement_check": True,
+        "relationship_management": True,
     }
 
 
@@ -364,7 +388,7 @@ def test_readiness_reports_unavailable_bindings() -> None:
     assert response.status_code == 503
     assert response.json() == {
         "status": "not_ready",
-        "checks": {"database": "unavailable"},
+        "checks": {"database": "unavailable", **_access_readiness_checks(mode="disabled")},
     }
     assert response.headers["X-PowerContext-Request-ID"]
 
@@ -381,7 +405,7 @@ def test_readiness_keeps_degraded_bindings_in_traffic() -> None:
     assert response.status_code == 200
     assert response.json() == {
         "status": "degraded",
-        "checks": {"inference.embedding": "unavailable"},
+        "checks": {"inference.embedding": "unavailable", **_access_readiness_checks(mode="disabled")},
     }
 
 
@@ -407,6 +431,7 @@ def test_server_factory_reports_database_failure_as_not_ready(monkeypatch, tmp_p
         "checks": {
             "runtime": "ready",
             "database": "unavailable",
+            **_access_readiness_checks(),
         },
     }
     assert "powercontext_server_runtime_ready 0.0" in metrics.text
@@ -432,6 +457,7 @@ def test_server_factory_reports_database_and_configured_generation_readiness(tmp
             "runtime": "ready",
             "database": "ready",
             "inference.generation": "ready",
+            **_access_readiness_checks(),
         },
     }
 
@@ -492,6 +518,7 @@ def test_server_factory_reports_generation_failure_as_degraded(monkeypatch, tmp_
             "runtime": "ready",
             "database": "ready",
             "inference.generation": "unavailable",
+            **_access_readiness_checks(),
         },
     }
     assert "provider response" not in response.text
@@ -522,6 +549,7 @@ def test_server_factory_caches_and_redacts_degraded_embedding_readiness(caplog, 
                 "runtime": "ready",
                 "database": "ready",
                 "inference.embedding": "misconfigured",
+                **_access_readiness_checks(),
             },
         }
     )
@@ -550,6 +578,7 @@ def test_server_factory_reports_a_rejected_embedding_request_with_a_redacted_rea
             "runtime": "ready",
             "database": "ready",
             "inference.embedding": "misconfigured: provider-rejected (HTTP 400)",
+            **_access_readiness_checks(),
         },
     }
 
@@ -584,6 +613,7 @@ def test_server_factory_reports_transient_embedding_failures_as_degraded(
             "runtime": "ready",
             "database": "ready",
             "inference.embedding": expected_status,
+            **_access_readiness_checks(),
         },
     }
     assert "secret" not in response.text
@@ -688,6 +718,7 @@ def test_server_factory_reports_missing_embedding_api_prefix_as_degraded(caplog,
                 "runtime": "ready",
                 "database": "ready",
                 "inference.embedding": "misconfigured: provider-rejected (HTTP 404)",
+                **_access_readiness_checks(),
             },
         }
     )

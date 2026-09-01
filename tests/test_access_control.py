@@ -18,6 +18,7 @@ import asyncio
 from datetime import UTC, datetime, timedelta
 
 import pytest
+from sqlalchemy import text
 
 from powercontext.builtin.persistence.sqlite import SQLiteConfig, SQLiteProfile
 from powercontext.server.authz import (
@@ -26,14 +27,19 @@ from powercontext.server.authz import (
     AccessConflictError,
     AccessControlService,
     AccessDeniedError,
+    AccessInvalidRequestError,
+    AccessProviderCapabilities,
+    AccessRequest,
     AccessResourceType,
     AccessRole,
+    AccessUnavailableError,
     BuiltinAuthorizationProvider,
     CreateBinding,
+    MemoryEntrySelector,
     PrincipalRef,
     ResourceRef,
 )
-from powercontext.server.authz.repository import ACCESS_TABLES, RelationalAccessRepository
+from powercontext.server.authz.repository import ACCESS_TABLES, RelationalAccessRepository, ensure_access_schema
 
 NOW = datetime(2026, 8, 30, 10, tzinfo=UTC)
 ADMIN = PrincipalRef(type="user", issuer="https://identity.example", id="admin")
@@ -68,17 +74,19 @@ def test_exact_handoff_receiver_cannot_discover_other_handoffs_or_scope_data() -
             with pytest.raises(AccessDeniedError):
                 await service.require(
                     BOB,
-                    AccessAction.HANDOFF_READ,
+                    AccessAction.ARTIFACT_READ,
                     ResourceRef.handoff("scope-a", artifact_id="handoff-b", revision=1),
                     context=AUDIT,
                 )
             with pytest.raises(AccessDeniedError):
                 await service.require(BOB, AccessAction.SCOPE_READ, ResourceRef.scope("scope-a"), context=AUDIT)
 
-            visible = await service.provider.list_resources(
+            visible = await service.list_resources(
                 BOB,
-                action=AccessAction.HANDOFF_READ,
-                resource_type=AccessResourceType.HANDOFF,
+                action=AccessAction.ARTIFACT_READ,
+                resource_type=AccessResourceType.ARTIFACT,
+                family="handoff",
+                context=AUDIT,
             )
             assert visible.items == (exact,)
             assert created.policy_revision == "1"
@@ -103,7 +111,7 @@ def test_scope_role_covers_handoffs_but_expired_bindings_do_not() -> None:
                 context=AUDIT,
             )
             handoff = ResourceRef.handoff("scope-a", artifact_id="handoff-a", revision=1)
-            assert (await service.require(ALICE, AccessAction.HANDOFF_READ, handoff, context=AUDIT)).allowed
+            assert (await service.require(ALICE, AccessAction.ARTIFACT_READ, handoff, context=AUDIT)).allowed
             assert not (await service.check(ALICE, AccessAction.HANDOFF_ACKNOWLEDGE, handoff, context=AUDIT)).allowed
 
             expired_provider = BuiltinAuthorizationProvider(
@@ -111,7 +119,9 @@ def test_scope_role_covers_handoffs_but_expired_bindings_do_not() -> None:
                 bootstrap_administrators=(ADMIN,),
                 clock=lambda: NOW + timedelta(hours=2),
             )
-            expired = await expired_provider.check(ALICE, AccessAction.HANDOFF_READ, handoff)
+            expired = await expired_provider.check(
+                AccessRequest(subject=ALICE, action=AccessAction.ARTIFACT_READ, resource=handoff, context=AUDIT)
+            )
             assert expired.allowed is False
 
     asyncio.run(scenario())
@@ -164,6 +174,36 @@ def test_binding_creation_is_idempotent_and_revocation_uses_cas() -> None:
     asyncio.run(scenario())
 
 
+def test_idempotency_key_is_scoped_to_grantor_and_resource() -> None:
+    async def scenario() -> None:
+        async with SQLiteProfile.open(SQLiteConfig(), tables=ACCESS_TABLES) as profile:
+            service, repository = _service(profile.database)
+            first = await service.create_binding(
+                ADMIN,
+                CreateBinding(
+                    subject=BOB,
+                    resource=ResourceRef.scope("scope-a"),
+                    role=AccessRole.SCOPE_VIEWER,
+                    idempotency_key="share-viewer",
+                ),
+                context=AUDIT,
+            )
+            second = await service.create_binding(
+                ADMIN,
+                CreateBinding(
+                    subject=BOB,
+                    resource=ResourceRef.scope("scope-b"),
+                    role=AccessRole.SCOPE_VIEWER,
+                    idempotency_key="share-viewer",
+                ),
+                context=AUDIT,
+            )
+            assert first.binding_id != second.binding_id
+            assert await repository.policy_revision() == "2"
+
+    asyncio.run(scenario())
+
+
 def test_persisted_server_admin_covers_scope_administration() -> None:
     async def scenario() -> None:
         async with SQLiteProfile.open(SQLiteConfig(), tables=ACCESS_TABLES) as profile:
@@ -193,6 +233,280 @@ def test_persisted_server_admin_covers_scope_administration() -> None:
             assert (
                 await service.require(BOB, AccessAction.SCOPE_READ, ResourceRef.scope("scope-a"), context=AUDIT)
             ).allowed
+
+    asyncio.run(scenario())
+
+
+def test_artifact_family_profiles_enforce_selector_role_and_delegation_boundaries() -> None:
+    async def scenario() -> None:
+        async with SQLiteProfile.open(SQLiteConfig(), tables=ACCESS_TABLES) as profile:
+            service, _ = _service(profile.database)
+            await service.create_binding(
+                ADMIN,
+                CreateBinding(
+                    subject=ALICE,
+                    resource=ResourceRef.scope("scope-a"),
+                    role=AccessRole.SCOPE_DELEGATOR,
+                    idempotency_key="alice-scope-delegator",
+                ),
+                context=AUDIT,
+            )
+            handoff = ResourceRef.handoff("scope-a", artifact_id="handoff-a", revision=1)
+            delegated = await service.create_binding(
+                ALICE,
+                CreateBinding(
+                    subject=BOB,
+                    resource=handoff,
+                    role=AccessRole.HANDOFF_VIEWER,
+                    idempotency_key="bob-handoff-viewer",
+                ),
+                context=AUDIT,
+            )
+            assert delegated.granted_by == ALICE
+
+            skill = ResourceRef.artifact("scope-a", family="skill", artifact_id="skill-a", revision=1)
+            with pytest.raises(AccessDeniedError):
+                await service.create_binding(
+                    ALICE,
+                    CreateBinding(
+                        subject=BOB,
+                        resource=skill,
+                        role=AccessRole.SKILL_PUBLISHER,
+                        idempotency_key="bob-skill-publisher",
+                    ),
+                    context=AUDIT,
+                )
+            with pytest.raises(AccessInvalidRequestError, match="role"):
+                await service.create_binding(
+                    ADMIN,
+                    CreateBinding(
+                        subject=BOB,
+                        resource=handoff,
+                        role=AccessRole.ARTIFACT_VIEWER,
+                        idempotency_key="invalid-handoff-role",
+                    ),
+                    context=AUDIT,
+                )
+
+            memory_without_selector = ResourceRef.artifact(
+                "scope-a", family="memory", artifact_id="memory-a", revision=1
+            )
+            with pytest.raises(AccessInvalidRequestError, match="Memory Entry Version"):
+                await service.check(BOB, AccessAction.ARTIFACT_READ, memory_without_selector, context=AUDIT)
+            prompt = ResourceRef.artifact("scope-a", family="prompt", artifact_id="prompt-a", revision=1)
+            with pytest.raises(AccessInvalidRequestError, match="disabled"):
+                await service.create_binding(
+                    ADMIN,
+                    CreateBinding(
+                        subject=BOB,
+                        resource=prompt,
+                        role=AccessRole.PROMPT_USER,
+                        idempotency_key="disabled-prompt",
+                    ),
+                    context=AUDIT,
+                )
+
+    asyncio.run(scenario())
+
+
+def test_exact_memory_and_skill_grants_do_not_follow_versions_or_collapse_actions() -> None:
+    async def scenario() -> None:
+        async with SQLiteProfile.open(SQLiteConfig(), tables=ACCESS_TABLES) as profile:
+            service, _ = _service(profile.database)
+            memory = ResourceRef.artifact(
+                "scope-a",
+                family="memory",
+                artifact_id="memory-a",
+                revision=4,
+                selector=MemoryEntrySelector(entry_id="entry-a", entry_version_id="entry-version-2"),
+            )
+            skill = ResourceRef.artifact("scope-a", family="skill", artifact_id="skill-a", revision=7)
+            await service.create_binding(
+                ADMIN,
+                CreateBinding(
+                    subject=BOB,
+                    resource=memory,
+                    role=AccessRole.ARTIFACT_VIEWER,
+                    idempotency_key="bob-memory-entry-version",
+                ),
+                context=AUDIT,
+            )
+            await service.create_binding(
+                ADMIN,
+                CreateBinding(
+                    subject=BOB,
+                    resource=skill,
+                    role=AccessRole.SKILL_PUBLISHER,
+                    idempotency_key="bob-skill-publisher",
+                ),
+                context=AUDIT,
+            )
+
+            assert (await service.require(BOB, AccessAction.ARTIFACT_READ, memory, context=AUDIT)).allowed
+            future_memory = ResourceRef.artifact(
+                "scope-a",
+                family="memory",
+                artifact_id="memory-a",
+                revision=5,
+                selector=MemoryEntrySelector(entry_id="entry-a", entry_version_id="entry-version-3"),
+            )
+            with pytest.raises(AccessDeniedError):
+                await service.require(BOB, AccessAction.ARTIFACT_READ, future_memory, context=AUDIT)
+            decisions = await service.require_all(
+                BOB,
+                ((AccessAction.ARTIFACT_READ, skill), (AccessAction.SKILL_PUBLISH, skill)),
+                context=AUDIT,
+            )
+            assert all(decision.allowed for decision in decisions)
+            with pytest.raises(AccessInvalidRequestError, match="action"):
+                await service.check(BOB, AccessAction.SKILL_PUBLISH, memory, context=AUDIT)
+
+    asyncio.run(scenario())
+
+
+def test_safe_listing_is_exact_paginated_and_fails_closed_without_provider_support() -> None:
+    async def scenario() -> None:
+        async with SQLiteProfile.open(SQLiteConfig(), tables=ACCESS_TABLES) as profile:
+            service, repository = _service(profile.database)
+            resources = tuple(
+                ResourceRef.handoff("scope-a", artifact_id=f"handoff-{index}", revision=1) for index in range(3)
+            )
+            for index, resource in enumerate(resources):
+                await service.create_binding(
+                    ADMIN,
+                    CreateBinding(
+                        subject=BOB,
+                        resource=resource,
+                        role=AccessRole.HANDOFF_VIEWER,
+                        idempotency_key=f"handoff-{index}-viewer",
+                    ),
+                    context=AUDIT,
+                )
+            first = await service.list_resources(
+                BOB,
+                action=AccessAction.ARTIFACT_READ,
+                resource_type=AccessResourceType.ARTIFACT,
+                family="handoff",
+                limit=2,
+                context=AUDIT,
+            )
+            assert len(first.items) == 2
+            assert first.total == 3
+            assert first.next_cursor is not None
+            second = await service.list_resources(
+                BOB,
+                action=AccessAction.ARTIFACT_READ,
+                resource_type=AccessResourceType.ARTIFACT,
+                family="handoff",
+                cursor=first.next_cursor,
+                limit=2,
+                context=AUDIT,
+            )
+            assert len(second.items) == 1
+            assert second.total == 3
+            with pytest.raises(AccessInvalidRequestError, match="cursor"):
+                await service.list_resources(
+                    BOB,
+                    action=AccessAction.ARTIFACT_READ,
+                    resource_type=AccessResourceType.ARTIFACT,
+                    family="handoff",
+                    cursor="not-base64!",
+                    context=AUDIT,
+                )
+
+            unavailable = AccessControlService(
+                service.provider,
+                relationships=repository,
+                audit=repository,
+                provider_capabilities=AccessProviderCapabilities(
+                    safe_resource_filtering=False,
+                    multi_requirement_check=True,
+                    relationship_management=True,
+                ),
+            )
+            with pytest.raises(AccessUnavailableError, match="filtering"):
+                await unavailable.list_resources(
+                    BOB,
+                    action=AccessAction.ARTIFACT_READ,
+                    resource_type=AccessResourceType.ARTIFACT,
+                    family="handoff",
+                    context=AUDIT,
+                )
+            no_multi_check = AccessControlService(
+                service.provider,
+                relationships=repository,
+                audit=repository,
+                provider_capabilities=AccessProviderCapabilities(
+                    safe_resource_filtering=True,
+                    multi_requirement_check=False,
+                    relationship_management=True,
+                ),
+            )
+            with pytest.raises(AccessUnavailableError, match="multi-requirement"):
+                await no_multi_check.require_all(
+                    BOB,
+                    (
+                        (AccessAction.ARTIFACT_READ, resources[0]),
+                        (AccessAction.HANDOFF_EVIDENCE_READ, resources[0]),
+                    ),
+                    context=AUDIT,
+                )
+
+    asyncio.run(scenario())
+
+
+def test_access_self_is_not_exposed_as_a_public_audit_action() -> None:
+    async def scenario() -> None:
+        async with SQLiteProfile.open(SQLiteConfig(), tables=ACCESS_TABLES) as profile:
+            service, repository = _service(profile.database)
+            decision = await service.check(BOB, AccessAction.ACCESS_SELF, ResourceRef.server(), context=AUDIT)
+            assert decision.allowed is True
+            assert await repository.list_audit() == ()
+
+    asyncio.run(scenario())
+
+
+def test_handoff_only_schema_is_migrated_without_losing_bindings_or_audit() -> None:
+    async def scenario() -> None:
+        async with SQLiteProfile.open(SQLiteConfig(), tables=ACCESS_TABLES) as profile:
+            service, repository = _service(profile.database)
+            handoff = ResourceRef.handoff("scope-a", artifact_id="handoff-a", revision=1)
+            await service.create_binding(
+                ADMIN,
+                CreateBinding(
+                    subject=BOB,
+                    resource=handoff,
+                    role=AccessRole.HANDOFF_VIEWER,
+                    idempotency_key="legacy-handoff-viewer",
+                ),
+                context=AUDIT,
+            )
+            await service.require(BOB, AccessAction.ARTIFACT_READ, handoff, context=AUDIT)
+            async with profile.database.transaction() as connection:
+                for table_name in ("pc_access_bindings", "pc_access_audit_events"):
+                    for column_name in (
+                        "deployment_id",
+                        "selector_type",
+                        "selector_entry_id",
+                        "selector_entry_version_id",
+                    ):
+                        await connection.exec_driver_sql(f"ALTER TABLE {table_name} DROP COLUMN {column_name}")
+                    await connection.execute(
+                        text(
+                            f"UPDATE {table_name} SET resource_type = 'handoff' "  # noqa: S608
+                            "WHERE resource_type = 'artifact'"
+                        )
+                    )
+                await connection.execute(
+                    text("UPDATE pc_access_audit_events SET action = 'handoff.read' WHERE action = 'artifact.read'")
+                )
+                await ensure_access_schema(connection)
+
+            bindings = await repository.list_bindings(subject=BOB)
+            assert len(bindings) == 1
+            assert bindings[0].resource == handoff
+            audit = await repository.list_audit()
+            assert any(event.action is AccessAction.ARTIFACT_READ and event.resource == handoff for event in audit)
 
     asyncio.run(scenario())
 
