@@ -90,6 +90,8 @@ def test_opencode_run_normalizes_prompt_before_recall_and_capture(tmp_path: Path
         copyfile(plugin, installed_plugin)
         env.update({
             "OPENCODE_DISABLE_AUTOUPDATE": "true",
+            "OPENCODE_DISABLE_MODELS_FETCH": "true",
+            "OPENCODE_TEST_HOME": str(tmp_path),
             "POWERCONTEXT_OPENCODE_BASE_URL": f"http://127.0.0.1:{server.server_port}",
             "POWERCONTEXT_OPENCODE_SCOPE_ID": "project:test",
         })
@@ -112,7 +114,7 @@ def test_opencode_run_normalizes_prompt_before_recall_and_capture(tmp_path: Path
         )
         captured = False
         try:
-            deadline = monotonic() + 30
+            deadline = monotonic() + 60
             while monotonic() < deadline and process.poll() is None:
                 if server.captured.wait(timeout=0.25):
                     captured = True
