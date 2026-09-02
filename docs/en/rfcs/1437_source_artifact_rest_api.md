@@ -36,6 +36,30 @@ The design must also align public fields with the current persistence model. It 
 fields encoded in canonical payloads, relationships represented by lineage tables, request-only values, and the small
 set of persistence fields required for stable timestamps and logical deletion.
 
+## Goals
+
+- Use Source and Artifact as the two domain objects without adding a generic parent Resource.
+- Place the new APIs under the `/v1/scopes/{scope_id}/sources` and `/v1/scopes/{scope_id}/artifacts` Scope child
+  resource trees.
+- Use complete compound public identities: `(scope_id, source_type, source_id)` for a Source,
+  `(scope_id, family, artifact_id)` for an Artifact head, and one additional `revision` for an exact Revision.
+- Put every component of a named resource's public key in the path and express ownership through parent-child
+  hierarchy.
+- Return `scope_id`, `source_type`, and `source_id` directly in Source responses without a `source_ref` envelope.
+- Generate `source_id` and `artifact_id` on the server for Source Create and Artifact Create.
+- Keep Artifact Revisions immutable and create the next Revision through Replace.
+- Use one collection GET, operationId, and response schema for List and Search, with optional `query` selecting the
+  behavior.
+- Keep `openapi/powercontext.yaml` as the single source of truth for the HTTP contract.
+
+## Non-goals
+
+- Do not add synchronous generation parameters, composite responses, or generation-job models to writes.
+- Do not provide cross-Source-type, cross-Artifact-Family, or combined Source/Artifact List/Search.
+- Do not redefine Candidates, Memory Entries, or Handoff Drafts as Artifacts.
+- Do not define Scope APIs, sharing permissions, restore, physical purge, or batch operations.
+- Do not change or redescribe existing APIs; any unification of existing APIs requires a later design.
+
 # Guide-level explanation
 
 ## Two foundational resources
@@ -191,9 +215,10 @@ An absent, empty, or whitespace-only `query` means List. A non-empty `query` mea
 ## Scope, hierarchy, and canonical URIs
 
 `scope_id` is the resource owner, authorization boundary, and part of the public identity. Scope creation, retrieval,
-listing, organization relationships, and bindings are defined by
-[RFC 1345](1345_scope_organization_and_agent_integration.md) and its implementation. This RFC does not define Scope
-operations; it only defines Source and Artifact children beneath an existing Scope.
+listing, metadata, Organization Parent, Context References, and bindings are handled by
+[PR #1401](https://github.com/oceanbase/powercontext/pull/1401). This RFC assumes that the caller already has a
+`scope_id`; it defines only Source and Artifact children of that Scope and does not redeclare Scope operations,
+schemas, pagination, or authorization rules.
 
 Every new business API follows:
 
@@ -556,8 +581,10 @@ A Candidate is not an Artifact. Pending and rejected Candidates do not appear in
 
 ## API-to-persistence mapping
 
-The table and column names below describe the current `SHARED_METADATA` implementation mapping, not the client
-contract. Internal storage may be refactored, but the OpenAPI field semantics must remain stable.
+The mapping below uses `SHARED_METADATA` in `src/powercontext/builtin/persistence/tables.py` as the current storage
+baseline. OpenAPI fields and their semantics are the public contract. Table and column names describe the current
+implementation mapping and are not part of the client contract. Internal storage may be refactored, but it must not
+change the field semantics defined by this RFC.
 
 Mapping kinds:
 
@@ -574,88 +601,95 @@ Mapping kinds:
 
 ### Source field mapping
 
-| API field | Persistence field | Mapping | Meaning |
-| --- | --- | --- | --- |
-| `scope_id` | `pc_sources.scope_id` | `direct` | Owner Scope, authorization boundary, and identity component; at most 256 characters with byte-exact comparison. |
-| `source_type` | `pc_sources.source_type` | `direct` | Stable adapter name and typed collection; at most 128 characters and defaults to `content` on Create. |
-| `source_id` | `pc_sources.source_id`; the typed Source `name` remains equal | `direct` | Stable ID within the collection; server-generated and at most 256 characters. |
-| `content` | `pc_sources.payload` | `encoded` | Evidence content in the complete typed Source model; the `content` adapter maps it to `ContentSource.content`. |
-| `metadata` | Source metadata inside `pc_sources.payload` | `encoded` | Extension attributes that are only stored and returned; there is no separate column or metadata query/index. |
-| `created_at` | target `pc_sources.created_at` | `new_column` | Server UTC time when the Source first commits successfully. |
-| `position` | `pc_sources.journal_position` | `direct` | Monotonically increasing position unique within the Scope journal. |
-| `content_digest` | no separate column | `derived` | SHA-256 digest of canonical API `content`. |
+| API field | Appears in | Current/target persistence field | Mapping | Meaning |
+| --- | --- | --- | --- | --- |
+| `scope_id` | all Source URI paths; all Source record/item responses | `pc_sources.scope_id` | `direct` | Source owner Scope, authorization boundary, and public compound identity component; at most 256 characters with byte-exact comparison. |
+| `source_type` | Create body; Get/List URI paths; responses | `pc_sources.source_type` | `direct` | Stable Source adapter name and typed collection identifier, as well as a public compound identity component; defaults to `content` on Create and is at most 128 characters. |
+| `source_id` | Create response; Get URI path; record/item responses | `pc_sources.source_id`; `Source.name` in the typed payload remains equal | `direct` | Stable ID within one `(scope_id, source_type)` collection. Create does not accept it; the server generates it. At most 256 characters. |
+| `content` | Create body; Create/Get responses | `pc_sources.payload` | `encoded` | Typed Source evidence content. The complete Source model is stored as canonical JSON bytes in `payload`; for `source_type=content`, this field maps to `ContentSource.content`. Other Source types define a reversible adapter mapping. |
+| `metadata` | Create body; record/item responses | typed Source metadata in `pc_sources.payload` | `encoded` | Extension attributes outside the public identity, defaulting to `{}`. Every Source adapter exposed through the generic API must preserve and return the field losslessly; the current `content` adapter already does so, and unsupported adapters must not silently discard it. |
+| `created_at` | record/item responses | target `pc_sources.created_at` | `new_column` | Server UTC time of the first successful Source commit. It must remain stable across requests and must not be inferred from read time or journal position. |
+| `position` | Create/Get responses; collection items | `pc_sources.journal_position` | `direct` | Monotonically increasing position in the owning Scope journal, used for stable ordering and downstream generation boundaries; unique within the Scope. |
+| `content_digest` | record/item responses | no separate column | `derived` | `sha256:` plus 64 lowercase hexadecimal characters computed from canonical API `content` bytes; excludes metadata, identity fields, and lineage. |
 
-`pc_source_journal_heads.position` is the Scope journal high-water mark and allocation source, not an individual
-Source response field.
+`pc_source_journal_heads.position` is each Scope journal's high-water mark and the allocation source for the next
+position; it is not the `position` of an individual Source. An API item's `position` always comes from
+`pc_sources.journal_position`.
 
 ### Artifact field mapping
 
-| API field | Persistence field | Mapping | Meaning |
-| --- | --- | --- | --- |
-| `scope_id` | `scope_id` in Artifact, head, and lineage tables | `direct` | Owner Scope, authorization boundary, and identity component; at most 256 characters. |
-| `artifact_ref.family` | `pc_artifacts.family`, `pc_artifact_heads.family` | `direct` | Family and adapter route; at most 128 characters. Create receives `family` in the body. |
-| `artifact_ref.artifact_id` | `pc_artifacts.artifact_id`, `pc_artifact_heads.artifact_id` | `direct` | Stable lifecycle ID; server-generated and at most 128 characters. |
-| `artifact_ref.revision` | `pc_artifacts.revision`; the head points through `pc_artifact_heads.revision` | `direct` | Immutable Revision increasing from 1. |
-| `artifact_ref` | no separate JSON column | `derived` | Assembled from Family, Artifact ID, and Revision, and located together with the top-level Scope. |
-| `content` | `pc_artifacts.content` | `encoded` | Canonical JSON bytes validated by the Family content model. |
-| `source_refs` | `pc_artifact_lineage_sources` | `relation` | Same-Scope Source references preserved in array order. |
-| `artifact_refs` | `pc_artifact_lineage_artifacts` | `relation` | Same-Scope upstream Artifact Revision references preserved in array order. |
-| `created_at` | target `pc_artifacts.created_at` | `new_column` | Server UTC time when this Revision commits successfully. |
-| `content_digest` | no separate column | `derived` | SHA-256 digest of canonical Artifact content. |
+| API field | Appears in | Current/target persistence field | Mapping | Meaning |
+| --- | --- | --- | --- | --- |
+| `scope_id` | all Artifact URI paths; all Artifact responses | `pc_artifacts.scope_id`, `pc_artifact_heads.scope_id`, and `scope_id` in lineage tables | `direct` | Artifact owner Scope, authorization boundary, and public compound identity component; at most 256 characters with byte-exact comparison. |
+| `family` / `artifact_ref.family` | Create body; Get/List/Replace/Delete URI paths; responses | `pc_artifacts.family`, `pc_artifact_heads.family` | `direct` | Artifact domain type and adapter route, as well as a public compound identity component; at most 128 characters. Required on Create and obtained from the URI afterward. |
+| `artifact_id` / `artifact_ref.artifact_id` | Create response; Get/Replace/Delete URI paths; responses | `pc_artifacts.artifact_id`, `pc_artifact_heads.artifact_id` | `direct` | Stable ID within one `(scope_id, family)` lifecycle collection. Create does not accept it; the server generates it. At most 128 characters. |
+| `revision` / `artifact_ref.revision` | Revision URI path; Artifact responses | `pc_artifacts.revision`; the current head also points through `pc_artifact_heads.revision` | `direct` | Immutable revision number increasing from 1 within an Artifact lifecycle. `pc_artifacts.revision` selects an exact historical Revision; `pc_artifact_heads.revision` selects the current one. |
+| `artifact_ref` | Artifact responses | no separate JSON column | `derived` | Assembled from the same Revision's `family`, `artifact_id`, and `revision` columns; it forms the complete public identity only with the top-level `scope_id`. |
+| `content` | Create/Replace bodies; Artifact Revision responses | `pc_artifacts.content` | `encoded` | Complete Family-specific content for the Revision. The server validates it with the Pydantic content model for `family` and persists canonical JSON bytes. |
+| `source_refs` | Create/Replace bodies; Revision responses | `pc_artifact_lineage_sources` | `relation` | Source references directly supporting this Revision, preserved in request-array order. They use the current Artifact's `scope_id`, so the current contract expresses only same-Scope Sources. |
+| `artifact_refs` | Create/Replace bodies; Revision responses | `pc_artifact_lineage_artifacts` | `relation` | Upstream Artifact Revision references directly supporting this Revision, preserved in request-array order. They use the current Artifact's `scope_id`, so the current contract expresses only same-Scope Artifacts. |
+| `created_at` | Revision/item responses | target `pc_artifacts.created_at` | `new_column` | Server UTC time when this Revision commits successfully. Each Revision records its own value; a collection item reports the current head Revision's creation time. |
+| `content_digest` | Revision/item responses | no separate column | `derived` | `sha256:` plus 64 lowercase hexadecimal characters computed from canonical Artifact `content` bytes; excludes identity and lineage. |
 
 Artifact has no top-level `metadata`, so this RFC does not add `pc_artifacts.metadata` or change the existing
 Family-content encoding in `pc_artifacts.content`.
 
-`source_refs` is stored as:
+Each `source_refs` array element is split into the following columns:
 
-```json
-{
-  "child_identity": [
-    "scope_id",
-    "family",
-    "artifact_id",
-    "revision"
-  ],
-  "ordinal": "generated from request array order",
-  "source_refs[].source_type": "source_type",
-  "source_refs[].source_id": "source_id"
-}
-```
+| API/server field | `pc_artifact_lineage_sources` column | Meaning |
+| --- | --- | --- |
+| current Revision `scope_id` | `scope_id` | Scope shared by the child Artifact and referenced Source. |
+| current Revision `family` | `family` | Child Artifact Family. |
+| current Revision `artifact_id` | `artifact_id` | Child Artifact ID. |
+| current Revision `revision` | `revision` | Child Artifact Revision that owns the lineage. |
+| server-generated array index | `ordinal` | Preserves reference order from zero and is not supplied separately by the client. |
+| `source_refs[].source_type` | `source_type` | Referenced Source type. |
+| `source_refs[].source_id` | `source_id` | Referenced Source ID. |
 
-`artifact_refs` is stored as:
+Each `artifact_refs` array element is split into the following columns:
 
-```json
-{
-  "child_identity": [
-    "scope_id",
-    "family",
-    "artifact_id",
-    "revision"
-  ],
-  "ordinal": "generated from request array order",
-  "artifact_refs[].family": "upstream_family",
-  "artifact_refs[].artifact_id": "upstream_artifact_id",
-  "artifact_refs[].revision": "upstream_revision"
-}
-```
+| API/server field | `pc_artifact_lineage_artifacts` column | Meaning |
+| --- | --- | --- |
+| current Revision `scope_id` | `scope_id` | Scope shared by the child and upstream Artifacts. |
+| current Revision `family` | `family` | Child Artifact Family. |
+| current Revision `artifact_id` | `artifact_id` | Child Artifact ID. |
+| current Revision `revision` | `revision` | Child Artifact Revision that owns the lineage. |
+| server-generated array index | `ordinal` | Preserves reference order from zero and is not supplied separately by the client. |
+| `artifact_refs[].family` | `upstream_family` | Upstream Artifact Family. |
+| `artifact_refs[].artifact_id` | `upstream_artifact_id` | Upstream Artifact ID. |
+| `artifact_refs[].revision` | `upstream_revision` | Exact immutable upstream Artifact Revision. |
 
 ### Runtime and internal fields
 
-| Field | Persistence relation | Meaning |
+| API field | Persistence relation | Meaning |
 | --- | --- | --- |
-| `query`, `mode`, `limit` | `runtime` | Control only the current collection query. |
-| `cursor`, `next_cursor` | `runtime` | HTTP pagination tokens, not business-resource fields. |
-| `score`, `snippets` | `runtime` | Search ranking and match-display data, never written back to resources. |
-| `Location` | `derived` | Canonical URI assembled from the complete public identity. |
-| `ETag` | `derived` | Generated from current `pc_artifact_heads.revision`. |
-| `If-Match`, `If-None-Match` | `runtime` | Compared with the current ETag and not stored separately. |
-| `X-PowerContext-Request-ID` | `runtime` | Per-request tracing ID. |
-| `pc_artifact_heads.searchable_text` | internal Artifact Search projection | Searchable text for the current head; each searchable Family supplies a deterministic projector. |
-| Source search projection | internal Source Search projection | No generic column exists on master; v0.1 may read payloads, while a scalable implementation may add an internal index. |
-| target `pc_artifact_heads.deleted_at` | Artifact lifecycle | `null` means active; non-null is the logical deletion time while retaining the head Revision. |
+| `query` | `runtime` | Optional search text. An absent, empty, or whitespace-only value performs List; a non-empty value performs Search. The response returns normalized text and uses `null` for List. |
+| `mode` | `runtime` | Requested search mode in the request and actual mode in the response; `null` for List. It is not a resource type or identity component. |
+| `limit` | `runtime` | Maximum number of items on this page; controls query execution without modifying resources. |
+| `cursor` | `runtime` | Opaque token from the previous page, bound to caller, collection path, query, ordering, and search mode; unrelated to the domain-processing table `pc_source_cursors.cursor`. |
+| `items` | `derived` | Current page assembled from Source rows or Artifact head rows; not persisted as a unit. |
+| `score` | `runtime` | Search relevance score; `null` for List and never written back to a Source or Artifact. |
+| `snippets` | `runtime` | Search match excerpts; `[]` for List or when no excerpt can be displayed. |
+| `next_cursor` | `runtime` | Next-page token derived from the last item and query context; `null` on the final page. |
+| `Content-Type` | `runtime` | Request-body media type, fixed to `application/json` by this RFC. |
+| `Location` | `derived` | Canonical URI assembled from the complete public identity after Create; not persisted as a resource field. |
+| `ETag` | `derived` | Concurrency and cache identifier for the current Artifact head, deterministically derived from `pc_artifact_heads.revision`. |
+| `If-Match` | `runtime` | Replace/Delete precondition, parsed and compared with `pc_artifact_heads.revision`; not persisted separately. |
+| `If-None-Match` | `runtime` | Conditional Get-head input compared with the current ETag; a match returns `304`. |
+| `X-PowerContext-Request-ID` | `runtime` | Per-HTTP-request tracing ID, not Source or Artifact metadata. |
 
-Explanatory `status`, `notes`, `precondition_errors`, `retry`, and `not_found` values in documentation are not wire
-response fields and do not map to database columns.
+Explanatory `status`, `conditional_status`, `notes`, `precondition_errors`, `retry`, and `not_found` values in
+documentation are not wire response fields and do not map to database columns.
+
+Search projections and lifecycle fields:
+
+| Internal field | API relation | Meaning and requirement |
+| --- | --- | --- |
+| `pc_artifact_heads.searchable_text` | Artifact `query`, `score`, `snippets` | Searchable-text projection for the current head and not returned directly. The existing column can be reused, but every Family that declares Search support must provide a deterministic content-to-text projector. |
+| Source search projection | Source `query`, `score`, `snippets` | Current master has no generic Source search column. The initial implementation may inspect adapter-decoded payloads; a scalable implementation may add an internal projection or index keyed by `(scope_id, source_type, source_id)`, but it is not a public API field. |
+| target `pc_artifact_heads.deleted_at` | Delete and Get/List/Search visibility | `null` means active and non-null records logical deletion time. Deletion retains the head Revision and history so the server can validate `If-Match`, recognize a retry of the same deletion, and hide the resource by default. |
+| `pc_source_journal_heads.position` | Source Create and downstream generation boundary | Scope-level Source journal high-water mark used only for allocation and processing boundaries, not a Source record field. |
+| `pc_source_cursors` | no mapping to RFC pagination fields | Existing table that stores binding consumption progress in the Source journal; it must not be used as a List/Search HTTP pagination cursor. |
 
 ### Required schema adaptations
 
@@ -678,6 +712,18 @@ Digest computation is fixed as:
   "insignificant_whitespace": "removed",
   "included_fields": [
     "content"
+  ],
+  "excluded_fields": [
+    "scope_id",
+    "source_type",
+    "source_id",
+    "family",
+    "artifact_id",
+    "revision",
+    "metadata",
+    "source_refs",
+    "artifact_refs",
+    "created_at"
   ],
   "output": "sha256:<64 lowercase hexadecimal characters>"
 }

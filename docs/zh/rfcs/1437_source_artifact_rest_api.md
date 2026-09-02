@@ -31,6 +31,28 @@ PowerContext 已有接口主要表达 Source capture、Memory flush、Candidate 
 该设计还需要把公开 API 字段与当前持久化模型对齐，明确哪些字段直接落库、哪些包含在 canonical payload 中、
 哪些由 lineage 表表达、哪些只在请求期间生成，以及为了稳定时间和逻辑删除语义必须增加哪些持久化字段。
 
+## Goals
+
+- 只使用 Source 与 Artifact 两类领域对象，不增加统一上层 Resource。
+- 将新增 API 放在 `/v1/scopes/{scope_id}/sources` 与 `/v1/scopes/{scope_id}/artifacts` 两棵 Scope
+  子资源树下。
+- 使用完整复合公开身份：Source 为 `(scope_id, source_type, source_id)`，Artifact head 为
+  `(scope_id, family, artifact_id)`，精确 Revision 再增加 `revision`。
+- 让所有具名资源 GET 的完整公开唯一键进入 Path，并通过父子层级表达归属。
+- Source response 直接返回 `scope_id`、`source_type` 和 `source_id`，不增加 `source_ref` envelope。
+- Source Create 和 Artifact Create 分别由服务端生成 `source_id` 与 `artifact_id`。
+- 保持 Artifact Revision 不可变，由 Replace 创建下一 Revision。
+- 让 List 与 Search 共用集合 GET、operationId 和 response schema，并由可选 `query` 决定查询语义。
+- 保持 `openapi/powercontext.yaml` 为 HTTP 契约的唯一事实来源。
+
+## Non-goals
+
+- 不增加写入时同步生成参数、组合响应或生成任务模型。
+- 不提供跨 Source type、跨 Artifact Family 或 Source/Artifact 混合 List/Search。
+- 不把 Candidate、Memory Entry 或 Handoff Draft 重新定义为 Artifact。
+- 不定义 Scope API、共享权限、恢复、物理清除或批量操作。
+- 不修改或重新描述既有 API；既有 API 的统一改造由后续设计负责。
+
 # Guide-level explanation
 
 ## 两类基础资源
@@ -181,9 +203,10 @@ GET /v1/scopes/scp_01J/artifacts/company.example.decision?query=退款&mode=auto
 
 ## Scope、层级与 canonical URI
 
-`scope_id` 是资源 owner、授权边界和公开身份的一部分。Scope 的创建、读取、列举、组织关系和 binding 由
-[RFC 1345](1345_scope_organization_and_agent_integration.md) 及其实现负责；本 RFC 不定义 Scope API，只定义
-已有 Scope 下的 Source 和 Artifact 子资源。
+`scope_id` 是资源 owner、授权边界和公开身份的一部分。Scope 的创建、读取、列举、metadata、Organization
+Parent、Context References 和 binding 由 [PR #1401](https://github.com/oceanbase/powercontext/pull/1401) 负责；
+本 RFC 假设调用方已经取得 `scope_id`，只定义已有 Scope 下的 Source 和 Artifact 子资源，不重复声明 Scope
+operation、schema、分页或授权规则。
 
 所有新增业务 API 遵循：
 
@@ -537,7 +560,8 @@ Candidate 不是 Artifact；pending 或 rejected Candidate 不进入 Artifact Li
 
 ## API 字段与持久化映射
 
-以下表名和列名描述当前 `SHARED_METADATA` 的实现映射，不是客户端契约。实现可以重构内部表，但必须保持 OpenAPI
+以下映射以 `src/powercontext/builtin/persistence/tables.py` 中的 `SHARED_METADATA` 为当前存储基线。OpenAPI 字段
+及其语义是公开契约；表名和列名是当前实现映射，不构成客户端契约。实现可以重构内部表，但不得改变本 RFC 规定的
 字段语义。
 
 映射状态：
@@ -555,87 +579,94 @@ Candidate 不是 Artifact；pending 或 rejected Candidate 不进入 Artifact Li
 
 ### Source 字段映射
 
-| API 字段 | 持久化字段 | 映射 | 含义 |
-| --- | --- | --- | --- |
-| `scope_id` | `pc_sources.scope_id` | `direct` | owner Scope、授权边界和复合身份分量；最长 256 字符，按字节精确比较。 |
-| `source_type` | `pc_sources.source_type` | `direct` | adapter 稳定名称和类型集合；最长 128 字符，Create 缺省 `content`。 |
-| `source_id` | `pc_sources.source_id`；类型化 Source 的 `name` 与其一致 | `direct` | 集合内稳定 ID；服务端生成，最长 256 字符。 |
-| `content` | `pc_sources.payload` | `encoded` | 完整类型化 Source 模型中的证据内容；`content` adapter 对应 `ContentSource.content`。 |
-| `metadata` | `pc_sources.payload` 中的 Source metadata | `encoded` | 只保存并返回的扩展属性；不建立独立列，当前 API 不按 metadata 查询、排序或索引。 |
-| `created_at` | 目标 `pc_sources.created_at` | `new_column` | Source 首次成功持久化的服务端 UTC 时间。 |
-| `position` | `pc_sources.journal_position` | `direct` | Scope journal 中单调递增且唯一的位置。 |
-| `content_digest` | 无独立列 | `derived` | canonical API `content` 的 SHA-256 摘要。 |
+| API 字段 | 出现位置 | 当前/目标持久化字段 | 映射 | 字段含义 |
+| --- | --- | --- | --- | --- |
+| `scope_id` | 所有 Source URI Path；所有 Source record/item response | `pc_sources.scope_id` | `direct` | Source 的 owner Scope 和授权边界，也是公开复合身份的一部分；最长 256 字符，按字节精确比较。 |
+| `source_type` | Create body；Get/List URI Path；response | `pc_sources.source_type` | `direct` | Source adapter 的稳定名称和类型集合标识，也是公开复合身份的一部分；Create 缺省为 `content`，最长 128 字符。 |
+| `source_id` | Create response；Get URI Path；record/item response | `pc_sources.source_id`；当前类型化 payload 中的 `Source.name` 与其保持一致 | `direct` | Source 在同一 `(scope_id, source_type)` 集合内的稳定 ID；Create 不接收该字段，由服务端生成；最长 256 字符。 |
+| `content` | Create body；Create/Get response | `pc_sources.payload` | `encoded` | Source 的类型化证据内容。完整 Source 模型以 canonical JSON bytes 写入 `payload`；对 `source_type=content`，该字段对应 `ContentSource.content`，其他 Source type 由各自 adapter 定义可逆映射。 |
+| `metadata` | Create body；record/item response | `pc_sources.payload` 中的类型化 Source metadata | `encoded` | 不参与公开身份的扩展属性，缺省为 `{}`。所有通过通用 API 开放的 Source adapter 都必须无损保存并返回该字段；当前 `content` adapter 已支持，其他 adapter 若不支持不得静默丢弃。 |
+| `created_at` | record/item response | 目标字段 `pc_sources.created_at` | `new_column` | Source 首次成功持久化的服务端 UTC 时间。该值必须跨请求稳定，不能用读取时间或 journal position 反推。 |
+| `position` | Create/Get response；collection item | `pc_sources.journal_position` | `direct` | Source 在所属 Scope journal 中单调递增的位置，用于稳定排序以及后续生成命令的处理边界；同一 Scope 内唯一。 |
+| `content_digest` | record/item response | 无独立列 | `derived` | `sha256:` 加 canonical API `content` 字节的 64 个小写十六进制字符摘要；只覆盖 `content`，不覆盖 metadata、身份字段或 lineage。 |
 
-`pc_source_journal_heads.position` 是 Scope journal 高水位和位置分配依据，不是单条 Source 的 response 字段。
+`pc_source_journal_heads.position` 是每个 Scope 的 journal 高水位和下一个位置的分配依据，不等于某一条 Source 的
+`position`。API 返回的 item `position` 始终来自 `pc_sources.journal_position`。
 
 ### Artifact 字段映射
 
-| API 字段 | 持久化字段 | 映射 | 含义 |
-| --- | --- | --- | --- |
-| `scope_id` | Artifact、head 和 lineage 表的 `scope_id` | `direct` | owner Scope、授权边界和复合身份分量；最长 256 字符。 |
-| `artifact_ref.family` | `pc_artifacts.family`、`pc_artifact_heads.family` | `direct` | Family 和 adapter 路由；最长 128 字符。Create 的 `family` 来自 body。 |
-| `artifact_ref.artifact_id` | `pc_artifacts.artifact_id`、`pc_artifact_heads.artifact_id` | `direct` | 生命周期稳定 ID；服务端生成，最长 128 字符。 |
-| `artifact_ref.revision` | `pc_artifacts.revision`；head 由 `pc_artifact_heads.revision` 指向 | `direct` | 从 1 开始递增的不可变 Revision。 |
-| `artifact_ref` | 无单独 JSON 列 | `derived` | 由 family、artifact ID 和 Revision 组装，并与顶层 Scope 共同定位。 |
-| `content` | `pc_artifacts.content` | `encoded` | 通过 Family content model 校验后的 canonical JSON bytes。 |
-| `source_refs` | `pc_artifact_lineage_sources` | `relation` | 按数组顺序保存的同 Scope Source 引用。 |
-| `artifact_refs` | `pc_artifact_lineage_artifacts` | `relation` | 按数组顺序保存的同 Scope 上游 Artifact Revision 引用。 |
-| `created_at` | 目标 `pc_artifacts.created_at` | `new_column` | 当前 Revision 成功提交的服务端 UTC 时间。 |
-| `content_digest` | 无独立列 | `derived` | canonical Artifact content 的 SHA-256 摘要。 |
+| API 字段 | 出现位置 | 当前/目标持久化字段 | 映射 | 字段含义 |
+| --- | --- | --- | --- | --- |
+| `scope_id` | 所有 Artifact URI Path；所有 Artifact response | `pc_artifacts.scope_id`、`pc_artifact_heads.scope_id` 和 lineage 表的 `scope_id` | `direct` | Artifact 的 owner Scope、授权边界和公开复合身份的一部分；最长 256 字符，按字节精确比较。 |
+| `family` / `artifact_ref.family` | Create body；Get/List/Replace/Delete URI Path；response | `pc_artifacts.family`、`pc_artifact_heads.family` | `direct` | Artifact 的领域类型和 adapter 路由，也是公开复合身份的一部分；最长 128 字符。Create 必填，后续操作从 URI 获取。 |
+| `artifact_id` / `artifact_ref.artifact_id` | Create response；Get/Replace/Delete URI Path；response | `pc_artifacts.artifact_id`、`pc_artifact_heads.artifact_id` | `direct` | Artifact 在同一 `(scope_id, family)` 生命周期集合内的稳定 ID；Create 不接收该字段，由服务端生成；最长 128 字符。 |
+| `revision` / `artifact_ref.revision` | Revision URI Path；Artifact response | `pc_artifacts.revision`；当前 head 同时由 `pc_artifact_heads.revision` 指向 | `direct` | 同一 Artifact 生命周期中从 1 开始递增的不可变修订号。`pc_artifacts.revision` 定位精确历史版本，`pc_artifact_heads.revision` 选择当前版本。 |
+| `artifact_ref` | Artifact response | 无单独 JSON 列 | `derived` | 由同一 Revision 的 `family`、`artifact_id`、`revision` 三列组装；只有与顶层 `scope_id` 组合后才构成完整公开身份。 |
+| `content` | Create/Replace body；Artifact Revision response | `pc_artifacts.content` | `encoded` | 该 Revision 的完整 Family-specific 内容。服务端先按 `family` 对应的 Pydantic content model 校验，再以 canonical JSON bytes 持久化。 |
+| `source_refs` | Create/Replace body；Revision response | `pc_artifact_lineage_sources` | `relation` | 直接支撑该 Revision 的 Source 引用，按请求数组顺序保存。引用使用当前 Artifact 的 `scope_id`，因此当前契约只表达同 Scope Source。 |
+| `artifact_refs` | Create/Replace body；Revision response | `pc_artifact_lineage_artifacts` | `relation` | 直接支撑该 Revision 的上游 Artifact Revision 引用，按请求数组顺序保存。引用使用当前 Artifact 的 `scope_id`，因此当前契约只表达同 Scope Artifact。 |
+| `created_at` | Revision/item response | 目标字段 `pc_artifacts.created_at` | `new_column` | 当前 Revision 成功提交的服务端 UTC 时间。每个 Revision 独立记录；列表中它表示当前 head Revision 的创建时间。 |
+| `content_digest` | Revision/item response | 无独立列 | `derived` | `sha256:` 加 canonical Artifact `content` 字节的 64 个小写十六进制字符摘要；不覆盖身份和 lineage。 |
 
 Artifact 不定义顶层 `metadata`，因此不新增 `pc_artifacts.metadata`，也不改变 `pc_artifacts.content` 的现有
 Family content 序列化格式。
 
-`source_refs` 按以下关系列保存：
+`source_refs` 的数组元素按以下方式拆分：
 
-```json
-{
-  "child_identity": [
-    "scope_id",
-    "family",
-    "artifact_id",
-    "revision"
-  ],
-  "ordinal": "服务端根据数组顺序生成",
-  "source_refs[].source_type": "source_type",
-  "source_refs[].source_id": "source_id"
-}
-```
+| API/服务端字段 | `pc_artifact_lineage_sources` 列 | 含义 |
+| --- | --- | --- |
+| 当前 Revision 的 `scope_id` | `scope_id` | 子 Artifact 与被引用 Source 共同所在的 Scope。 |
+| 当前 Revision 的 `family` | `family` | 子 Artifact Family。 |
+| 当前 Revision 的 `artifact_id` | `artifact_id` | 子 Artifact ID。 |
+| 当前 Revision 的 `revision` | `revision` | 持有该 lineage 的子 Artifact Revision。 |
+| 服务端生成的数组下标 | `ordinal` | 从 0 开始保存引用顺序，不由客户端单独传入。 |
+| `source_refs[].source_type` | `source_type` | 被引用 Source 的类型。 |
+| `source_refs[].source_id` | `source_id` | 被引用 Source 的 ID。 |
 
-`artifact_refs` 按以下关系列保存：
+`artifact_refs` 的数组元素按以下方式拆分：
 
-```json
-{
-  "child_identity": [
-    "scope_id",
-    "family",
-    "artifact_id",
-    "revision"
-  ],
-  "ordinal": "服务端根据数组顺序生成",
-  "artifact_refs[].family": "upstream_family",
-  "artifact_refs[].artifact_id": "upstream_artifact_id",
-  "artifact_refs[].revision": "upstream_revision"
-}
-```
+| API/服务端字段 | `pc_artifact_lineage_artifacts` 列 | 含义 |
+| --- | --- | --- |
+| 当前 Revision 的 `scope_id` | `scope_id` | 子 Artifact 与上游 Artifact 共同所在的 Scope。 |
+| 当前 Revision 的 `family` | `family` | 子 Artifact Family。 |
+| 当前 Revision 的 `artifact_id` | `artifact_id` | 子 Artifact ID。 |
+| 当前 Revision 的 `revision` | `revision` | 持有该 lineage 的子 Artifact Revision。 |
+| 服务端生成的数组下标 | `ordinal` | 从 0 开始保存引用顺序，不由客户端单独传入。 |
+| `artifact_refs[].family` | `upstream_family` | 上游 Artifact Family。 |
+| `artifact_refs[].artifact_id` | `upstream_artifact_id` | 上游 Artifact ID。 |
+| `artifact_refs[].revision` | `upstream_revision` | 上游 Artifact 的精确不可变 Revision。 |
 
 ### 运行时和内部字段
 
-| 字段 | 持久化关系 | 含义 |
+| API 字段 | 持久化关系 | 字段含义 |
 | --- | --- | --- |
-| `query`、`mode`、`limit` | `runtime` | 只控制本次集合查询。 |
-| `cursor`、`next_cursor` | `runtime` | HTTP 分页令牌，不写入业务资源。 |
-| `score`、`snippets` | `runtime` | Search 排名和命中展示信息，不写回资源。 |
-| `Location` | `derived` | 根据完整公开身份组装 canonical URI。 |
-| `ETag` | `derived` | 根据当前 `pc_artifact_heads.revision` 生成。 |
-| `If-Match`、`If-None-Match` | `runtime` | 与当前 ETag 比较，不单独保存。 |
-| `X-PowerContext-Request-ID` | `runtime` | 单次请求追踪 ID。 |
-| `pc_artifact_heads.searchable_text` | Artifact Search 内部投影 | 当前 head 的检索文本；每个可搜索 Family 提供确定性 projector。 |
-| Source 搜索投影 | Source Search 内部投影 | master 当前无通用列；v0.1 可读取 payload 检索，扩展时可增加内部投影/索引。 |
-| 目标 `pc_artifact_heads.deleted_at` | Artifact 生命周期 | `null` 表示有效，非 `null` 表示逻辑删除时间；保留 head Revision。 |
+| `query` | `runtime` | 可选检索文本；省略、空字符串或仅空白时执行 List，非空时执行 Search。Response 返回规范化后的文本，List 时为 `null`。 |
+| `mode` | `runtime` | 请求时表示期望检索模式，response 中表示实际执行模式；List 时为 `null`。它不是资源类型，也不参与资源身份。 |
+| `limit` | `runtime` | 本页最多返回的 item 数量，只控制查询执行，不写入资源记录。 |
+| `cursor` | `runtime` | 上一页返回的不透明分页令牌，绑定调用方、集合路径、查询条件、排序和搜索模式；它与内部领域处理表 `pc_source_cursors.cursor` 无关。 |
+| `items` | `derived` | 根据查询到的 Source rows 或 Artifact head rows 组装的当前页集合，不作为整体持久化。 |
+| `score` | `runtime` | Search 的相关性得分；普通 List 为 `null`，不写回 Source 或 Artifact。 |
+| `snippets` | `runtime` | Search 命中内容的展示摘要；普通 List 或无可展示命中时为 `[]`。 |
+| `next_cursor` | `runtime` | 服务端根据本页最后位置和查询上下文生成的下一页令牌；末页为 `null`。 |
+| `Content-Type` | `runtime` | 请求体媒体类型，本 RFC 固定为 `application/json`。 |
+| `Location` | `derived` | Create 成功后根据完整公开身份组装的 canonical URI，不持久化为资源字段。 |
+| `ETag` | `derived` | Artifact head 当前 Revision 的并发和缓存标识，可由 `pc_artifact_heads.revision` 确定性生成。 |
+| `If-Match` | `runtime` | Replace/Delete 的前置条件；解析后与 `pc_artifact_heads.revision` 对比，不单独保存。 |
+| `If-None-Match` | `runtime` | Get head 的条件读取参数；与当前 ETag 比较，命中时返回 `304`。 |
+| `X-PowerContext-Request-ID` | `runtime` | 单次 HTTP 请求的追踪 ID，不属于 Source 或 Artifact metadata。 |
 
-说明性文档中的 `status`、`notes`、`precondition_errors`、`retry` 和 `not_found` 不是实际 response body 字段，
-不映射数据库列。
+说明性文档中的 `status`、`conditional_status`、`notes`、`precondition_errors`、`retry` 和 `not_found` 不是实际
+response body 字段，也不映射数据库列。
+
+搜索投影和生命周期字段：
+
+| 内部字段 | API 关联 | 含义与要求 |
+| --- | --- | --- |
+| `pc_artifact_heads.searchable_text` | Artifact `query`、`score`、`snippets` | 当前 head 的可检索文本投影，不直接返回。现有列可复用，但每个声明支持搜索的 Family 必须提供确定性的 content-to-text projector。 |
+| Source 搜索投影 | Source `query`、`score`、`snippets` | 当前 master 没有通用 Source 搜索列。首期可以由 adapter 读取 payload 后检索；若需要可扩展检索，应增加以 `(scope_id, source_type, source_id)` 为键的内部投影或索引，但它不是公开 API 字段。 |
+| 目标字段 `pc_artifact_heads.deleted_at` | Delete、Get/List/Search 可见性 | `null` 表示有效，非 `null` 表示逻辑删除时间。删除后保留 head Revision 和历史记录，才能校验 `If-Match`、识别同一次删除重试并默认隐藏资源。 |
+| `pc_source_journal_heads.position` | Source Create、后续领域生成边界 | Scope 级 Source journal 高水位，只用于分配和读取处理边界，不作为 Source record 字段。 |
+| `pc_source_cursors` | 无本 RFC 分页字段映射 | 现有表保存 binding 对 Source journal 的消费进度；不得用作 List/Search HTTP pagination cursor。 |
 
 ### 必要的表结构适配
 
@@ -657,6 +688,18 @@ Digest 计算规则：
   "insignificant_whitespace": "removed",
   "included_fields": [
     "content"
+  ],
+  "excluded_fields": [
+    "scope_id",
+    "source_type",
+    "source_id",
+    "family",
+    "artifact_id",
+    "revision",
+    "metadata",
+    "source_refs",
+    "artifact_refs",
+    "created_at"
   ],
   "output": "sha256:<64 lowercase hexadecimal characters>"
 }
