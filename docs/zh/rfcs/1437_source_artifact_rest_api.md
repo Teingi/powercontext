@@ -1,6 +1,6 @@
 - Proposal Name: `source_artifact_rest_api`
 - Start Date: 2026-09-01
-- RFC PR: [oceanbase/powercontext#0000](https://github.com/oceanbase/powercontext/pull/0000)
+- RFC PR: [oceanbase/powercontext#1437](https://github.com/oceanbase/powercontext/pull/1437)
 - Related RFCs: [RFC 0019](0019_local_source_memory_runtime.md)、
   [RFC 0048](0048_handoff_artifact.md)、[RFC 0050](0050_artifact_candidate_review_inbox.md)、
   [RFC 0051](0051_experience_skill_artifact_families.md) 和
