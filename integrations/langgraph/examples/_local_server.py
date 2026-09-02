@@ -36,7 +36,7 @@ from pydantic import SecretStr
 from powercontext.builtin.persistence.sqlite import SQLiteConfig
 from powercontext.builtin.runtime import InferenceConfig
 from powercontext.server.factory import create_server_app
-from powercontext.server.settings import BearerAuthConfig, McpConfig, ServerSettings
+from powercontext.server.settings import AccessControlConfig, AuthenticationConfig, McpConfig, ServerSettings
 
 
 @contextmanager
@@ -48,7 +48,12 @@ def local_powercontext_server(*, token: str | None = None) -> Iterator[str]:
 
     with TemporaryDirectory() as db_dir:
         settings = ServerSettings(
-            auth=BearerAuthConfig(enabled=token is not None, token=SecretStr(token or "")),
+            auth=AuthenticationConfig(
+                provider="static-bearer" if token is not None else None,
+                token=None if token is None else SecretStr(token),
+            ),
+            access=AccessControlConfig(mode="enforced" if token is not None else "disabled"),
+            authorization_provider="builtin" if token is not None else None,
             database=SQLiteConfig(url=f"sqlite+aiosqlite:///{db_dir}/memory.db"),
             inference=InferenceConfig(generation_model="test"),
             mcp=McpConfig(enabled=False),

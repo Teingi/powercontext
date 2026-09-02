@@ -18,7 +18,8 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator, Sequence
 from contextlib import asynccontextmanager
-from typing import Literal
+from datetime import UTC, datetime
+from uuid import uuid4
 
 from powercontext.builtin.persistence.oceanbase import OceanBaseConfig, OceanBaseProfile
 from powercontext.builtin.persistence.seekdb import SeekDBConfig, SeekDBProfile
@@ -26,13 +27,24 @@ from powercontext.builtin.persistence.sqlite import SQLiteConfig, SQLiteProfile
 from powercontext.builtin.runtime.composition import BuiltinConfigurationError
 from powercontext.builtin.runtime.config import DatabaseConfig
 from powercontext.server.authz.casbin import CasbinAuthorizationProvider
-from powercontext.server.authz.models import DEFAULT_DEPLOYMENT_ID, PrincipalRef
+from powercontext.server.authz.models import (
+    DEFAULT_DEPLOYMENT_ID,
+    AccessBinding,
+    AccessBindingState,
+    AccessRole,
+    PrincipalRef,
+    ResourceRef,
+)
 from powercontext.server.authz.repository import (
     ACCESS_TABLES,
     RelationalAccessRepository,
     ensure_access_policy_revision_columns,
 )
-from powercontext.server.authz.service import AccessControlService, BuiltinAuthorizationProvider
+from powercontext.server.authz.service import (
+    AccessControlService,
+    AccessProviderCapabilities,
+    BuiltinAuthorizationProvider,
+)
 
 
 @asynccontextmanager
@@ -41,14 +53,13 @@ async def open_builtin_access_control(
     *,
     bootstrap_administrators: Sequence[PrincipalRef] = (),
     deployment_id: str = DEFAULT_DEPLOYMENT_ID,
-    mode: Literal["legacy-static-admin", "enforced"] = "enforced",
 ) -> AsyncIterator[AccessControlService]:
     """Open a Server-owned Access schema without coupling it to Runtime domains."""
 
     async with _open_access_repository(database) as repository:
+        await _bootstrap_server_roles(repository, bootstrap_administrators, deployment_id=deployment_id)
         provider = BuiltinAuthorizationProvider(
             repository,
-            bootstrap_administrators=bootstrap_administrators,
             deployment_id=deployment_id,
         )
         yield AccessControlService(
@@ -56,7 +67,13 @@ async def open_builtin_access_control(
             relationships=repository,
             audit=repository,
             deployment_id=deployment_id,
-            mode=mode,
+            provider_capabilities=AccessProviderCapabilities(
+                safe_resource_filtering=True,
+                multi_requirement_check=True,
+                relationship_management=True,
+                group_subjects=False,
+            ),
+            static_scope_principal=bootstrap_administrators[0] if len(bootstrap_administrators) == 1 else None,
         )
 
 
@@ -66,22 +83,27 @@ async def open_casbin_access_control(
     *,
     bootstrap_administrators: Sequence[PrincipalRef] = (),
     deployment_id: str = DEFAULT_DEPLOYMENT_ID,
-    mode: Literal["legacy-static-admin", "enforced"] = "enforced",
 ) -> AsyncIterator[AccessControlService]:
     """Open the writable embedded Casbin adapter over the canonical Access schema."""
 
     async with _open_access_repository(database) as repository:
+        await _bootstrap_server_roles(repository, bootstrap_administrators, deployment_id=deployment_id)
         provider = CasbinAuthorizationProvider(
             repository,
-            bootstrap_administrators=bootstrap_administrators,
             deployment_id=deployment_id,
         )
         yield AccessControlService(
             provider,
-            relationships=provider,
+            relationships=repository,
             audit=repository,
             deployment_id=deployment_id,
-            mode=mode,
+            provider_capabilities=AccessProviderCapabilities(
+                safe_resource_filtering=True,
+                multi_requirement_check=True,
+                relationship_management=True,
+                group_subjects=False,
+            ),
+            static_scope_principal=bootstrap_administrators[0] if len(bootstrap_administrators) == 1 else None,
         )
 
 
@@ -101,6 +123,34 @@ async def _open_access_repository(
         async with profile.database.transaction() as connection:
             await ensure_access_policy_revision_columns(connection)
         yield RelationalAccessRepository(profile.database)
+
+
+async def _bootstrap_server_roles(
+    repository: RelationalAccessRepository,
+    principals: Sequence[PrincipalRef],
+    *,
+    deployment_id: str,
+) -> None:
+    resource = ResourceRef.server(deployment_id)
+    for principal in principals:
+        for role in (AccessRole.SERVER_OBSERVER, AccessRole.SERVER_ADMIN):
+            key = f"static-preset:{deployment_id}:{principal.id}:{role.value}"
+            await repository.create_binding(
+                AccessBinding(
+                    binding_id=str(uuid4()),
+                    subject=principal,
+                    resource=resource,
+                    role=role,
+                    granted_by=principal,
+                    reason="static bearer preset",
+                    created_at=datetime.now(UTC),
+                    expires_at=None,
+                    state=AccessBindingState.ACTIVE,
+                    version=1,
+                    policy_revision="pending",
+                    idempotency_key=key,
+                )
+            )
 
 
 __all__ = ("open_builtin_access_control", "open_casbin_access_control")

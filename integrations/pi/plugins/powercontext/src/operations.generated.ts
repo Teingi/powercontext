@@ -80,7 +80,8 @@ export const OPERATIONS = {
   list_access_bindings: { method: 'POST', path: '/v1/access/bindings/list', location: "body", scope: false },
   create_access_binding: { method: 'POST', path: '/v1/access/bindings/create', location: "body", scope: false },
   revoke_access_binding: { method: 'POST', path: '/v1/access/bindings/revoke', location: "body", scope: false },
-  list_access_audit: { method: 'POST', path: '/v1/access/audit/list', location: "body", scope: true },
+  reassign_handoff_receiver_binding: { method: 'POST', path: '/v1/access/bindings/reassign-handoff-receiver', location: "body", scope: false },
+  list_access_audit: { method: 'POST', path: '/v1/access/audit/list', location: "body", scope: false },
 } as const
 
 export type OperationId = keyof typeof OPERATIONS

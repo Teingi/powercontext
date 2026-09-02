@@ -53,11 +53,16 @@ Server settings use the `POWERCONTEXT_SERVER_` prefix.
 | `POWERCONTEXT_SERVER_HTTP_PORT` | `8000` | Listener port |
 | `POWERCONTEXT_SERVER_MCP_ENABLED` | `true` | Enable Streamable HTTP MCP |
 | `POWERCONTEXT_SERVER_MCP_PATH` | `/mcp` | MCP path |
-| `POWERCONTEXT_SERVER_AUTH_ENABLED` | `false` | Require one static bearer token for HTTP and MCP |
-| `POWERCONTEXT_SERVER_AUTH_TOKEN` | unset | Static bearer token; required when authentication is enabled |
-| `POWERCONTEXT_SERVER_ACCESS_MODE` | `legacy-static-admin` | Authorization rollout: `disabled`, `legacy-static-admin`, or `enforced` |
-| `POWERCONTEXT_SERVER_ACCESS_BOOTSTRAP_STATIC_PRINCIPAL` | `true` | Treat the deployment-local static-token Principal as a bootstrap Server administrator |
-| `POWERCONTEXT_SERVER_ACCESS_DEPLOYMENT_ID` | `powercontext` | Stable deployment identity used by the `server` Access Resource and static Principal issuer |
+| `POWERCONTEXT_SERVER_AUTH_PROVIDER` | unset | Authentication Provider: `static-bearer`, `oidc`, or `trusted-header`; required in `enforced` mode |
+| `POWERCONTEXT_SERVER_AUTH_TOKEN` | unset | Static bearer token; valid only with `AUTH_PROVIDER=static-bearer` |
+| `POWERCONTEXT_SERVER_AUTH_PRINCIPAL_ID` | `server-token` | Deployment-wide unique Principal ID represented by the static token |
+| `POWERCONTEXT_SERVER_AUTH_PRINCIPAL_DESCRIPTION` | `PowerContext static bearer` | Optional display-only description for the static Principal |
+| `POWERCONTEXT_SERVER_ACCESS_MODE` | `disabled` | Sole security switch: `disabled` or `enforced` |
+| `POWERCONTEXT_SERVER_AUTHORIZATION_PROVIDER` | unset | Authorization Provider: `builtin`, `casbin`, or `external`; required in `enforced` mode |
+| `POWERCONTEXT_SERVER_ACCESS_STATIC_PRESET` | `true` | Materialize the explicit built-in roles needed by a single-Principal static deployment |
+| `POWERCONTEXT_SERVER_ACCESS_DEPLOYMENT_ID` | `powercontext` | Stable deployment identity used by the `server` Access Resource |
+| `POWERCONTEXT_SERVER_ACCESS_BACKGROUND_PRINCIPAL_ID` | unset | Explicit service Principal for scheduled jobs in a multi-user enforced deployment |
+| `POWERCONTEXT_SERVER_ACCESS_BACKGROUND_PRINCIPAL_DESCRIPTION` | unset | Optional display-only description for the scheduled service Principal |
 | `POWERCONTEXT_SERVER_ALLOW_UNAUTHENTICATED_NON_LOOPBACK` | `false` | Opt in to a non-loopback bind while authentication is disabled |
 | `POWERCONTEXT_SERVER_DASHBOARD_ENABLED` | `true` | Enable the Dashboard at the Server root path `/` |
 | `POWERCONTEXT_SERVER_DASHBOARD_SCOPES` | `[]` | JSON array of selectable Dashboard scopes |
@@ -89,27 +94,38 @@ Server settings use the `POWERCONTEXT_SERVER_` prefix.
 | `POWERCONTEXT_SERVER_RUNTIME_EXPERIENCE_SCHEDULE_SECONDS` | unset | Experience incubation interval; unset disables that job |
 | `POWERCONTEXT_SERVER_EXTERNAL_SKILLS` | unset | JSON object containing the host identity and explicit Agent Skill targets |
 
-Static bearer authentication is disabled by default. When enabled, API and MCP requests must include
-`Authorization: Bearer <token>`; the liveness and readiness endpoints remain public. Plain HTTP is trusted only on a
+Access Control is disabled by default. In `enforced` mode, API and MCP requests must establish a Principal through the
+selected Authentication Provider; the liveness and readiness endpoints remain public. The built-in `static-bearer`
+Provider accepts `Authorization: Bearer <token>`. Plain HTTP is trusted only on a
 loopback address (`localhost`, `::1`, or any address in `127.0.0.0/8`). The Server refuses to start when it binds to a
 non-loopback address while authentication is disabled; either enable authentication, keep the bind on loopback, or,
 when TLS is terminated upstream or the network is otherwise controlled, set
 `POWERCONTEXT_SERVER_ALLOW_UNAUTHENTICATED_NON_LOOPBACK=true` to opt in explicitly. Use TLS before exposing an
 authenticated Server over a network.
 
-Authentication establishes a Principal; Access Control decides what that Principal may do. The built-in static token
-always represents one deployment-local service Principal, so it cannot distinguish user A from user B. The default
-`legacy-static-admin` mode maps that Principal to a bootstrap Server administrator and preserves the single-user local
-deployment. `enforced` enables the same policy enforcement point and persistent Binding/audit store for an injected
-multi-user authentication and Authorization Provider. Set `bootstrap_static_principal=false` after another
-administrator relationship is available. `disabled` bypasses authorization decisions and is intended only for an
-explicit compatibility rollback inside an already trusted network boundary.
+`POWERCONTEXT_SERVER_ACCESS_MODE` is the only switch. `disabled` rejects authentication and authorization Provider
+configuration and bypasses authorization decisions inside the trusted local boundary. `enforced` requires both
+`AUTH_PROVIDER` and `AUTHORIZATION_PROVIDER`; it enables one policy enforcement point and the configured Provider's
+Binding and audit behavior.
+
+Authentication establishes a Principal; Access Control decides what that Principal may do. Principal IDs are
+deployment-wide unique, non-reused identifiers; `description` is display metadata and is not part of identity. The
+built-in static token always represents one service Principal, so it cannot distinguish user A from user B. With the
+built-in Authorization Provider, `ACCESS_STATIC_PRESET=true` materializes explicit Server and per-scope roles for
+that Principal. Use `oidc` or `trusted-header` with a deployment-supplied Authentication Provider and an appropriate
+Authorization Provider when different users or groups need different access.
+
+Scheduled Source processing and Experience incubation run as the fixed static Principal, or as the service Principal
+selected by `ACCESS_BACKGROUND_PRINCIPAL_ID`. That Principal must have `scope.contribute` for each processed scope;
+new Memory entries and Candidates retain it as their direct proposed owner. An enforced multi-user deployment that
+configures a schedule without this explicit Principal fails at startup.
 
 Remote, multi-user, and shared-Dashboard deployments must use `enforced`. In that mode, HTTP, MCP, Dashboard data
 routes, and metrics share one Server PEP. Configured Dashboard scopes are filtered by the current Principal's
 `scope.read` decision before they are returned. `/v1/access/me` reports the `server`/`scope`/`artifact` Resource Kinds,
-Provider batch/list/relationship capabilities, Artifact Family profiles, and whether this deployment has a managed
-Skill publication operation protected by both required actions.
+Provider batch/list/relationship capabilities and Artifact Family profiles. Managed Skill export and installation do
+not introduce separate Access actions: the recipient first needs `artifact.read` on the logical Skill identity, then
+chooses whether and how to install an exact Revision.
 
 The built-in Access schema uses the configured SQLite, seekDB, or OceanBase backend, but remains Server-owned rather
 than becoming a Runtime domain. A custom deployment can inject an `AccessControlService` into `create_server_app`.
@@ -137,7 +153,7 @@ The Dashboard is enabled by default and shares the Server listener and port with
 configured, the page shows an empty state. Dashboard initialization failures are logged with their direct cause and do
 not prevent the Server HTTP API, MCP, or health checks from starting.
 
-When bearer authentication is enabled, the HTML shells at `/`, `/skills`, `/reviews`, and `/handoff-reports`, plus
+When `AUTH_PROVIDER=static-bearer` is enforced, the HTML shells at `/`, `/skills`, `/reviews`, and `/handoff-reports`, plus
 their static assets, remain public so the browser can render the sign-in form. Data requests stay protected. Enter the
 Server token in that form; the browser keeps it only in the current tab's session storage. Disable both Dashboard and
 Handoff Report if even these sign-in pages must not be exposed.

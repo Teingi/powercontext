@@ -23,7 +23,7 @@ from uuid import uuid4
 
 import pytest
 from dotenv import load_dotenv
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, or_, select
 
 from powercontext.builtin.persistence.oceanbase import OceanBaseConfig, OceanBaseProfile
 from powercontext.builtin.persistence.seekdb import SeekDBConfig, SeekDBProfile
@@ -40,7 +40,14 @@ from powercontext.server.authz import (
     ResourceRef,
 )
 from powercontext.server.authz.composition import open_builtin_access_control
-from powercontext.server.authz.repository import ACCESS_AUDIT_EVENTS_TABLE, ACCESS_BINDINGS_TABLE
+from powercontext.server.authz.repository import (
+    ACCESS_AUDIT_EVENTS_TABLE,
+    ACCESS_BINDINGS_TABLE,
+    ACCESS_CANDIDATE_OWNERS_TABLE,
+    ACCESS_IDEMPOTENCY_TABLE,
+    ACCESS_OWNERS_TABLE,
+    ACCESS_RECEIVER_LEASES_TABLE,
+)
 from powercontext.server.settings import ServerSettings
 
 pytestmark = pytest.mark.real_e2e
@@ -55,21 +62,19 @@ def test_configured_database_persists_exact_skill_grant_and_revocation(pytestcon
     suffix = uuid4().hex
     scope_id = f"configured-real-access:{suffix}"
     deployment_id = f"configured-real-access-{suffix}"
-    admin = PrincipalRef(type="service", issuer=f"powercontext:{deployment_id}", id="admin")
-    receiver = PrincipalRef(type="user", issuer=f"powercontext:{deployment_id}", id="receiver")
+    admin = PrincipalRef(type="service", id=f"{deployment_id}:admin")
+    receiver = PrincipalRef(type="user", id=f"{deployment_id}:receiver")
 
     async def scenario() -> None:
         exact = ResourceRef.artifact(
             scope_id,
             family="skill",
             artifact_id=f"managed-skill-{suffix}",
-            revision=7,
         )
-        adjacent = ResourceRef.artifact(
+        other = ResourceRef.artifact(
             scope_id,
             family="skill",
-            artifact_id=f"managed-skill-{suffix}",
-            revision=8,
+            artifact_id=f"other-skill-{suffix}",
         )
         context = AccessAuditContext(transport="test", operation="configured-real-access")
         try:
@@ -78,27 +83,33 @@ def test_configured_database_persists_exact_skill_grant_and_revocation(pytestcon
                 bootstrap_administrators=(admin,),
                 deployment_id=deployment_id,
             ) as access:
+                await access.establish_artifact_owner(
+                    exact,
+                    admin,
+                    idempotency_key=f"owner-skill-{suffix}",
+                    context=context,
+                )
+                await access.establish_artifact_owner(
+                    other,
+                    admin,
+                    idempotency_key=f"owner-other-skill-{suffix}",
+                    context=context,
+                )
                 binding = await access.create_binding(
                     admin,
                     CreateBinding(
                         subject=receiver,
                         resource=exact,
-                        role=AccessRole.SKILL_PUBLISHER,
-                        idempotency_key=f"publish-exact-skill-{suffix}",
+                        role=AccessRole.ARTIFACT_VIEWER,
+                        idempotency_key=f"share-logical-skill-{suffix}",
                     ),
                     context=context,
                 )
-                decisions = await access.require_all(
-                    receiver,
-                    (
-                        (AccessAction.ARTIFACT_READ, exact),
-                        (AccessAction.SKILL_PUBLISH, exact),
-                    ),
-                    context=context,
-                )
-                assert all(decision.allowed for decision in decisions)
+                assert (await access.require(receiver, AccessAction.ARTIFACT_READ, exact, context=context)).allowed
                 with pytest.raises(AccessDeniedError):
-                    await access.require(receiver, AccessAction.ARTIFACT_READ, adjacent, context=context)
+                    await access.require(receiver, AccessAction.ARTIFACT_WRITE, exact, context=context)
+                with pytest.raises(AccessDeniedError):
+                    await access.require(receiver, AccessAction.ARTIFACT_READ, other, context=context)
 
                 visible = await access.list_resources(
                     receiver,
@@ -114,6 +125,7 @@ def test_configured_database_persists_exact_skill_grant_and_revocation(pytestcon
                     admin,
                     binding.binding_id,
                     expected_version=binding.version,
+                    idempotency_key=f"revoke-skill-share-{suffix}",
                     context=context,
                 )
                 assert revoked.version == binding.version + 1
@@ -129,23 +141,70 @@ def test_configured_database_persists_exact_skill_grant_and_revocation(pytestcon
                     )
                 ).total == 0
         finally:
-            remaining = await _purge_scope(settings.database, scope_id)
+            remaining = await _purge_scope(
+                settings.database,
+                scope_id=scope_id,
+                deployment_id=deployment_id,
+                actor_ids=(admin.id, receiver.id),
+            )
             assert remaining == 0
 
     asyncio.run(scenario())
 
 
-async def _purge_scope(database: DatabaseConfig, scope_id: str) -> int:
+async def _purge_scope(
+    database: DatabaseConfig,
+    *,
+    scope_id: str,
+    deployment_id: str,
+    actor_ids: tuple[str, ...],
+) -> int:
     async with _profile(database) as profile, profile.database.transaction() as connection:
         await connection.execute(
-            delete(ACCESS_AUDIT_EVENTS_TABLE).where(ACCESS_AUDIT_EVENTS_TABLE.c.scope_id == scope_id)
+            delete(ACCESS_AUDIT_EVENTS_TABLE).where(
+                or_(
+                    ACCESS_AUDIT_EVENTS_TABLE.c.scope_id == scope_id,
+                    ACCESS_AUDIT_EVENTS_TABLE.c.deployment_id == deployment_id,
+                )
+            )
         )
-        await connection.execute(delete(ACCESS_BINDINGS_TABLE).where(ACCESS_BINDINGS_TABLE.c.scope_id == scope_id))
+        await connection.execute(
+            delete(ACCESS_RECEIVER_LEASES_TABLE).where(
+                ACCESS_RECEIVER_LEASES_TABLE.c.binding_id.in_(
+                    select(ACCESS_BINDINGS_TABLE.c.binding_id).where(
+                        or_(
+                            ACCESS_BINDINGS_TABLE.c.scope_id == scope_id,
+                            ACCESS_BINDINGS_TABLE.c.deployment_id == deployment_id,
+                        )
+                    )
+                )
+            )
+        )
+        await connection.execute(
+            delete(ACCESS_CANDIDATE_OWNERS_TABLE).where(ACCESS_CANDIDATE_OWNERS_TABLE.c.scope_id == scope_id)
+        )
+        await connection.execute(delete(ACCESS_OWNERS_TABLE).where(ACCESS_OWNERS_TABLE.c.scope_id == scope_id))
+        await connection.execute(
+            delete(ACCESS_BINDINGS_TABLE).where(
+                or_(
+                    ACCESS_BINDINGS_TABLE.c.scope_id == scope_id,
+                    ACCESS_BINDINGS_TABLE.c.deployment_id == deployment_id,
+                )
+            )
+        )
+        await connection.execute(
+            delete(ACCESS_IDEMPOTENCY_TABLE).where(ACCESS_IDEMPOTENCY_TABLE.c.actor_id.in_(actor_ids))
+        )
         binding_count = int(
             await connection.scalar(
                 select(func.count())
                 .select_from(ACCESS_BINDINGS_TABLE)
-                .where(ACCESS_BINDINGS_TABLE.c.scope_id == scope_id)
+                .where(
+                    or_(
+                        ACCESS_BINDINGS_TABLE.c.scope_id == scope_id,
+                        ACCESS_BINDINGS_TABLE.c.deployment_id == deployment_id,
+                    )
+                )
             )
             or 0
         )
@@ -153,11 +212,38 @@ async def _purge_scope(database: DatabaseConfig, scope_id: str) -> int:
             await connection.scalar(
                 select(func.count())
                 .select_from(ACCESS_AUDIT_EVENTS_TABLE)
-                .where(ACCESS_AUDIT_EVENTS_TABLE.c.scope_id == scope_id)
+                .where(
+                    or_(
+                        ACCESS_AUDIT_EVENTS_TABLE.c.scope_id == scope_id,
+                        ACCESS_AUDIT_EVENTS_TABLE.c.deployment_id == deployment_id,
+                    )
+                )
             )
             or 0
         )
-        return binding_count + audit_count
+        owner_count = int(
+            await connection.scalar(
+                select(func.count()).select_from(ACCESS_OWNERS_TABLE).where(ACCESS_OWNERS_TABLE.c.scope_id == scope_id)
+            )
+            or 0
+        )
+        candidate_count = int(
+            await connection.scalar(
+                select(func.count())
+                .select_from(ACCESS_CANDIDATE_OWNERS_TABLE)
+                .where(ACCESS_CANDIDATE_OWNERS_TABLE.c.scope_id == scope_id)
+            )
+            or 0
+        )
+        idempotency_count = int(
+            await connection.scalar(
+                select(func.count())
+                .select_from(ACCESS_IDEMPOTENCY_TABLE)
+                .where(ACCESS_IDEMPOTENCY_TABLE.c.actor_id.in_(actor_ids))
+            )
+            or 0
+        )
+        return binding_count + audit_count + owner_count + candidate_count + idempotency_count
 
 
 @asynccontextmanager

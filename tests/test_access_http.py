@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Self
@@ -28,9 +29,18 @@ from powercontext.builtin.artifacts.memory import MemoryEntryVersion
 from powercontext.builtin.artifacts.skill import AgentSkillTarget, Skill, SkillContent
 from powercontext.builtin.persistence.sqlite import SQLiteConfig, SQLiteProfile
 from powercontext.builtin.runtime import MemoryEntryRecord
+from powercontext.builtin.runtime.config import RuntimeConfig
 from powercontext.server.app import create_app
+from powercontext.server.authentication import (
+    AuthenticationResult,
+    ProviderReadiness,
+    StaticBearerAuthenticationProvider,
+)
 from powercontext.server.authz import (
+    AccessAction,
     AccessAuditContext,
+    AccessBinding,
+    AccessBindingState,
     AccessControlService,
     AccessRole,
     BuiltinAuthorizationProvider,
@@ -41,19 +51,45 @@ from powercontext.server.authz import (
 )
 from powercontext.server.authz.repository import ACCESS_TABLES, RelationalAccessRepository
 from powercontext.server.factory import create_server_app
-from powercontext.server.middleware import StaticBearerMiddleware
-from powercontext.server.settings import AccessControlConfig, ServerSettings
+from powercontext.server.middleware import AuthenticationMiddleware
+from powercontext.server.settings import AccessControlConfig, AuthenticationConfig, ServerSettings
 from powercontext.server.web import mount_web_ui
 
-ADMIN = PrincipalRef(type="user", issuer="https://identity.example", id="admin")
-BOB = PrincipalRef(type="user", issuer="https://identity.example", id="bob")
-ALICE = PrincipalRef(type="user", issuer="https://identity.example", id="alice")
+ADMIN = PrincipalRef(type="service", id="admin", description="deployment administrator")
+BOB = PrincipalRef(type="user", id="bob")
+ALICE = PrincipalRef(type="user", id="alice")
 AUDIT = AccessAuditContext(transport="test", operation="seed")
 
 
+class _FailingAuthenticationProvider:
+    async def authenticate(self, request) -> AuthenticationResult:
+        del request
+        raise RuntimeError("private-provider-detail")
+
+    async def readiness(self) -> ProviderReadiness:
+        return ProviderReadiness(ready=False)
+
+
 def test_enforced_mode_cannot_silently_start_without_authentication_or_provider() -> None:
-    with pytest.raises(ValueError, match="enforced Access Control"):
-        create_server_app(settings=ServerSettings(access=AccessControlConfig(mode="enforced")))
+    with pytest.raises(ValueError, match="requires authentication and authorization Providers"):
+        ServerSettings(access=AccessControlConfig(mode="enforced"))
+
+    with pytest.raises(ValueError, match="selected Authentication Provider"):
+        create_server_app(
+            settings=ServerSettings(
+                access=AccessControlConfig(mode="enforced"),
+                auth=AuthenticationConfig(provider="oidc"),
+                authorization_provider="builtin",
+            )
+        )
+
+    with pytest.raises(ValueError, match="BACKGROUND_PRINCIPAL_ID"):
+        ServerSettings(
+            access=AccessControlConfig(mode="enforced"),
+            auth=AuthenticationConfig(provider="oidc"),
+            authorization_provider="builtin",
+            runtime=RuntimeConfig(schedule_seconds=60),
+        )
 
 
 def test_low_level_enforced_app_fails_closed_without_an_authorization_provider() -> None:
@@ -66,6 +102,96 @@ def test_low_level_enforced_app_fails_closed_without_an_authorization_provider()
         assert readiness.json()["checks"]["access_provider"] == "not_ready"
         assert capabilities.status_code == 503
         assert capabilities.json()["error"]["code"] == "access_unavailable"
+
+    asyncio.run(scenario())
+
+
+def test_authentication_provider_failures_use_a_stable_secret_safe_response() -> None:
+    async def scenario() -> None:
+        provider = _FailingAuthenticationProvider()
+        app = create_app(
+            authentication_provider=provider,
+            middleware=(Middleware(AuthenticationMiddleware, provider=provider),),
+        )
+        async with _client(app) as client:
+            response = await client.get("/v1/access/me", headers=_auth("never-echo-this"))
+
+        assert response.status_code == 503
+        assert response.json()["error"]["code"] == "authentication_unavailable"
+        assert "private-provider-detail" not in response.text
+        assert "never-echo-this" not in response.text
+
+    asyncio.run(scenario())
+
+
+def test_access_audit_time_range_filters_results_and_binds_the_cursor() -> None:
+    async def scenario() -> None:
+        async with SQLiteProfile.open(SQLiteConfig(), tables=ACCESS_TABLES) as profile:
+            repository = RelationalAccessRepository(profile.database)
+            await _seed_admin(repository)
+            service = AccessControlService(
+                BuiltinAuthorizationProvider(repository),
+                relationships=repository,
+                audit=repository,
+            )
+            await service.check(
+                ADMIN,
+                AccessAction.SCOPE_READ,
+                ResourceRef.scope("scope-a"),
+                context=AUDIT,
+            )
+            app = _app(service, principal=ADMIN, token="admin-token")  # noqa: S106 - test credential.
+            now = datetime.now(UTC)
+            current_range = {
+                "start": (now - timedelta(days=1)).isoformat(),
+                "end": (now + timedelta(days=1)).isoformat(),
+            }
+            payload = {
+                "resource": {"type": "scope", "scope_id": "scope-a"},
+                "time_range": current_range,
+                "limit": 1,
+            }
+            async with _client(app) as client:
+                first = await client.post(
+                    "/v1/access/audit/list",
+                    headers=_auth("admin-token"),
+                    json=payload,
+                )
+                assert first.status_code == 200, first.json()
+                assert len(first.json()["items"]) == 1
+                assert first.json()["next_cursor"] is not None
+
+                outside = await client.post(
+                    "/v1/access/audit/list",
+                    headers=_auth("admin-token"),
+                    json=payload
+                    | {
+                        "time_range": {
+                            "start": (now - timedelta(days=3)).isoformat(),
+                            "end": (now - timedelta(days=2)).isoformat(),
+                        }
+                    },
+                )
+                assert outside.status_code == 200
+                assert outside.json()["items"] == []
+
+                changed_filter = await client.post(
+                    "/v1/access/audit/list",
+                    headers=_auth("admin-token"),
+                    json=payload
+                    | {
+                        "time_range": current_range | {"start": (now - timedelta(hours=12)).isoformat()},
+                        "cursor": first.json()["next_cursor"],
+                    },
+                )
+                assert changed_filter.status_code == 422
+
+                invalid = await client.post(
+                    "/v1/access/audit/list",
+                    headers=_auth("admin-token"),
+                    json=payload | {"time_range": {"start": now.isoformat(), "end": now.isoformat()}},
+                )
+                assert invalid.status_code == 422
 
     asyncio.run(scenario())
 
@@ -121,10 +247,30 @@ def test_access_api_and_handoff_pep_enforce_exact_receiver_visibility() -> None:
     async def scenario() -> None:
         async with SQLiteProfile.open(SQLiteConfig(), tables=ACCESS_TABLES) as profile:
             repository = RelationalAccessRepository(profile.database)
+            await _seed_admin(repository)
             service = AccessControlService(
-                BuiltinAuthorizationProvider(repository, bootstrap_administrators=(ADMIN,)),
+                BuiltinAuthorizationProvider(repository),
                 relationships=repository,
                 audit=repository,
+            )
+            handoff = ResourceRef.artifact("scope-a", family="handoff", artifact_id="handoff-a")
+            await service.establish_artifact_owner(
+                handoff,
+                ADMIN,
+                idempotency_key="owner-handoff-a",
+                context=AUDIT,
+            )
+            await service.establish_artifact_owner(
+                ResourceRef.artifact("scope-a", family="handoff", artifact_id="handoff-b"),
+                ADMIN,
+                idempotency_key="owner-handoff-b",
+                context=AUDIT,
+            )
+            await service.establish_artifact_owner(
+                ResourceRef.artifact("scope-a", family="handoff", artifact_id="handoff"),
+                ADMIN,
+                idempotency_key="owner-default-handoff",
+                context=AUDIT,
             )
             admin_app = _app(
                 service,
@@ -142,9 +288,9 @@ def test_access_api_and_handoff_pep_enforce_exact_receiver_visibility() -> None:
                 principal = await admin.get("/v1/access/me", headers=_auth("admin-token"))
                 assert principal.status_code == 200
                 assert principal.json()["principal"] == {
-                    "type": "user",
-                    "issuer": "https://identity.example",
+                    "type": "service",
                     "id": "admin",
+                    "description": "deployment administrator",
                 }
                 assert principal.json()["mode"] == "enforced"
                 assert principal.json()["resource_kinds"] == ["server", "scope", "artifact"]
@@ -156,15 +302,26 @@ def test_access_api_and_handoff_pep_enforce_exact_receiver_visibility() -> None:
                     "experience",
                     "skill",
                 }
+                roles = await admin.post(
+                    "/v1/access/roles/list",
+                    headers=_auth("admin-token"),
+                    json={"resource_type": "artifact", "family": "skill"},
+                )
+                assert roles.status_code == 200
+                assert {item["role"] for item in roles.json()["items"]} == {
+                    "artifact.owner",
+                    "artifact.viewer",
+                }
+                assert all(item["artifact_families"] == ["skill"] for item in roles.json()["items"])
                 created = await admin.post(
                     "/v1/access/bindings/create",
                     headers=_auth("admin-token"),
                     json={
-                        "subject": {"type": "user", "issuer": "https://identity.example", "id": "bob"},
+                        "subject": {"type": "user", "id": "bob", "description": "forged directory name"},
                         "resource": {
                             "type": "artifact",
                             "scope_id": "scope-a",
-                            "reference": {"family": "handoff", "artifact_id": "handoff-a", "revision": 3},
+                            "identity": {"family": "handoff", "artifact_id": "handoff-a"},
                             "selector": None,
                         },
                         "role": "handoff.receiver",
@@ -172,14 +329,15 @@ def test_access_api_and_handoff_pep_enforce_exact_receiver_visibility() -> None:
                     },
                 )
                 assert created.status_code == 201
-                assert created.json()["policy_revision"] == "1"
+                assert created.json()["policy_revision"]
+                assert created.json()["subject"] == {"type": "user", "id": "bob", "description": None}
 
             bob_app = _app(service, principal=BOB, token="bob-token")  # noqa: S106 - test credential.
             async with _client(bob_app) as bob:
                 exact = {
                     "type": "artifact",
                     "scope_id": "scope-a",
-                    "reference": {"family": "handoff", "artifact_id": "handoff-a", "revision": 3},
+                    "identity": {"family": "handoff", "artifact_id": "handoff-a"},
                     "selector": None,
                 }
                 decision = await bob.post(
@@ -234,7 +392,7 @@ def test_access_api_and_handoff_pep_enforce_exact_receiver_visibility() -> None:
                     "/v1/access/bindings/create",
                     headers=_auth("bob-token"),
                     json={
-                        "subject": {"type": "user", "issuer": "https://identity.example", "id": "alice"},
+                        "subject": {"type": "user", "id": "alice"},
                         "resource": exact,
                         "role": "handoff.viewer",
                         "idempotency_key": "bob-cannot-delegate",
@@ -248,12 +406,13 @@ def test_access_api_and_handoff_pep_enforce_exact_receiver_visibility() -> None:
     asyncio.run(scenario())
 
 
-def test_exact_memory_entry_version_grant_allows_get_but_not_scope_listing() -> None:
+def test_logical_memory_entry_grant_allows_every_entry_version_but_not_scope_listing() -> None:
     async def scenario() -> None:
         async with SQLiteProfile.open(SQLiteConfig(), tables=ACCESS_TABLES) as profile:
             repository = RelationalAccessRepository(profile.database)
+            await _seed_admin(repository)
             service = AccessControlService(
-                BuiltinAuthorizationProvider(repository, bootstrap_administrators=(ADMIN,)),
+                BuiltinAuthorizationProvider(repository),
                 relationships=repository,
                 audit=repository,
             )
@@ -261,8 +420,13 @@ def test_exact_memory_entry_version_grant_allows_get_but_not_scope_listing() -> 
                 "scope-a",
                 family="memory",
                 artifact_id="memory-a",
-                revision=4,
-                selector=MemoryEntrySelector(entry_id="entry-a", entry_version_id="entry-version-2"),
+                selector=MemoryEntrySelector(entry_id="entry-a"),
+            )
+            await service.establish_artifact_owner(
+                exact,
+                ADMIN,
+                idempotency_key="owner-memory-entry-a",
+                context=AUDIT,
             )
             await service.create_binding(
                 ADMIN,
@@ -309,9 +473,11 @@ def test_exact_memory_entry_version_grant_allows_get_but_not_scope_listing() -> 
                 assert allowed.status_code == 200, allowed.json()
                 assert allowed.json()["text"] == "Only this exact Memory Entry Version is shared."
 
-                sibling = request | {"citation": request["citation"] | {"entry_version_id": "entry-version-3"}}
-                denied = await client.post("/v1/memory/entries/get", headers=_auth("bob-token"), json=sibling)
-                assert denied.status_code == 403
+                future_version = request | {"citation": request["citation"] | {"entry_version_id": "entry-version-3"}}
+                allowed_future = await client.post(
+                    "/v1/memory/entries/get", headers=_auth("bob-token"), json=future_version
+                )
+                assert allowed_future.status_code == 200
 
                 aggregate = await client.post(
                     "/v1/memory/entries/list",
@@ -323,23 +489,30 @@ def test_exact_memory_entry_version_grant_allows_get_but_not_scope_listing() -> 
     asyncio.run(scenario())
 
 
-def test_skill_publication_requires_read_and_publish_before_target_lookup(tmp_path: Path) -> None:
+def test_skill_publication_uses_the_generic_read_grant_before_target_lookup(tmp_path: Path) -> None:
     async def scenario() -> None:
         async with SQLiteProfile.open(SQLiteConfig(), tables=ACCESS_TABLES) as profile:
             repository = RelationalAccessRepository(profile.database)
+            await _seed_admin(repository)
             service = AccessControlService(
-                BuiltinAuthorizationProvider(repository, bootstrap_administrators=(ADMIN,)),
+                BuiltinAuthorizationProvider(repository),
                 relationships=repository,
                 audit=repository,
             )
-            skill = ResourceRef.artifact("scope-a", family="skill", artifact_id="skill-a", revision=7)
+            skill = ResourceRef.artifact("scope-a", family="skill", artifact_id="skill-a")
+            await service.establish_artifact_owner(
+                skill,
+                ADMIN,
+                idempotency_key="owner-skill-a",
+                context=AUDIT,
+            )
             await service.create_binding(
                 ADMIN,
                 CreateBinding(
                     subject=BOB,
                     resource=skill,
-                    role=AccessRole.SKILL_PUBLISHER,
-                    idempotency_key="bob-skill-publisher",
+                    role=AccessRole.ARTIFACT_VIEWER,
+                    idempotency_key="bob-skill-viewer",
                 ),
                 context=AUDIT,
             )
@@ -373,10 +546,12 @@ def test_skill_publication_requires_read_and_publish_before_target_lookup(tmp_pa
                 allow_managed_publish=True,
             )
             application = SimpleNamespace(skill=runtime_skill, external_skills=_ExternalSkillsApplication())
+            bob_provider = StaticBearerAuthenticationProvider("bob-token", BOB)
             bob_app = create_app(
                 application=application,
                 access_control=service,
-                middleware=(Middleware(StaticBearerMiddleware, token="bob-token", principal=BOB),),  # noqa: S106
+                authentication_provider=bob_provider,
+                middleware=(Middleware(AuthenticationMiddleware, provider=bob_provider),),
                 agent_skill_targets=(target,),
             )
             payload = {
@@ -426,21 +601,23 @@ def test_skill_publication_requires_read_and_publish_before_target_lookup(tmp_pa
                 assert str(target_path) not in published.text
                 assert target_path.joinpath("safe-publication", "SKILL.md").is_file()
 
+            alice_provider = StaticBearerAuthenticationProvider("alice-token", ALICE)
             alice_app = create_app(
                 application=application,
                 access_control=service,
-                middleware=(Middleware(StaticBearerMiddleware, token="alice-token", principal=ALICE),),  # noqa: S106
+                authentication_provider=alice_provider,
+                middleware=(Middleware(AuthenticationMiddleware, provider=alice_provider),),
                 agent_skill_targets=(target,),
             )
             calls_before = runtime_skill.get_calls
             async with _client(alice_app) as alice:
-                denied = await alice.post(
+                visible = await alice.post(
                     "/v1/skills/publication-targets/list",
                     headers=_auth("alice-token"),
                     json=payload,
                 )
-                assert denied.status_code == 403
-            assert runtime_skill.get_calls == calls_before
+                assert visible.status_code == 200
+            assert runtime_skill.get_calls == calls_before + 1
 
     asyncio.run(scenario())
 
@@ -449,8 +626,9 @@ def test_dashboard_scope_discovery_uses_the_same_principal_and_filters_before_re
     async def scenario() -> None:
         async with SQLiteProfile.open(SQLiteConfig(), tables=ACCESS_TABLES) as profile:
             repository = RelationalAccessRepository(profile.database)
+            await _seed_admin(repository)
             service = AccessControlService(
-                BuiltinAuthorizationProvider(repository, bootstrap_administrators=(ADMIN,)),
+                BuiltinAuthorizationProvider(repository),
                 relationships=repository,
                 audit=repository,
             )
@@ -481,10 +659,12 @@ def test_dashboard_scope_discovery_uses_the_same_principal_and_filters_before_re
 
 
 def _app(service: AccessControlService, *, principal: PrincipalRef, token: str, application=None):
+    provider = StaticBearerAuthenticationProvider(token, principal)
     return create_app(
         application=application,
         access_control=service,
-        middleware=(Middleware(StaticBearerMiddleware, token=token, principal=principal),),
+        authentication_provider=provider,
+        middleware=(Middleware(AuthenticationMiddleware, provider=provider),),
     )
 
 
@@ -494,3 +674,22 @@ def _client(app) -> httpx.AsyncClient:
 
 def _auth(token: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
+
+
+async def _seed_admin(repository: RelationalAccessRepository) -> None:
+    await repository.create_binding(
+        AccessBinding(
+            binding_id="seed-admin",
+            subject=ADMIN,
+            resource=ResourceRef.server(),
+            role=AccessRole.SERVER_ADMIN,
+            granted_by=ADMIN,
+            reason="test bootstrap",
+            created_at=datetime.now(UTC),
+            expires_at=None,
+            state=AccessBindingState.ACTIVE,
+            version=1,
+            policy_revision="pending",
+            idempotency_key="seed-admin",
+        )
+    )

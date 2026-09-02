@@ -16,7 +16,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Awaitable, Callable, Iterable
 
 from powercontext.artifacts import ArtifactRef
 from powercontext.builtin.artifacts.handoff.errors import (
@@ -51,6 +51,8 @@ from powercontext.builtin.artifacts.handoff.protocols import (
 )
 from powercontext.errors import RevisionConflictError
 from powercontext.sources import SourceRef
+
+HandoffEvidenceAuthorizer = Callable[[HandoffCitation], Awaitable[bool]]
 
 
 class HandoffService:
@@ -145,6 +147,8 @@ class HandoffService:
         self,
         handoff: PreparedHandoff | ArtifactRef,
         /,
+        *,
+        evidence_authorizer: HandoffEvidenceAuthorizer | None = None,
     ) -> HandoffResolution:
         """Resolve Handoff content without treating historical claims as current truth."""
 
@@ -164,9 +168,14 @@ class HandoffService:
             selection=selection,
             selected_revision=selected_revision,
             current=current,
+            evidence_authorizer=evidence_authorizer,
         )
 
-    async def continue_latest(self) -> HandoffResolution:
+    async def continue_latest(
+        self,
+        *,
+        evidence_authorizer: HandoffEvidenceAuthorizer | None = None,
+    ) -> HandoffResolution:
         """Resolve the latest milestone after the caller selects the current workstream."""
 
         current = await self._backend.latest(self.artifact_id)
@@ -181,6 +190,7 @@ class HandoffService:
             selection="latest",
             selected_revision=current.as_ref(),
             current=current,
+            evidence_authorizer=evidence_authorizer,
         )
 
     async def _resolve(
@@ -190,6 +200,7 @@ class HandoffService:
         selection: HandoffResolutionSelection,
         selected_revision: ArtifactRef | None,
         current: Handoff | None,
+        evidence_authorizer: HandoffEvidenceAuthorizer | None,
     ) -> HandoffResolution:
         return HandoffResolution(
             status="resolved",
@@ -198,7 +209,7 @@ class HandoffService:
             selection=selection,
             selected_revision=selected_revision,
             current_revision=None if current is None else current.as_ref(),
-            evidence_checks=await self._evidence_checks(content),
+            evidence_checks=await self._evidence_checks(content, evidence_authorizer=evidence_authorizer),
         )
 
     @staticmethod
@@ -248,12 +259,18 @@ class HandoffService:
         if content_bytes > action.max_bytes:
             raise InvalidHandoffGenerationError("budget")
 
-    async def _evidence_checks(self, content: HandoffContent) -> tuple[HandoffEvidenceCheck, ...]:
+    async def _evidence_checks(
+        self,
+        content: HandoffContent,
+        *,
+        evidence_authorizer: HandoffEvidenceAuthorizer | None,
+    ) -> tuple[HandoffEvidenceCheck, ...]:
         checks = [
             await self._check_evidence(
                 statement.citations,
                 claim="state",
                 state_index=index,
+                evidence_authorizer=evidence_authorizer,
             )
             for index, statement in enumerate(content.state)
         ]
@@ -262,6 +279,7 @@ class HandoffService:
                 await self._check_evidence(
                     content.next_action.citations,
                     claim="next_action",
+                    evidence_authorizer=evidence_authorizer,
                 )
             )
         return tuple(checks)
@@ -272,9 +290,13 @@ class HandoffService:
         *,
         claim: HandoffClaim,
         state_index: int | None = None,
+        evidence_authorizer: HandoffEvidenceAuthorizer | None,
     ) -> HandoffEvidenceCheck:
         unavailable: list[HandoffCitation] = []
         for citation in citations:
+            if evidence_authorizer is not None and not await evidence_authorizer(citation):
+                unavailable.append(citation)
+                continue
             try:
                 await self._evidence_resolver.validate(citation)
             except HandoffEvidenceUnavailableError:

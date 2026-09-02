@@ -87,9 +87,9 @@ curl --fail \
   "$POWERCONTEXT_URL/v1/memory/search"
 ```
 
-## 把一个精确 Handoff 授予接收者
+## 把一个逻辑 Handoff 授予接收者
 
-`scope_id` 本身从不授予权限。管理员通过创建 Binding，把一个精确的 committed Handoff 授予接收者已经认证的
+`scope_id` 本身从不授予权限。Handoff owner 或获授权的 delegator 通过创建 Binding，把一个逻辑 committed Handoff 授予接收者已经认证的
 Principal：
 
 ```bash
@@ -98,32 +98,33 @@ curl --fail \
   --header 'Content-Type: application/json' \
   --header "$POWERCONTEXT_AUTH_HEADER" \
   --data '{
-    "subject": {"type": "user", "issuer": "https://id.example", "id": "user-b"},
+    "subject": {"type": "user", "id": "idp:user-b", "description": "用户 B"},
     "resource": {
       "type": "artifact",
       "scope_id": "project:example",
-      "reference": {"family": "handoff", "artifact_id": "handoff-42", "revision": 3},
+      "identity": {"family": "handoff", "artifact_id": "handoff-42"},
       "selector": null
     },
     "role": "handoff.receiver",
-    "idempotency_key": "handoff-42-r3-to-user-b"
+    "idempotency_key": "handoff-42-to-user-b"
   }' \
   "$POWERCONTEXT_URL/v1/access/bindings/create"
 ```
 
-接收者只能读取证据并确认这个 Revision；除非另有 scope role，否则不能发现 latest Handoff、读取其他 Handoff，
-也不能访问父 scope 的 Memory。用 `/v1/access/me` 确认部署建立的 Principal，用 `/v1/access/check` 检查一个决策，
+接收者可以读取和确认这个 Handoff 的历史、当前及未来 Revision；除非另有 scope role，否则不能在 scope 范围发现
+latest Handoff、读取其他 Handoff，也不能访问父 scope 的 Memory。用 `/v1/access/me` 确认部署建立的 Principal，用 `/v1/access/check` 检查一个决策，
 用 `/v1/access/resources/list` 非发现式地列出已经可见的资源。创建操作按授权者与幂等键保证幂等；撤销时必须提交
 `binding_id` 和 `expected_version`。Server 管理员可通过 `/v1/access/audit/list` 查看关系变更与决策事件。
 
-Access wire contract 只使用 `server`、`scope` 和 `artifact` 三种 Resource Kind。Artifact 的 `reference` 必须指向精确
-Revision；Memory 还必须提供完整 `memory_entry` selector（`entry_id` 和 `entry_version_id`）。未知 Family、未实现
-Prompt lifecycle 的 `prompt`、不匹配的 selector/role 或 `latest` 都不会创建 Binding。`/v1/access/me` 会报告当前 mode、
-Provider 能力和每个 Artifact Family 的启用状态。
+Access wire contract 只使用 `server`、`scope` 和 `artifact` 三种 Resource Kind。Artifact Resource 使用逻辑 identity
+`{family, artifact_id}`，刻意不包含 Revision；Memory 可使用仅含 `entry_id` 的 `memory_entry` selector 缩小授权单位。
+未知 Family、未实现 Prompt lifecycle 的 `prompt` 或不匹配的 selector/role 都不会创建 Binding。`/v1/access/me` 会报告
+当前 mode、Provider 能力和每个 Artifact Family 的启用状态。
 
-读取一个 managed Skill 与发布它是两项权限。`/v1/skills/publication-targets/list` 和 `/v1/skills/publish` 都要求同一个
-精确 Skill Revision 上的 `artifact.read` 与 `skill.publish`。请求只提交不透明的 `target_id`；公共响应和错误不返回
-host path、Agent home、credential 或 locator。详细 Dashboard publication status 另由 `server.observe` 保护。
+Managed Skill 的导出和安装不使用单独的分享权限。`/v1/skills/publication-targets/list` 和 `/v1/skills/publish` 都只要求
+逻辑 Skill identity 上的 `artifact.read`；接收者自行决定是否以及如何安装一个精确 Revision。请求只提交不透明的
+`target_id`；公共响应和错误不返回 host path、Agent home、credential 或 locator。详细 Dashboard publication status
+另由 `server.observe` 保护。
 
 内置静态 token 只代表一个本地管理员，无法表达不同的 A/B 用户。真正的多用户部署必须把每个调用者认证为不同的
 Principal，并注入 Authorization Provider。HTTP 与 MCP 使用同一个策略执行点；MCP tool 可见不等于有权限。
@@ -138,7 +139,7 @@ Principal，并注入 Authorization Provider。HTTP 与 MCP 使用同一个策�
 | 工作连续性 | `/v1/work/*` | 创建 Work Contract、准备或确认 Handoff、记录 Outcome |
 | 底层 Handoff | `/v1/handoff/*` | activate、prepare、finalize、commit 或 continue Handoff |
 | Memory | `/v1/memory/*` | flush、remember、search、list、get、revise、retire 和查看变更 |
-| Experience 与 Skill | `/v1/experience/*`、`/v1/skill/*`、`/v1/skills/*` | propose、generate、读取 Artifact Revision 和受控发布 managed Skill |
+| Experience 与 Skill | `/v1/experience/*`、`/v1/skill/*`、`/v1/skills/*` | propose、generate、读取 Artifact Revision 和导出可读的 managed Skill |
 | 审核 | `/v1/artifact-candidates/*` | 列出、检查、修订、批准或拒绝 pending Candidate |
 | 外部 Skill | `/v1/external-skills/*` | 扫描已配置 target，解析或导入 package |
 | Handoff Report | `/v1/handoff-reports/*` | 管理 Project、Workstream、activity、report 和 workspace binding |

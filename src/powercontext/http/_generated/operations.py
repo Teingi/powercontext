@@ -53,6 +53,7 @@ from powercontext.http._generated.models import (
     HandoffActivation,
     HandoffCurrentWorkRequest,
     HandoffDraft,
+    HandoffReceiverReassignment,
     HandoffReportActivityPage,
     HandoffReportResponse,
     HandoffReportWorkspaceBinding,
@@ -93,6 +94,7 @@ from powercontext.http._generated.models import (
     PurgeHandoffReportActivitiesRequest,
     PurgeHandoffReportActivitiesResponse,
     ReadinessResponse,
+    ReassignHandoffReceiverRequest,
     RecordHandoffReportActivityRequest,
     RecordTaskOutcomeRequest,
     RegisterHandoffReportWorkstreamRequest,
@@ -477,9 +479,7 @@ COMMIT_HANDOFF = Operation[CommitHandoffRequest, CommittedHandoff](
         503: {"$ref": "#/components/responses/Unavailable"},
         500: {"$ref": "#/components/responses/InternalError"},
     },
-    access=AccessRequirement(
-        action="scope.contribute", resource="scope", scope_id_field="scope_id", resolver="request"
-    ),
+    access=AccessRequirement(action=None, resource=None, scope_id_field=None, resolver="commit_handoff_access"),
 )
 
 CONTINUE_HANDOFF = Operation[ContinueHandoffRequest, HandoffResolution](
@@ -658,9 +658,7 @@ REVISE_MEMORY_ENTRY = Operation[ReviseMemoryEntryRequest, MemoryMutationResponse
         503: {"$ref": "#/components/responses/Unavailable"},
         500: {"$ref": "#/components/responses/InternalError"},
     },
-    access=AccessRequirement(
-        action="scope.contribute", resource="scope", scope_id_field="scope_id", resolver="request"
-    ),
+    access=AccessRequirement(action=None, resource=None, scope_id_field=None, resolver="exact_memory_write_access"),
 )
 
 RETIRE_MEMORY_ENTRY = Operation[RetireMemoryEntryRequest, MemoryMutationResponse](
@@ -686,9 +684,7 @@ RETIRE_MEMORY_ENTRY = Operation[RetireMemoryEntryRequest, MemoryMutationResponse
         503: {"$ref": "#/components/responses/Unavailable"},
         500: {"$ref": "#/components/responses/InternalError"},
     },
-    access=AccessRequirement(
-        action="scope.contribute", resource="scope", scope_id_field="scope_id", resolver="request"
-    ),
+    access=AccessRequirement(action=None, resource=None, scope_id_field=None, resolver="exact_memory_write_access"),
 )
 
 LIST_MEMORY_CHANGES = Operation[ListMemoryChangesRequest, ListMemoryChangesResponse](
@@ -739,7 +735,7 @@ PROPOSE_EXPERIENCE = Operation[ProposeExperienceRequest, ArtifactCandidate](
         500: {"$ref": "#/components/responses/InternalError"},
     },
     access=AccessRequirement(
-        action="scope.contribute", resource="scope", scope_id_field="scope_id", resolver="request"
+        action=None, resource=None, scope_id_field=None, resolver="experience_candidate_write_access"
     ),
 )
 
@@ -766,7 +762,7 @@ GENERATE_EXPERIENCE = Operation[GenerateExperienceRequest, GeneratedCandidateRes
         500: {"$ref": "#/components/responses/InternalError"},
     },
     access=AccessRequirement(
-        action="scope.contribute", resource="scope", scope_id_field="scope_id", resolver="request"
+        action=None, resource=None, scope_id_field=None, resolver="experience_candidate_write_access"
     ),
 )
 
@@ -817,9 +813,7 @@ PROPOSE_SKILL = Operation[ProposeSkillRequest, ArtifactCandidate](
         503: {"$ref": "#/components/responses/Unavailable"},
         500: {"$ref": "#/components/responses/InternalError"},
     },
-    access=AccessRequirement(
-        action="scope.contribute", resource="scope", scope_id_field="scope_id", resolver="request"
-    ),
+    access=AccessRequirement(action=None, resource=None, scope_id_field=None, resolver="skill_candidate_write_access"),
 )
 
 GENERATE_SKILL = Operation[GenerateSkillRequest, GeneratedCandidateResponse](
@@ -844,9 +838,7 @@ GENERATE_SKILL = Operation[GenerateSkillRequest, GeneratedCandidateResponse](
         503: {"$ref": "#/components/responses/Unavailable"},
         500: {"$ref": "#/components/responses/InternalError"},
     },
-    access=AccessRequirement(
-        action="scope.contribute", resource="scope", scope_id_field="scope_id", resolver="request"
-    ),
+    access=AccessRequirement(action=None, resource=None, scope_id_field=None, resolver="skill_candidate_write_access"),
 )
 
 GET_SKILL = Operation[GetSkillRequest, SkillArtifact](
@@ -896,7 +888,7 @@ LIST_SKILL_PUBLICATION_TARGETS = Operation[ListSkillPublicationTargetsRequest, L
         503: {"$ref": "#/components/responses/Unavailable"},
         500: {"$ref": "#/components/responses/InternalError"},
     },
-    access=AccessRequirement(action=None, resource=None, scope_id_field=None, resolver="publish_managed_skill_access"),
+    access=AccessRequirement(action=None, resource=None, scope_id_field=None, resolver="exact_skill_access"),
 )
 
 PUBLISH_MANAGED_SKILL = Operation[PublishManagedSkillRequest, ManagedSkillPublication](
@@ -922,7 +914,7 @@ PUBLISH_MANAGED_SKILL = Operation[PublishManagedSkillRequest, ManagedSkillPublic
         503: {"$ref": "#/components/responses/Unavailable"},
         500: {"$ref": "#/components/responses/InternalError"},
     },
-    access=AccessRequirement(action=None, resource=None, scope_id_field=None, resolver="publish_managed_skill_access"),
+    access=AccessRequirement(action=None, resource=None, scope_id_field=None, resolver="exact_skill_access"),
 )
 
 SCAN_EXTERNAL_SKILLS = Operation[ScanExternalSkillsRequest, ScanExternalSkillsResponse](
@@ -1744,6 +1736,27 @@ REVOKE_ACCESS_BINDING = Operation[RevokeAccessBindingRequest, AccessBinding](
     access=AccessRequirement(action="access.self", resource="server", scope_id_field=None, resolver="static"),
 )
 
+REASSIGN_HANDOFF_RECEIVER_BINDING = Operation[ReassignHandoffReceiverRequest, HandoffReceiverReassignment](
+    method="POST",
+    path="/v1/access/bindings/reassign-handoff-receiver",
+    operation_id="reassign_handoff_receiver_binding",
+    request_type=ReassignHandoffReceiverRequest,
+    request_location="body",
+    response_type=HandoffReceiverReassignment,
+    success_status=200,
+    summary="Atomically reassign the single Handoff receiver",
+    tags=("access",),
+    responses={
+        200: {"description": "The revoked previous receiver and active replacement Binding."},
+        401: {"$ref": "#/components/responses/Unauthorized"},
+        403: {"$ref": "#/components/responses/Forbidden"},
+        409: {"$ref": "#/components/responses/Conflict"},
+        422: {"$ref": "#/components/responses/InvalidRequest"},
+        503: {"$ref": "#/components/responses/Unavailable"},
+    },
+    access=AccessRequirement(action="access.self", resource="server", scope_id_field=None, resolver="static"),
+)
+
 LIST_ACCESS_AUDIT = Operation[ListAccessAuditRequest, AccessAuditPage](
     method="POST",
     path="/v1/access/audit/list",
@@ -1761,5 +1774,5 @@ LIST_ACCESS_AUDIT = Operation[ListAccessAuditRequest, AccessAuditPage](
         422: {"$ref": "#/components/responses/InvalidRequest"},
         503: {"$ref": "#/components/responses/Unavailable"},
     },
-    access=AccessRequirement(action=None, resource=None, scope_id_field=None, resolver="access_audit_access"),
+    access=AccessRequirement(action="access.self", resource="server", scope_id_field=None, resolver="static"),
 )

@@ -95,25 +95,31 @@ class McpConfig(BaseModel):
         return normalized
 
 
-class BearerAuthConfig(BaseModel):
-    """Optional static bearer authentication for the local Server."""
+class AuthenticationConfig(BaseModel):
+    """Authentication Provider selection and provider-specific static settings."""
 
-    enabled: bool = False
+    provider: Literal["static-bearer", "oidc", "trusted-header"] | None = None
     token: SecretStr | None = Field(default=None, repr=False)
+    principal_id: str = Field(default="server-token", min_length=1, max_length=255)
+    principal_description: str | None = Field(default="PowerContext static bearer", min_length=1, max_length=255)
 
     @model_validator(mode="after")
-    def require_token_when_enabled(self) -> BearerAuthConfig:
-        if self.enabled and (self.token is None or not self.token.get_secret_value()):
+    def validate_provider_settings(self) -> AuthenticationConfig:
+        if self.provider == "static-bearer" and (self.token is None or not self.token.get_secret_value()):
             raise MissingBearerTokenError("Bearer token is required when authentication is enabled")  # noqa: TRY003
+        if self.provider != "static-bearer" and self.token is not None:
+            raise ValueError("AUTH_TOKEN is only valid for AUTH_PROVIDER=static-bearer")  # noqa: TRY003
         return self
 
 
 class AccessControlConfig(BaseModel):
-    """Server authorization rollout and bootstrap behavior."""
+    """Server security profile and deployment-local authorization identity."""
 
-    mode: Literal["disabled", "legacy-static-admin", "enforced"] = "legacy-static-admin"
-    bootstrap_static_principal: bool = True
+    mode: Literal["disabled", "enforced"] = "disabled"
+    static_preset: bool = True
     deployment_id: str = Field(default="powercontext", min_length=1, max_length=128, pattern=r"^[\x21-\x7E]+$")
+    background_principal_id: str | None = Field(default=None, min_length=1, max_length=255)
+    background_principal_description: str | None = Field(default=None, min_length=1, max_length=255)
 
 
 class DashboardScopeConfig(BaseModel):
@@ -185,8 +191,9 @@ class ServerSettings(BaseSettings):
 
     http: HttpConfig = Field(default_factory=HttpConfig)
     mcp: McpConfig = Field(default_factory=McpConfig)
-    auth: BearerAuthConfig = Field(default_factory=BearerAuthConfig)
+    auth: AuthenticationConfig = Field(default_factory=AuthenticationConfig)
     access: AccessControlConfig = Field(default_factory=AccessControlConfig)
+    authorization_provider: Literal["builtin", "casbin", "external"] | None = None
     allow_unauthenticated_non_loopback: bool = False
     dashboard: DashboardConfig = Field(default_factory=DashboardConfig)
     logging: ServerLoggingConfig = Field(default_factory=ServerLoggingConfig)
@@ -219,9 +226,29 @@ class ServerSettings(BaseSettings):
 
     @model_validator(mode="after")
     def reject_unauthenticated_non_loopback_bind(self) -> ServerSettings:
+        if self.access.background_principal_description is not None and self.access.background_principal_id is None:
+            raise ValueError("ACCESS_BACKGROUND_PRINCIPAL_DESCRIPTION requires BACKGROUND_PRINCIPAL_ID")  # noqa: TRY003
+        if self.access.mode == "disabled":
+            if (
+                self.auth.provider is not None
+                or self.auth.token is not None
+                or self.authorization_provider is not None
+                or self.access.background_principal_id is not None
+            ):
+                raise ValueError("ACCESS_MODE=disabled cannot configure authentication or authorization Providers")  # noqa: TRY003
+        elif self.auth.provider is None or self.authorization_provider is None:
+            raise ValueError("ACCESS_MODE=enforced requires authentication and authorization Providers")  # noqa: TRY003
+        elif (
+            (self.runtime.schedule_seconds is not None or self.runtime.experience_schedule_seconds is not None)
+            and self.auth.provider != "static-bearer"
+            and self.access.background_principal_id is None
+        ):
+            raise ValueError(  # noqa: TRY003
+                "scheduled processing in a multi-user enforced deployment requires ACCESS_BACKGROUND_PRINCIPAL_ID"
+            )
         if is_unauthenticated_non_loopback_bind(
             host=self.http.host,
-            auth_enabled=self.auth.enabled,
+            auth_enabled=self.access.mode == "enforced",
             allow_unauthenticated_non_loopback=self.allow_unauthenticated_non_loopback,
         ):
             raise UnauthenticatedNonLoopbackBindError(_UNSAFE_BIND_MESSAGE)
@@ -230,7 +257,7 @@ class ServerSettings(BaseSettings):
 
 __all__ = [
     "AccessControlConfig",
-    "BearerAuthConfig",
+    "AuthenticationConfig",
     "DashboardConfig",
     "DashboardScopeConfig",
     "HandoffReportConfig",

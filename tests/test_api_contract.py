@@ -234,18 +234,18 @@ def test_handoff_access_metadata_preserves_exact_revision_authorization() -> Non
     assert ACKNOWLEDGE_HANDOFF.access.resolver == "acknowledge_handoff_access"
 
 
-def test_access_contract_uses_stable_resource_kinds_family_profiles_and_skill_publication() -> None:
+def test_access_contract_uses_logical_resources_and_generic_skill_read_access() -> None:
     contract = yaml.safe_load(CONTRACT_PATH.read_text())
     schemas = contract["components"]["schemas"]
 
     assert schemas["AccessResourceType"]["enum"] == ["server", "scope", "artifact"]
     assert "access.self" not in schemas["AccessAction"]["enum"]
     artifact = schemas["ArtifactAccessResource"]
-    assert artifact["required"] == ["type", "scope_id", "reference", "selector"]
-    assert set(artifact["properties"]) == {"type", "scope_id", "reference", "selector"}
+    assert artifact["required"] == ["type", "scope_id", "identity"]
+    assert set(artifact["properties"]) == {"type", "scope_id", "identity", "selector"}
     selector = schemas["MemoryEntryAccessSelector"]
-    assert selector["required"] == ["type", "entry_id", "entry_version_id"]
-    assert schemas["AccessDecision"]["properties"]["policy_revision"]["maxLength"] == 64
+    assert selector["required"] == ["type", "entry_id"]
+    assert set(schemas["AccessDecision"]["properties"]) == {"allowed", "reason_code"}
     assert schemas["AccessBinding"]["properties"]["policy_revision"]["maxLength"] == 64
     assert schemas["AccessAuditEvent"]["properties"]["policy_revision"]["maxLength"] == 64
 
@@ -258,9 +258,9 @@ def test_access_contract_uses_stable_resource_kinds_family_profiles_and_skill_pu
     assert LIST_SKILL_PUBLICATION_TARGETS.path == "/v1/skills/publication-targets/list"
     assert PUBLISH_MANAGED_SKILL.path == "/v1/skills/publish"
     assert LIST_SKILL_PUBLICATION_TARGETS.access is not None
-    assert LIST_SKILL_PUBLICATION_TARGETS.access.resolver == "publish_managed_skill_access"
+    assert LIST_SKILL_PUBLICATION_TARGETS.access.resolver == "exact_skill_access"
     assert PUBLISH_MANAGED_SKILL.access is not None
-    assert PUBLISH_MANAGED_SKILL.access.resolver == "publish_managed_skill_access"
+    assert PUBLISH_MANAGED_SKILL.access.resolver == "exact_skill_access"
 
 
 def test_prepared_context_is_a_generic_typed_operation_outside_the_mcp_memory_tools() -> None:

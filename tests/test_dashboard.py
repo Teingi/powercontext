@@ -25,7 +25,8 @@ from powercontext.builtin.persistence.sqlite import SQLiteConfig
 from powercontext.builtin.runtime.config import ExternalSkillsConfig, HandoffReportConfig
 from powercontext.server.factory import create_server_app
 from powercontext.server.settings import (
-    BearerAuthConfig,
+    AccessControlConfig,
+    AuthenticationConfig,
     DashboardConfig,
     DashboardScopeConfig,
     McpConfig,
@@ -37,7 +38,9 @@ _AUTH_HEADERS = {"Authorization": "Bearer dashboard-secret"}
 
 def test_dashboard_is_enabled_by_default_without_authentication_or_scopes(tmp_path, monkeypatch) -> None:
     for name in (
-        "POWERCONTEXT_SERVER_AUTH_ENABLED",
+        "POWERCONTEXT_SERVER_ACCESS_MODE",
+        "POWERCONTEXT_SERVER_AUTH_PROVIDER",
+        "POWERCONTEXT_SERVER_AUTHORIZATION_PROVIDER",
         "POWERCONTEXT_SERVER_AUTH_TOKEN",
         "POWERCONTEXT_SERVER_DASHBOARD_ENABLED",
         "POWERCONTEXT_SERVER_DASHBOARD_SCOPES",
@@ -110,10 +113,9 @@ def test_dashboard_mount_failure_does_not_prevent_server_startup(tmp_path, monke
 def test_dashboard_is_the_authenticated_server_ui_entry(tmp_path) -> None:
     app = create_server_app(
         settings=ServerSettings(
-            auth=BearerAuthConfig(
-                enabled=True,
-                token=SecretStr("dashboard-secret"),
-            ),
+            auth=AuthenticationConfig(provider="static-bearer", token=SecretStr("dashboard-secret")),
+            access=AccessControlConfig(mode="enforced"),
+            authorization_provider="builtin",
             dashboard=DashboardConfig(
                 enabled=True,
                 scopes=[
@@ -150,7 +152,9 @@ def test_review_publishes_an_approved_managed_skill_into_configured_agent_target
     codex_skill_root = tmp_path / "repository" / ".agents" / "skills"
     claude_skill_root = tmp_path / "repository" / ".claude" / "skills"
     settings = ServerSettings(
-        auth=BearerAuthConfig(enabled=True, token=SecretStr("dashboard-secret")),
+        auth=AuthenticationConfig(provider="static-bearer", token=SecretStr("dashboard-secret")),
+        access=AccessControlConfig(mode="enforced"),
+        authorization_provider="builtin",
         dashboard=DashboardConfig(
             enabled=True,
             scopes=[DashboardScopeConfig(scope_id="project:powercontext", display_name="PowerContext")],
@@ -367,7 +371,9 @@ class _ScanFailingExternalSkills:
 def test_publish_reports_success_when_post_publish_scan_fails(tmp_path, caplog) -> None:
     codex_skill_root = tmp_path / "repository" / ".agents" / "skills"
     settings = ServerSettings(
-        auth=BearerAuthConfig(enabled=True, token=SecretStr("dashboard-secret")),
+        auth=AuthenticationConfig(provider="static-bearer", token=SecretStr("dashboard-secret")),
+        access=AccessControlConfig(mode="enforced"),
+        authorization_provider="builtin",
         dashboard=DashboardConfig(
             enabled=True,
             scopes=[DashboardScopeConfig(scope_id="project:powercontext", display_name="PowerContext")],
@@ -472,7 +478,9 @@ class _RegistryUnavailableExternalSkills:
 def test_publish_reports_stale_discovery_when_registry_database_is_unavailable(tmp_path, caplog) -> None:
     codex_skill_root = tmp_path / "repository" / ".agents" / "skills"
     settings = ServerSettings(
-        auth=BearerAuthConfig(enabled=True, token=SecretStr("dashboard-secret")),
+        auth=AuthenticationConfig(provider="static-bearer", token=SecretStr("dashboard-secret")),
+        access=AccessControlConfig(mode="enforced"),
+        authorization_provider="builtin",
         dashboard=DashboardConfig(
             enabled=True,
             scopes=[DashboardScopeConfig(scope_id="project:powercontext", display_name="PowerContext")],
@@ -579,7 +587,9 @@ def test_handoff_report_page_is_available_without_the_statistics_dashboard(tmp_p
 
 def _handoff_report_settings(database_path: Path, *, enabled: bool) -> ServerSettings:
     return ServerSettings(
-        auth=BearerAuthConfig(enabled=True, token=SecretStr("dashboard-secret")),
+        auth=AuthenticationConfig(provider="static-bearer", token=SecretStr("dashboard-secret")),
+        access=AccessControlConfig(mode="enforced"),
+        authorization_provider="builtin",
         dashboard=DashboardConfig(enabled=False),
         database=SQLiteConfig(url=f"sqlite+aiosqlite:///{database_path}"),
         mcp=McpConfig(enabled=False),

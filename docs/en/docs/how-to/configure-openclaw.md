@@ -68,7 +68,9 @@ Project scope is used only when OpenClaw supplies exactly one trusted project id
 Start an authenticated Server from a protected environment:
 
 ```bash
-export POWERCONTEXT_SERVER_AUTH_ENABLED=true
+export POWERCONTEXT_SERVER_ACCESS_MODE=enforced
+export POWERCONTEXT_SERVER_AUTH_PROVIDER=static-bearer
+export POWERCONTEXT_SERVER_AUTHORIZATION_PROVIDER=builtin
 export POWERCONTEXT_SERVER_AUTH_TOKEN="$POWERCONTEXT_LOCAL_TOKEN"
 powercontext server run
 ```

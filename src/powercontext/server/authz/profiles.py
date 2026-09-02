@@ -20,7 +20,13 @@ from dataclasses import dataclass
 from typing import Literal
 
 from powercontext.server.authz.errors import AccessInvalidRequestError
-from powercontext.server.authz.models import AccessAction, AccessResourceType, AccessRole, ResourceRef
+from powercontext.server.authz.models import (
+    ROLE_SUBJECT_TYPES,
+    AccessAction,
+    AccessResourceType,
+    AccessRole,
+    ResourceRef,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -29,64 +35,85 @@ class ArtifactFamilyAccessProfile:
 
     family: str
     enabled: bool
-    share_unit: Literal["revision", "memory_entry"]
+    share_unit: Literal["artifact", "memory_entry"]
     shareable_states: frozenset[str]
-    actions: frozenset[AccessAction]
+    base_action: AccessAction
+    additional_actions: frozenset[AccessAction]
     grantable_roles: frozenset[AccessRole]
     selector: Literal["forbidden", "memory_entry"]
+    transitivity: Literal["none", "independent_evidence"] = "none"
+    mutation_semantics: frozenset[AccessAction] = frozenset()
+
+    @property
+    def actions(self) -> frozenset[AccessAction]:
+        return frozenset({self.base_action, *self.additional_actions})
+
+    @property
+    def subject_compatibility(self) -> dict[AccessRole, frozenset[str]]:
+        return {role: ROLE_SUBJECT_TYPES[role] for role in self.grantable_roles}
 
 
 ARTIFACT_FAMILY_PROFILES: dict[str, ArtifactFamilyAccessProfile] = {
     "handoff": ArtifactFamilyAccessProfile(
         family="handoff",
         enabled=True,
-        share_unit="revision",
+        share_unit="artifact",
         shareable_states=frozenset({"committed"}),
-        actions=frozenset({
-            AccessAction.ARTIFACT_READ,
-            AccessAction.HANDOFF_EVIDENCE_READ,
+        base_action=AccessAction.ARTIFACT_READ,
+        additional_actions=frozenset({
+            AccessAction.HANDOFF_EVIDENCE_INSPECT,
             AccessAction.HANDOFF_ACKNOWLEDGE,
         }),
         grantable_roles=frozenset({AccessRole.HANDOFF_VIEWER, AccessRole.HANDOFF_RECEIVER}),
         selector="forbidden",
+        transitivity="independent_evidence",
+        mutation_semantics=frozenset({AccessAction.ARTIFACT_WRITE}),
     ),
     "memory": ArtifactFamilyAccessProfile(
         family="memory",
         enabled=True,
         share_unit="memory_entry",
-        shareable_states=frozenset({"active"}),
-        actions=frozenset({AccessAction.ARTIFACT_READ}),
+        shareable_states=frozenset({"active", "retired"}),
+        base_action=AccessAction.ARTIFACT_READ,
+        additional_actions=frozenset(),
         grantable_roles=frozenset({AccessRole.ARTIFACT_VIEWER}),
         selector="memory_entry",
+        mutation_semantics=frozenset({AccessAction.ARTIFACT_WRITE}),
     ),
     "experience": ArtifactFamilyAccessProfile(
         family="experience",
         enabled=True,
-        share_unit="revision",
+        share_unit="artifact",
         shareable_states=frozenset({"approved"}),
-        actions=frozenset({AccessAction.ARTIFACT_READ}),
+        base_action=AccessAction.ARTIFACT_READ,
+        additional_actions=frozenset(),
         grantable_roles=frozenset({AccessRole.ARTIFACT_VIEWER}),
         selector="forbidden",
+        mutation_semantics=frozenset({AccessAction.ARTIFACT_WRITE}),
     ),
     "skill": ArtifactFamilyAccessProfile(
         family="skill",
         enabled=True,
-        share_unit="revision",
+        share_unit="artifact",
         shareable_states=frozenset({"approved"}),
-        actions=frozenset({AccessAction.ARTIFACT_READ, AccessAction.SKILL_PUBLISH}),
-        grantable_roles=frozenset({AccessRole.ARTIFACT_VIEWER, AccessRole.SKILL_PUBLISHER}),
+        base_action=AccessAction.ARTIFACT_READ,
+        additional_actions=frozenset(),
+        grantable_roles=frozenset({AccessRole.ARTIFACT_VIEWER}),
         selector="forbidden",
+        mutation_semantics=frozenset({AccessAction.ARTIFACT_WRITE}),
     ),
     # Prompt authorization vocabulary is reserved, but this deployment does not yet
     # implement an immutable approved Prompt lifecycle or exact get/use operations.
     "prompt": ArtifactFamilyAccessProfile(
         family="prompt",
         enabled=False,
-        share_unit="revision",
+        share_unit="artifact",
         shareable_states=frozenset({"approved"}),
-        actions=frozenset(),
+        base_action=AccessAction.ARTIFACT_READ,
+        additional_actions=frozenset({AccessAction.PROMPT_USE}),
         grantable_roles=frozenset(),
         selector="forbidden",
+        mutation_semantics=frozenset({AccessAction.ARTIFACT_WRITE}),
     ),
 }
 
@@ -94,9 +121,9 @@ ARTIFACT_FAMILY_PROFILES: dict[str, ArtifactFamilyAccessProfile] = {
 def artifact_family_profile(resource: ResourceRef) -> ArtifactFamilyAccessProfile:
     """Validate an exact Artifact resource and return its enabled profile."""
 
-    if resource.type is not AccessResourceType.ARTIFACT or resource.reference is None:
-        raise AccessInvalidRequestError("artifact-reference")
-    profile = ARTIFACT_FAMILY_PROFILES.get(resource.reference.family)
+    if resource.type is not AccessResourceType.ARTIFACT or resource.identity is None:
+        raise AccessInvalidRequestError("artifact-identity")
+    profile = ARTIFACT_FAMILY_PROFILES.get(resource.identity.family)
     if profile is None:
         raise AccessInvalidRequestError("artifact-family")
     if not profile.enabled:
@@ -128,7 +155,7 @@ def validate_action_resource(action: AccessAction, resource: ResourceRef, *, dep
             raise AccessInvalidRequestError("action-resource")
         return
     profile = artifact_family_profile(resource)
-    if action not in profile.actions:
+    if action not in profile.actions | profile.mutation_semantics | {AccessAction.ARTIFACT_SHARE}:
         raise AccessInvalidRequestError("action-resource")
 
 
@@ -154,10 +181,24 @@ def validate_binding_role(resource: ResourceRef, role: AccessRole, *, deployment
         raise AccessInvalidRequestError("binding-role")
 
 
+def validate_binding_subject(resource: ResourceRef, role: AccessRole, subject_type: str) -> None:
+    """Reject subject kinds a role cannot represent."""
+
+    if role is AccessRole.ARTIFACT_OWNER:
+        raise AccessInvalidRequestError("binding-role")
+    if subject_type not in ROLE_SUBJECT_TYPES[role]:
+        raise AccessInvalidRequestError("binding-subject")
+    if resource.type is AccessResourceType.ARTIFACT:
+        profile = artifact_family_profile(resource)
+        if subject_type not in profile.subject_compatibility[role]:
+            raise AccessInvalidRequestError("binding-subject")
+
+
 __all__ = (
     "ARTIFACT_FAMILY_PROFILES",
     "ArtifactFamilyAccessProfile",
     "artifact_family_profile",
     "validate_action_resource",
     "validate_binding_role",
+    "validate_binding_subject",
 )

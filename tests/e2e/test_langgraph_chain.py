@@ -46,7 +46,7 @@ from typing_extensions import TypedDict
 from powercontext.builtin.persistence.sqlite import SQLiteConfig
 from powercontext.builtin.runtime import InferenceConfig
 from powercontext.server.factory import create_server_app
-from powercontext.server.settings import BearerAuthConfig, McpConfig, ServerSettings
+from powercontext.server.settings import AccessControlConfig, AuthenticationConfig, McpConfig, ServerSettings
 
 pytest.importorskip("powercontext_langgraph")
 
@@ -98,10 +98,12 @@ def _build_graph(model_inputs: list[list[BaseMessage]]):
 def test_langgraph_write_then_recall_over_real_http(tmp_path: Path, authentication_enabled: bool) -> None:
     app = create_server_app(
         settings=ServerSettings(
-            auth=BearerAuthConfig(
-                enabled=authentication_enabled,
+            auth=AuthenticationConfig(
+                provider="static-bearer" if authentication_enabled else None,
                 token=SecretStr(AUTH_TOKEN) if authentication_enabled else None,
             ),
+            access=AccessControlConfig(mode="enforced" if authentication_enabled else "disabled"),
+            authorization_provider="builtin" if authentication_enabled else None,
             database=SQLiteConfig(url=f"sqlite+aiosqlite:///{tmp_path / 'runtime.db'}"),
             inference=InferenceConfig(generation_model="test"),
             mcp=McpConfig(enabled=False),

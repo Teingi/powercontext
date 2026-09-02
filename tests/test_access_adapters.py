@@ -26,10 +26,11 @@ from powercontext.builtin.persistence.sqlite import SQLiteConfig, SQLiteProfile
 from powercontext.server.authz import (
     AccessAction,
     AccessAuditContext,
+    AccessBinding,
+    AccessBindingState,
     AccessControlService,
     AccessProviderCapabilities,
     AccessRequest,
-    AccessResourceType,
     AccessRole,
     AccessUnavailableError,
     AuthZenAuthorizationProvider,
@@ -44,179 +45,75 @@ from powercontext.server.authz import (
 from powercontext.server.authz.composition import open_casbin_access_control
 from powercontext.server.authz.repository import ACCESS_TABLES, RelationalAccessRepository
 
-NOW = datetime(2026, 9, 1, 12, tzinfo=UTC)
-ADMIN = PrincipalRef(type="user", issuer="https://identity.example", id="admin")
-BOB = PrincipalRef(type="user", issuer="https://identity.example", id="bob")
-ALICE = PrincipalRef(type="user", issuer="https://identity.example", id="alice")
-CAROL = PrincipalRef(type="user", issuer="https://identity.example", id="carol")
+ADMIN = PrincipalRef(type="service", id="admin")
+ALICE = PrincipalRef(type="user", id="alice", description="Alice")
+BOB = PrincipalRef(type="user", id="bob")
 AUDIT = AccessAuditContext(transport="http", operation="adapter-conformance", request_id="req-adapter")
 
 
-def test_builtin_and_casbin_adapters_share_the_same_access_semantics() -> None:
+def test_builtin_and_casbin_adapters_share_terminal_semantics() -> None:
     async def scenario() -> None:
         async with SQLiteProfile.open(SQLiteConfig(), tables=ACCESS_TABLES) as profile:
             repository = RelationalAccessRepository(profile.database)
-            builtin_provider = BuiltinAuthorizationProvider(
-                repository,
-                bootstrap_administrators=(ADMIN,),
-                clock=lambda: NOW,
-            )
-            casbin_provider = CasbinAuthorizationProvider(
-                repository,
-                bootstrap_administrators=(ADMIN,),
-                clock=lambda: NOW,
-            )
-            casbin_service = AccessControlService(
-                casbin_provider,
-                relationships=casbin_provider,
-                audit=repository,
-                clock=lambda: NOW,
-            )
-            exact = ResourceRef.artifact("scope-a", family="handoff", artifact_id="handoff-a", revision=3)
-            sibling = ResourceRef.artifact("scope-a", family="handoff", artifact_id="handoff-a", revision=4)
-            binding = await casbin_service.create_binding(
-                ADMIN,
-                CreateBinding(
-                    subject=BOB,
-                    resource=exact,
-                    role=AccessRole.HANDOFF_RECEIVER,
-                    idempotency_key="casbin-handoff-receiver",
-                ),
-                context=AUDIT,
-            )
-            await casbin_service.create_binding(
-                ADMIN,
-                CreateBinding(
-                    subject=ALICE,
-                    resource=ResourceRef.server(),
-                    role=AccessRole.SERVER_OBSERVER,
-                    idempotency_key="casbin-server-observer",
-                ),
-                context=AUDIT,
-            )
-            await casbin_service.create_binding(
-                ADMIN,
-                CreateBinding(
-                    subject=CAROL,
-                    resource=ResourceRef.server(),
-                    role=AccessRole.SERVER_ADMIN,
-                    idempotency_key="casbin-server-admin",
-                ),
-                context=AUDIT,
-            )
-
-            vectors = _handoff_conformance_vectors(exact, sibling)
-            for action, resource, expected in vectors:
-                request = AccessRequest(subject=BOB, action=action, resource=resource, context=AUDIT)
-                builtin = await builtin_provider.check(request)
-                casbin = await casbin_provider.check(request)
-                assert builtin.allowed is casbin.allowed is expected
-                assert builtin.policy_revision == casbin.policy_revision
-
-            administrative_vectors = (
-                (ALICE, AccessAction.SERVER_OBSERVE, ResourceRef.server(), True),
-                (ALICE, AccessAction.SERVER_ADMIN, ResourceRef.server(), False),
-                (ALICE, AccessAction.SCOPE_READ, ResourceRef.scope("scope-a"), False),
-                (CAROL, AccessAction.SERVER_OBSERVE, ResourceRef.server(), True),
-                (CAROL, AccessAction.SERVER_ADMIN, ResourceRef.server(), True),
-                (CAROL, AccessAction.SCOPE_ADMIN, ResourceRef.scope("scope-a"), True),
-                (
-                    CAROL,
-                    AccessAction.SKILL_PUBLISH,
-                    ResourceRef.artifact(
-                        "scope-a",
-                        family="skill",
-                        artifact_id="skill-a",
-                        revision=1,
-                    ),
-                    True,
-                ),
-            )
-            for subject, action, resource, expected in administrative_vectors:
-                request = AccessRequest(subject=subject, action=action, resource=resource, context=AUDIT)
-                builtin = await builtin_provider.check(request)
-                casbin = await casbin_provider.check(request)
-                assert builtin.allowed is casbin.allowed is expected
-
-            builtin_filter = await builtin_provider.resolve_resource_filter(
-                _search_request(BOB, AccessAction.ARTIFACT_READ, family="handoff")
-            )
-            casbin_filter = await casbin_provider.resolve_resource_filter(
-                _search_request(BOB, AccessAction.ARTIFACT_READ, family="handoff")
-            )
-            assert builtin_filter == casbin_filter
-
-            revoked = await casbin_service.revoke_binding(
-                ADMIN,
-                binding.binding_id,
-                expected_version=binding.version,
-                context=AUDIT,
-            )
-            assert revoked.version == 2
-            denied = AccessRequest(subject=BOB, action=AccessAction.ARTIFACT_READ, resource=exact, context=AUDIT)
-            assert (await builtin_provider.check(denied)).allowed is False
-            assert (await casbin_provider.check(denied)).allowed is False
-
-    asyncio.run(scenario())
-
-
-def test_casbin_composition_opens_a_writable_access_service() -> None:
-    async def scenario() -> None:
-        async with open_casbin_access_control(
-            SQLiteConfig(),
-            bootstrap_administrators=(ADMIN,),
-        ) as service:
-            exact = ResourceRef.artifact("scope-a", family="experience", artifact_id="experience-a", revision=1)
+            await _seed_admin(repository)
+            builtin = BuiltinAuthorizationProvider(repository)
+            casbin = CasbinAuthorizationProvider(repository)
+            service = AccessControlService(builtin, relationships=repository, audit=repository)
+            handoff = ResourceRef.artifact("scope-a", family="handoff", artifact_id="handoff")
+            other = ResourceRef.artifact("scope-a", family="handoff", artifact_id="other")
+            await service.establish_artifact_owner(handoff, ALICE, idempotency_key="owner-handoff", context=AUDIT)
+            await service.establish_artifact_owner(other, ALICE, idempotency_key="owner-other", context=AUDIT)
             await service.create_binding(
                 ADMIN,
                 CreateBinding(
                     subject=BOB,
-                    resource=exact,
-                    role=AccessRole.ARTIFACT_VIEWER,
-                    idempotency_key="casbin-composition-viewer",
+                    resource=handoff,
+                    role=AccessRole.HANDOFF_RECEIVER,
+                    idempotency_key="receiver-bob",
                 ),
                 context=AUDIT,
             )
-            assert (await service.require(BOB, AccessAction.ARTIFACT_READ, exact, context=AUDIT)).allowed
 
-    asyncio.run(scenario())
-
-
-def test_authzen_adapter_matches_the_exact_resource_conformance_vector() -> None:
-    exact = ResourceRef.artifact("scope-a", family="handoff", artifact_id="handoff-a", revision=3)
-    sibling = ResourceRef.artifact("scope-a", family="handoff", artifact_id="handoff-a", revision=4)
-    vectors = _handoff_conformance_vectors(exact, sibling)
-    expected = {(action.value, resource.key): allowed for action, resource, allowed in vectors}
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        payload = json.loads(request.content)
-        decisions = [
-            {
-                "decision": expected[
-                    (
-                        evaluation["action"]["name"],
-                        evaluation["resource"]["id"],
-                    )
-                ]
-            }
-            for evaluation in payload["evaluations"]
-        ]
-        return httpx.Response(200, json={"evaluations": decisions})
-
-    async def scenario() -> None:
-        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
-            provider = AuthZenAuthorizationProvider("http://127.0.0.1:9876", http_client=client)
-            requests = tuple(
-                AccessRequest(subject=BOB, action=action, resource=resource, context=AUDIT)
-                for action, resource, _expected in vectors
+            vectors = (
+                (AccessAction.ARTIFACT_READ, handoff, True),
+                (AccessAction.HANDOFF_EVIDENCE_INSPECT, handoff, True),
+                (AccessAction.HANDOFF_ACKNOWLEDGE, handoff, True),
+                (AccessAction.ARTIFACT_WRITE, handoff, False),
+                (AccessAction.ARTIFACT_READ, other, False),
+                (AccessAction.SCOPE_READ, ResourceRef.scope("scope-a"), False),
             )
-            decisions = await provider.check_batch(requests)
-            assert [decision.allowed for decision in decisions] == [value for _action, _resource, value in vectors]
+            for action, resource, expected in vectors:
+                request = AccessRequest(subject=BOB, action=action, resource=resource, context=AUDIT)
+                builtin_decision = await builtin.check(request)
+                casbin_decision = await casbin.check(request)
+                assert builtin_decision.allowed is casbin_decision.allowed is expected
+                assert builtin_decision.policy_revision == casbin_decision.policy_revision
 
     asyncio.run(scenario())
 
 
-def test_authzen_adapter_uses_standard_point_and_boxcar_shapes_and_fails_closed() -> None:
+def test_casbin_composition_has_writable_relationships_and_owner_enforcement() -> None:
+    async def scenario() -> None:
+        async with open_casbin_access_control(SQLiteConfig(), bootstrap_administrators=(ADMIN,)) as service:
+            experience = ResourceRef.artifact("scope-a", family="experience", artifact_id="experience-a")
+            await service.establish_artifact_owner(experience, ALICE, idempotency_key="owner-experience", context=AUDIT)
+            await service.create_binding(
+                ADMIN,
+                CreateBinding(
+                    subject=BOB,
+                    resource=experience,
+                    role=AccessRole.ARTIFACT_VIEWER,
+                    idempotency_key="share-experience",
+                ),
+                context=AUDIT,
+            )
+            assert (await service.require(BOB, AccessAction.ARTIFACT_READ, experience, context=AUDIT)).allowed
+            assert not (await service.check(BOB, AccessAction.ARTIFACT_WRITE, experience, context=AUDIT)).allowed
+
+    asyncio.run(scenario())
+
+
+def test_authzen_uses_logical_identity_and_description_without_issuer() -> None:
     seen: list[dict[str, object]] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -225,19 +122,10 @@ def test_authzen_adapter_uses_standard_point_and_boxcar_shapes_and_fails_closed(
         seen.append(payload)
         if request.url.path.endswith("/evaluation"):
             return httpx.Response(200, json={"decision": True, "context": {"policy_revision": "pdp-42"}})
-        evaluations = payload["evaluations"]
-        return httpx.Response(
-            200,
-            json={
-                "evaluations": [
-                    {"decision": evaluation["action"]["name"] == "artifact.read"} for evaluation in evaluations
-                ]
-            },
-        )
+        return httpx.Response(200, json={"evaluations": [{"decision": True}]})
 
     async def scenario() -> None:
-        transport = httpx.MockTransport(handler)
-        async with httpx.AsyncClient(transport=transport) as client:
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
             provider = AuthZenAuthorizationProvider(
                 "http://127.0.0.1:9876",
                 token=SecretStr("provider-token"),
@@ -246,36 +134,24 @@ def test_authzen_adapter_uses_standard_point_and_boxcar_shapes_and_fails_closed(
             resource = ResourceRef.artifact(
                 "scope-a",
                 family="memory",
-                artifact_id="memory-a",
-                revision=4,
-                selector=MemoryEntrySelector(entry_id="entry-a", entry_version_id="entry-version-2"),
+                artifact_id="memory",
+                selector=MemoryEntrySelector(entry_id="entry-a"),
             )
-            read = AccessRequest(subject=BOB, action=AccessAction.ARTIFACT_READ, resource=resource, context=AUDIT)
-            publish = AccessRequest(subject=BOB, action=AccessAction.SKILL_PUBLISH, resource=resource, context=AUDIT)
-            point = await provider.check(read)
-            batch = await provider.check_batch((read, publish))
-
-            assert point.allowed is True
-            assert point.policy_revision == "pdp-42"
-            assert [decision.allowed for decision in batch] == [True, False]
+            decision = await provider.check(
+                AccessRequest(subject=ALICE, action=AccessAction.ARTIFACT_READ, resource=resource, context=AUDIT)
+            )
+            assert decision.allowed
+            assert decision.policy_revision == "pdp-42"
             assert seen[0] == {
-                "subject": {
-                    "type": "user",
-                    "id": "bob",
-                    "properties": {"issuer": "https://identity.example"},
-                },
+                "subject": {"type": "user", "id": "alice", "properties": {"description": "Alice"}},
                 "action": {"name": "artifact.read"},
                 "resource": {
                     "type": "artifact",
                     "id": resource.key,
                     "properties": {
                         "scope_id": "scope-a",
-                        "reference": {"family": "memory", "artifact_id": "memory-a", "revision": 4},
-                        "selector": {
-                            "type": "memory_entry",
-                            "entry_id": "entry-a",
-                            "entry_version_id": "entry-version-2",
-                        },
+                        "identity": {"family": "memory", "artifact_id": "memory"},
+                        "selector": {"type": "memory_entry", "entry_id": "entry-a"},
                     },
                 },
                 "context": {
@@ -284,57 +160,47 @@ def test_authzen_adapter_uses_standard_point_and_boxcar_shapes_and_fails_closed(
                     "operation": "adapter-conformance",
                 },
             }
-            assert seen[1]["options"] == {"evaluations_semantic": "execute_all"}
             with pytest.raises(AccessUnavailableError, match="filtering"):
                 await provider.resolve_resource_filter(
-                    _search_request(BOB, AccessAction.ARTIFACT_READ, family="memory")
+                    ResourceSearchRequest(
+                        subject=ALICE,
+                        action=AccessAction.ARTIFACT_READ,
+                        resource_type=resource.type,
+                        family="memory",
+                        context=AUDIT,
+                    )
                 )
-
-        malformed = httpx.MockTransport(lambda _request: httpx.Response(200, json={"decision": "allow"}))
-        async with httpx.AsyncClient(transport=malformed) as client:
-            provider = AuthZenAuthorizationProvider("http://127.0.0.1:9876", http_client=client)
-            with pytest.raises(AccessUnavailableError):
-                await provider.check(read)
 
     asyncio.run(scenario())
 
 
-def test_authzen_adapter_enforces_the_policy_revision_contract_boundary() -> None:
-    request = AccessRequest(
-        subject=BOB,
-        action=AccessAction.SERVER_OBSERVE,
-        resource=ResourceRef.server(),
-        context=AUDIT,
-    )
-
-    async def evaluate(revision: str):
-        transport = httpx.MockTransport(
-            lambda _request: httpx.Response(
-                200,
-                json={"decision": True, "context": {"policy_revision": revision}},
-            )
-        )
-        async with httpx.AsyncClient(transport=transport) as client:
-            provider = AuthZenAuthorizationProvider("http://127.0.0.1:9876", http_client=client)
-            return await provider.check(request)
-
-    accepted = asyncio.run(evaluate("r" * 64))
-    assert accepted.policy_revision == "r" * 64
-    with pytest.raises(AccessUnavailableError):
-        asyncio.run(evaluate("r" * 65))
-
-
-def test_authzen_adapter_rejects_credential_urls_and_relationship_claims() -> None:
-    with pytest.raises(ValueError, match="credential-free"):
-        AuthZenAuthorizationProvider("https://user:secret@pdp.example")
-    with pytest.raises(ValueError, match="credential-free"):
-        AuthZenAuthorizationProvider("http://pdp.example")
-
+def test_authzen_fails_closed_on_malformed_decisions_and_cannot_manage_relationships() -> None:
     async def scenario() -> None:
-        repository_profile = SQLiteProfile.open(SQLiteConfig(), tables=ACCESS_TABLES)
-        async with repository_profile as profile:
+        malformed = httpx.MockTransport(lambda _request: httpx.Response(200, json={"decision": "allow"}))
+        async with httpx.AsyncClient(transport=malformed) as client:
+            provider = AuthZenAuthorizationProvider("http://127.0.0.1:9876", http_client=client)
+            request = AccessRequest(
+                subject=BOB,
+                action=AccessAction.SERVER_OBSERVE,
+                resource=ResourceRef.server(),
+                context=AUDIT,
+            )
+            with pytest.raises(AccessUnavailableError):
+                await provider.check(request)
+
+        async with SQLiteProfile.open(SQLiteConfig(), tables=ACCESS_TABLES) as profile:
             repository = RelationalAccessRepository(profile.database)
-            transport = httpx.MockTransport(lambda _: httpx.Response(200, json={"decision": True}))
+
+            def allow(request: httpx.Request) -> httpx.Response:
+                payload = json.loads(request.content)
+                if request.url.path.endswith("/evaluations"):
+                    return httpx.Response(
+                        200,
+                        json={"evaluations": [{"decision": True} for _ in payload["evaluations"]]},
+                    )
+                return httpx.Response(200, json={"decision": True})
+
+            transport = httpx.MockTransport(allow)
             async with httpx.AsyncClient(transport=transport) as client:
                 provider = AuthZenAuthorizationProvider("http://127.0.0.1:9876", http_client=client)
                 service = AccessControlService(
@@ -362,25 +228,27 @@ def test_authzen_adapter_rejects_credential_urls_and_relationship_claims() -> No
     asyncio.run(scenario())
 
 
-def _search_request(subject: PrincipalRef, action: AccessAction, *, family: str) -> ResourceSearchRequest:
-    return ResourceSearchRequest(
-        subject=subject,
-        action=action,
-        resource_type=AccessResourceType.ARTIFACT,
-        family=family,
-        context=AUDIT,
-    )
+def test_authzen_rejects_credential_urls_and_insecure_remote_http() -> None:
+    with pytest.raises(ValueError, match="credential-free"):
+        AuthZenAuthorizationProvider("https://user:secret@pdp.example")
+    with pytest.raises(ValueError, match="credential-free"):
+        AuthZenAuthorizationProvider("http://pdp.example")
 
 
-def _handoff_conformance_vectors(
-    exact: ResourceRef,
-    sibling: ResourceRef,
-) -> tuple[tuple[AccessAction, ResourceRef, bool], ...]:
-    return (
-        (AccessAction.ARTIFACT_READ, exact, True),
-        (AccessAction.HANDOFF_EVIDENCE_READ, exact, True),
-        (AccessAction.HANDOFF_ACKNOWLEDGE, exact, True),
-        (AccessAction.ARTIFACT_READ, sibling, False),
-        (AccessAction.SCOPE_READ, ResourceRef.scope("scope-a"), False),
-        (AccessAction.SERVER_OBSERVE, ResourceRef.server(), False),
+async def _seed_admin(repository: RelationalAccessRepository) -> None:
+    await repository.create_binding(
+        AccessBinding(
+            binding_id="seed-admin",
+            subject=ADMIN,
+            resource=ResourceRef.server(),
+            role=AccessRole.SERVER_ADMIN,
+            granted_by=ADMIN,
+            reason="test bootstrap",
+            created_at=datetime.now(UTC),
+            expires_at=None,
+            state=AccessBindingState.ACTIVE,
+            version=1,
+            policy_revision="pending",
+            idempotency_key="seed-admin",
+        )
     )

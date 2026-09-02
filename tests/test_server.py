@@ -49,7 +49,7 @@ from powercontext.server.authz import AccessControlService
 from powercontext.server.factory import create_server_app
 from powercontext.server.settings import (
     AccessControlConfig,
-    BearerAuthConfig,
+    AuthenticationConfig,
     DashboardConfig,
     DashboardScopeConfig,
     McpConfig,
@@ -62,15 +62,16 @@ _ACCESS_FAMILIES = "experience:enabled,handoff:enabled,memory:enabled,prompt:dis
 
 def _access_readiness_checks(
     *,
-    mode: str = "legacy-static-admin",
+    mode: str = "disabled",
     provider: str = "disabled",
+    authentication: str = "disabled",
 ) -> dict[str, str]:
     return {
         "access_mode": mode,
+        "authentication_provider": authentication,
         "access_provider": provider,
         "access_resource_kinds": "server,scope,artifact",
         "access_artifact_families": _ACCESS_FAMILIES,
-        "access_skill_publication": "disabled",
     }
 
 
@@ -274,12 +275,16 @@ def test_server_scheduler_uses_the_powercontext_data_directory(tmp_path, monkeyp
 
 
 def test_settings_load_bearer_authentication_without_exposing_token(monkeypatch) -> None:
-    monkeypatch.setenv("POWERCONTEXT_SERVER_AUTH_ENABLED", "true")
+    monkeypatch.setenv("POWERCONTEXT_SERVER_ACCESS_MODE", "enforced")
+    monkeypatch.setenv("POWERCONTEXT_SERVER_AUTH_PROVIDER", "static-bearer")
+    monkeypatch.setenv("POWERCONTEXT_SERVER_AUTHORIZATION_PROVIDER", "builtin")
     monkeypatch.setenv("POWERCONTEXT_SERVER_AUTH_TOKEN", "server-secret")
 
     settings = ServerSettings()
 
-    assert settings.auth.enabled is True
+    assert settings.access.mode == "enforced"
+    assert settings.auth.provider == "static-bearer"
+    assert settings.authorization_provider == "builtin"
     assert settings.auth.token is not None
     assert settings.auth.token.get_secret_value() == "server-secret"
     assert "server-secret" not in repr(settings)
@@ -287,7 +292,7 @@ def test_settings_load_bearer_authentication_without_exposing_token(monkeypatch)
 
 def test_enabled_bearer_authentication_requires_a_token() -> None:
     with pytest.raises(ValueError, match="Bearer token is required"):
-        BearerAuthConfig(enabled=True)
+        AuthenticationConfig(provider="static-bearer")
 
 
 def test_liveness_adds_a_server_owned_request_id() -> None:
@@ -325,19 +330,20 @@ def test_scalar_reference_embeds_the_canonical_openapi_contract() -> None:
 def test_server_factory_optionally_requires_bearer_authentication() -> None:
     app = create_server_app(
         settings=ServerSettings(
-            auth=BearerAuthConfig(enabled=True, token=SecretStr("server-secret")),
+            auth=AuthenticationConfig(provider="static-bearer", token=SecretStr("server-secret")),
+            access=AccessControlConfig(mode="enforced"),
+            authorization_provider="builtin",
             mcp=McpConfig(enabled=False),
         )
     )
-    client = TestClient(app)
-
-    missing = client.get("/v1/capabilities")
-    invalid = client.get("/v1/capabilities", headers={"Authorization": "Bearer wrong"})
-    accepted = client.get("/v1/capabilities", headers={"Authorization": "Bearer server-secret"})
-    protected_metrics = client.get("/metrics")
-    accepted_metrics = client.get("/metrics", headers={"Authorization": "Bearer server-secret"})
-    liveness = client.get("/health/live")
-    scalar_reference = client.get("/docs")
+    with TestClient(app) as client:
+        missing = client.get("/v1/capabilities")
+        invalid = client.get("/v1/capabilities", headers={"Authorization": "Bearer wrong"})
+        accepted = client.get("/v1/capabilities", headers={"Authorization": "Bearer server-secret"})
+        protected_metrics = client.get("/metrics")
+        accepted_metrics = client.get("/metrics", headers={"Authorization": "Bearer server-secret"})
+        liveness = client.get("/health/live")
+        scalar_reference = client.get("/docs")
 
     assert missing.status_code == 401
     assert missing.headers["WWW-Authenticate"] == "Bearer"
@@ -345,7 +351,7 @@ def test_server_factory_optionally_requires_bearer_authentication() -> None:
     assert missing.json() == {
         "error": {
             "code": "unauthorized",
-            "message": "A valid bearer token is required.",
+            "message": "A valid credential is required.",
             "details": None,
         }
     }
@@ -360,8 +366,9 @@ def test_server_factory_optionally_requires_bearer_authentication() -> None:
 def test_enforced_mode_fails_closed_if_the_authorization_provider_disappears(tmp_path) -> None:
     app = create_server_app(
         settings=ServerSettings(
-            auth=BearerAuthConfig(enabled=True, token=SecretStr("server-secret")),
+            auth=AuthenticationConfig(provider="static-bearer", token=SecretStr("server-secret")),
             access=AccessControlConfig(mode="enforced"),
+            authorization_provider="external",
             dashboard=DashboardConfig(scopes=[DashboardScopeConfig(scope_id="scope-a", display_name="Scope A")]),
             database=SQLiteConfig(url=f"sqlite+aiosqlite:///{tmp_path / 'runtime.db'}"),
             mcp=McpConfig(enabled=False),
@@ -397,7 +404,9 @@ def test_enforced_mode_fails_closed_if_the_authorization_provider_disappears(tmp
 def test_server_factory_maps_static_token_to_bootstrap_principal() -> None:
     app = create_server_app(
         settings=ServerSettings(
-            auth=BearerAuthConfig(enabled=True, token=SecretStr("server-secret")),
+            auth=AuthenticationConfig(provider="static-bearer", token=SecretStr("server-secret")),
+            access=AccessControlConfig(mode="enforced"),
+            authorization_provider="builtin",
             database=SQLiteConfig(),
             mcp=McpConfig(enabled=False),
         )
@@ -410,15 +419,18 @@ def test_server_factory_maps_static_token_to_bootstrap_principal() -> None:
     payload = response.json()
     assert payload["principal"] == {
         "type": "service",
-        "issuer": "powercontext:powercontext:static",
         "id": "server-token",
+        "description": "PowerContext static bearer",
     }
-    assert payload["mode"] == "legacy-static-admin"
+    assert payload["mode"] == "enforced"
     assert payload["resource_kinds"] == ["server", "scope", "artifact"]
     assert payload["provider_capabilities"] == {
         "safe_resource_filtering": True,
         "multi_requirement_check": True,
         "relationship_management": True,
+        "group_subjects": False,
+        "multi_principal": False,
+        "max_direct_resource_keys": 10000,
     }
 
 

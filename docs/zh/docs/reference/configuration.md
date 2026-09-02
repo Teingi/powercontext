@@ -50,11 +50,16 @@ Server 配置使用 `POWERCONTEXT_SERVER_` 前缀。
 | `POWERCONTEXT_SERVER_HTTP_PORT` | `8000` | 监听端口 |
 | `POWERCONTEXT_SERVER_MCP_ENABLED` | `true` | 启用 Streamable HTTP MCP |
 | `POWERCONTEXT_SERVER_MCP_PATH` | `/mcp` | MCP 路径 |
-| `POWERCONTEXT_SERVER_AUTH_ENABLED` | `false` | HTTP 和 MCP 是否要求一个静态 Bearer token |
-| `POWERCONTEXT_SERVER_AUTH_TOKEN` | 未设置 | 静态 Bearer token；启用鉴权时必须设置 |
-| `POWERCONTEXT_SERVER_ACCESS_MODE` | `legacy-static-admin` | 权限启用模式：`disabled`、`legacy-static-admin` 或 `enforced` |
-| `POWERCONTEXT_SERVER_ACCESS_BOOTSTRAP_STATIC_PRINCIPAL` | `true` | 是否把部署本地静态 token 的 Principal 作为初始 Server 管理员 |
-| `POWERCONTEXT_SERVER_ACCESS_DEPLOYMENT_ID` | `powercontext` | `server` Access Resource 与静态 Principal issuer 使用的稳定部署标识 |
+| `POWERCONTEXT_SERVER_AUTH_PROVIDER` | 未设置 | Authentication Provider：`static-bearer`、`oidc` 或 `trusted-header`；`enforced` 模式必须设置 |
+| `POWERCONTEXT_SERVER_AUTH_TOKEN` | 未设置 | 静态 Bearer token；仅可与 `AUTH_PROVIDER=static-bearer` 一起使用 |
+| `POWERCONTEXT_SERVER_AUTH_PRINCIPAL_ID` | `server-token` | 静态 token 所代表的部署内全局唯一 Principal ID |
+| `POWERCONTEXT_SERVER_AUTH_PRINCIPAL_DESCRIPTION` | `PowerContext static bearer` | 静态 Principal 的可选展示描述，不参与身份判定 |
+| `POWERCONTEXT_SERVER_ACCESS_MODE` | `disabled` | 唯一安全开关：`disabled` 或 `enforced` |
+| `POWERCONTEXT_SERVER_AUTHORIZATION_PROVIDER` | 未设置 | Authorization Provider：`builtin`、`casbin` 或 `external`；`enforced` 模式必须设置 |
+| `POWERCONTEXT_SERVER_ACCESS_STATIC_PRESET` | `true` | 为单 Principal 静态部署显式写入所需的内置 role |
+| `POWERCONTEXT_SERVER_ACCESS_DEPLOYMENT_ID` | `powercontext` | `server` Access Resource 使用的稳定部署标识 |
+| `POWERCONTEXT_SERVER_ACCESS_BACKGROUND_PRINCIPAL_ID` | 未设置 | 多用户 enforced 部署中供定时任务使用的显式 service Principal |
+| `POWERCONTEXT_SERVER_ACCESS_BACKGROUND_PRINCIPAL_DESCRIPTION` | 未设置 | 定时 service Principal 的可选展示描述 |
 | `POWERCONTEXT_SERVER_ALLOW_UNAUTHENTICATED_NON_LOOPBACK` | `false` | 在鉴权关闭时显式允许绑定非 loopback 地址 |
 | `POWERCONTEXT_SERVER_DASHBOARD_ENABLED` | `true` | 在 Server 根路径 `/` 启用 Dashboard |
 | `POWERCONTEXT_SERVER_DASHBOARD_SCOPES` | `[]` | Dashboard 可选择的 scope JSON 数组 |
@@ -86,23 +91,33 @@ Server 配置使用 `POWERCONTEXT_SERVER_` 前缀。
 | `POWERCONTEXT_SERVER_RUNTIME_EXPERIENCE_SCHEDULE_SECONDS` | 未设置 | Experience 孵化间隔；未设置即不启用该 job |
 | `POWERCONTEXT_SERVER_EXTERNAL_SKILLS` | 未设置 | 包含 host identity 和显式 Agent Skill targets 的 JSON object |
 
-静态 Bearer 鉴权默认关闭。启用后，API 和 MCP 请求必须携带 `Authorization: Bearer <token>`；liveness 和
-readiness endpoint 仍然公开。明文 HTTP 仅在 loopback 地址（`localhost`、`::1` 及 `127.0.0.0/8` 网段内的任意
+Access Control 默认关闭。在 `enforced` 模式下，API 和 MCP 请求必须通过所选 Authentication Provider 建立 Principal；
+liveness 和 readiness endpoint 仍然公开。内置 `static-bearer` Provider 接受
+`Authorization: Bearer <token>`。明文 HTTP 仅在 loopback 地址（`localhost`、`::1` 及 `127.0.0.0/8` 网段内的任意
 地址）上受信任。当 Server 绑定到非 loopback 地址且鉴权关闭时会拒绝启动；此时应启用鉴权、改回绑定 loopback，或在
 TLS 由上游终止或网络本身受控的场景下，
 显式设置 `POWERCONTEXT_SERVER_ALLOW_UNAUTHENTICATED_NON_LOOPBACK=true` 主动选择接受。通过网络暴露启用鉴权的
 Server 前必须配置 TLS。
 
-Authentication 负责建立 Principal，Access Control 负责判断该 Principal 能做什么。内置静态 token 始终只代表一个
-部署本地 service Principal，因此不能区分用户 A 和用户 B。默认 `legacy-static-admin` 会把该 Principal 映射为初始
-Server 管理员，以保持单用户本地部署的兼容行为。`enforced` 使用同一个策略执行点和持久化 Binding/审计存储，供注入的
-多用户 authentication 与 Authorization Provider 使用。在已有其他管理员关系后，可设置
-`bootstrap_static_principal=false`。`disabled` 会跳过授权决策，只应作为可信网络边界内的显式兼容回退。
+`POWERCONTEXT_SERVER_ACCESS_MODE` 是唯一开关。`disabled` 会拒绝 Authentication/Authorization Provider 配置，并在
+可信本地边界内跳过授权决策。`enforced` 必须同时设置 `AUTH_PROVIDER` 和 `AUTHORIZATION_PROVIDER`，启用统一策略执行点，
+并使用所选 Provider 的 Binding 与审计能力。
+
+Authentication 负责建立 Principal，Access Control 负责判断该 Principal 能做什么。Principal ID 是部署内全局唯一且不复用
+的标识；`description` 只用于展示，不参与身份判定。内置静态 token 始终只代表一个 service Principal，因此不能区分
+用户 A 和用户 B。使用内置 Authorization Provider 时，`ACCESS_STATIC_PRESET=true` 会为这个 Principal 显式写入 Server
+与各 scope 所需的 role。需要让不同用户或 group 获得不同权限时，应使用 `oidc` 或 `trusted-header`，并注入部署侧
+Authentication Provider 与合适的 Authorization Provider。
+
+定时 Source 处理和 Experience 孵化使用固定静态 Principal，或 `ACCESS_BACKGROUND_PRINCIPAL_ID` 指定的 service Principal。
+该 Principal 必须在每个被处理的 scope 上拥有 `scope.contribute`；新 Memory Entry 和 Candidate 会保留它作为直接 owner 或
+`proposed_owner`。多用户 enforced 部署配置了 schedule 却未显式指定该 Principal 时，Server 会拒绝启动。
 
 远程、多用户或共享 Dashboard 必须使用 `enforced`。此模式下，HTTP、MCP、Dashboard 数据路由和 metrics 共用同一个
 Server PEP；Dashboard 配置的 scope 会在返回前按当前 Principal 的 `scope.read` 判定过滤。`/v1/access/me` 返回
-`server`/`scope`/`artifact` Resource Kind、Provider 的 batch/list/relationship 能力、Family profile，以及当前部署是否
-具备受双重授权保护的 managed Skill publication operation。
+`server`/`scope`/`artifact` Resource Kind、Provider 的 batch/list/relationship 能力与 Family profile。Managed Skill 的
+导出和安装不再引入单独的 Access action：接收者先获得逻辑 Skill identity 上的 `artifact.read`，再自行决定是否以及如何
+安装一个精确 Revision。
 
 内置 Access schema 使用配置好的 SQLite、seekDB 或 OceanBase，但由 Server 独立持有，不进入 Runtime 领域。自定义部署
 可以向 `create_server_app` 注入 `AccessControlService`。内置的可写外部 adapter `CasbinAuthorizationProvider` 使用
@@ -126,7 +141,7 @@ Python Client 和 CLI 对出站请求应用相同规则：配置的明文 `http:
 Dashboard 默认启用，并与 HTTP API、MCP 共用监听地址和端口。默认未配置 scope，页面会显示空状态；Dashboard
 初始化失败只记录包含直接原因的 warning，不影响 Server 的 HTTP API、MCP 和健康检查启动。
 
-启用 Bearer 鉴权后，`/`、`/skills`、`/reviews`、`/handoff-reports` 的 HTML 外壳及其静态资源仍保持公开，以便
+在 `AUTH_PROVIDER=static-bearer` 且 `enforced` 时，`/`、`/skills`、`/reviews`、`/handoff-reports` 的 HTML 外壳及其静态资源仍保持公开，以便
 浏览器渲染登录表单；数据请求仍受鉴权保护。在表单中输入 Server token 后，浏览器只把它保存在当前标签页的 session
 storage 中。如果连这些登录页也不能暴露，应同时关闭 Dashboard 和 Handoff Report。
 

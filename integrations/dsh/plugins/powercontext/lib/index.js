@@ -461,11 +461,17 @@ const OPERATIONS = {
 		location: "body",
 		scope: false
 	},
+	reassign_handoff_receiver_binding: {
+		method: "POST",
+		path: "/v1/access/bindings/reassign-handoff-receiver",
+		location: "body",
+		scope: false
+	},
 	list_access_audit: {
 		method: "POST",
 		path: "/v1/access/audit/list",
 		location: "body",
-		scope: true
+		scope: false
 	}
 };
 const OPERATION_IDS = Object.keys(OPERATIONS);

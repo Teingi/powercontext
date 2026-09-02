@@ -144,7 +144,6 @@ class _DashboardSkillProjectionRoutes:
             http_request,
             request,
             operation="dashboard_skill_projection_publish",
-            publish=True,
         )
         resolved = await _dashboard_managed_skill(http_request, request, self._scope_ids)
         if isinstance(resolved, JSONResponse):
@@ -395,11 +394,15 @@ async def _visible_dashboard_scopes(
     )
     if access is None or not dashboard_scopes:
         return dashboard_scopes
+    principal = current_principal()
+    context = _dashboard_access_context("dashboard_scopes")
+    for item in dashboard_scopes:
+        await access.bootstrap_static_scope(principal, item.scope_id, context=context)
     checks = tuple((AccessAction.SCOPE_READ, ResourceRef.scope(item.scope_id)) for item in dashboard_scopes)
     decisions = await access.check_batch(
-        current_principal(),
+        principal,
         checks,
-        context=_dashboard_access_context("dashboard_scopes"),
+        context=context,
     )
     return tuple(item for item, decision in zip(dashboard_scopes, decisions, strict=True) if decision.allowed)
 
@@ -409,7 +412,6 @@ async def _authorize_dashboard_skill(
     selection: DashboardSkillProjectionRequest,
     *,
     operation: str,
-    publish: bool = False,
 ) -> None:
     access = access_control_for_mode(
         request.app.state.access_control,
@@ -421,14 +423,11 @@ async def _authorize_dashboard_skill(
         selection.scope_id,
         family=selection.artifact.family,
         artifact_id=selection.artifact.artifact_id,
-        revision=selection.artifact.revision,
     )
     checks = [
         (AccessAction.SERVER_OBSERVE, ResourceRef.server(access.deployment_id)),
         (AccessAction.ARTIFACT_READ, resource),
     ]
-    if publish:
-        checks.append((AccessAction.SKILL_PUBLISH, resource))
     await access.require_all(
         current_principal(),
         checks,

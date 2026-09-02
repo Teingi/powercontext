@@ -20,6 +20,7 @@ from pathlib import Path
 
 import pytest
 
+from powercontext.artifacts import ArtifactRef
 from powercontext.builtin.artifacts.handoff import HandoffScopeMismatchError
 from powercontext.builtin.artifacts.memory import MemoryEntryInput
 from powercontext.builtin.persistence.sqlite import SQLiteConfig
@@ -239,6 +240,47 @@ def test_handoff_runtime_supports_temporary_transfer_and_durable_milestones() ->
             assert historical.current_revision == second.as_ref()
             assert await handoffs.revision(first.as_ref()) == first
             assert await handoffs.revisions() == (first, second)
+
+    asyncio.run(scenario())
+
+
+def test_handoff_resolution_authorizes_each_evidence_target_before_reading_it() -> None:
+    async def scenario() -> None:
+        async with open_builtin_runtime(BuiltinConfig(database=SQLiteConfig())) as runtime:
+            source = await runtime.sources.for_scope("project").capture(
+                CaptureSource(source_id="visible", content="Visible evidence.", metadata={})
+            )
+            hidden = HandoffArtifactCitation(
+                artifact_ref=ArtifactRef(family="experience", artifact_id="not-readable", revision=1)
+            )
+            prepared = PreparedHandoff(
+                scope_id="project",
+                base=None,
+                content=HandoffDraft(
+                    objective="Continue with independently authorized evidence.",
+                    state=(
+                        HandoffStatement(
+                            text="One citation is visible and one is hidden.",
+                            citations=(HandoffSourceCitation(source_ref=source.source_ref), hidden),
+                        ),
+                    ),
+                    disposition="continuable",
+                ).as_content(),
+            )
+            inspected = []
+
+            async def authorize(citation) -> bool:
+                inspected.append(citation)
+                return citation != hidden
+
+            resolution = await runtime.handoff.for_scope("project").continue_from(
+                prepared,
+                evidence_authorizer=authorize,
+            )
+
+            assert inspected == list(prepared.content.state[0].citations)
+            assert resolution.evidence_checks[0].status == "unavailable"
+            assert resolution.evidence_checks[0].unavailable_evidence == (hidden,)
 
     asyncio.run(scenario())
 

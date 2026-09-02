@@ -85,11 +85,11 @@ from powercontext.server.settings import McpConfig, ServerSettings
 
 OCEANBASE_URL = os.environ.get("POWERCONTEXT_TEST_OCEANBASE_URL")
 _ACCESS_READINESS_CHECKS = {
-    "access_mode": "legacy-static-admin",
+    "access_mode": "disabled",
+    "authentication_provider": "disabled",
     "access_provider": "disabled",
     "access_resource_kinds": "server,scope,artifact",
     "access_artifact_families": "experience:enabled,handoff:enabled,memory:enabled,prompt:disabled,skill:enabled",
-    "access_skill_publication": "disabled",
 }
 EMBEDDING_PROFILE = EmbeddingProfile(
     profile_id="database-e2e-v1",

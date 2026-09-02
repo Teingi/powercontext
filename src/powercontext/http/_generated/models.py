@@ -21,17 +21,39 @@ from pydantic import (
 )
 
 
+class Type(StrEnum):
+    USER = "user"
+    SERVICE = "service"
+
+
 class AccessPrincipal(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
     )
-    type: Annotated[StrictStr, Field(max_length=64, min_length=1)]
-    issuer: Annotated[StrictStr, Field(max_length=255, min_length=1)]
+    type: Literal["user", "service"]
     id: Annotated[StrictStr, Field(max_length=255, min_length=1)]
+    description: Annotated[StrictStr | None, Field(max_length=255, min_length=1)] = None
+
+
+class Type1(StrEnum):
+    GROUP = "group"
+
+
+class AccessGroup(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    type: Literal["group"]
+    id: Annotated[StrictStr, Field(max_length=255, min_length=1)]
+    description: Annotated[StrictStr | None, Field(max_length=255, min_length=1)] = None
+
+
+class AccessSubject(RootModel[AccessPrincipal | AccessGroup]):
+    root: Annotated[AccessPrincipal | AccessGroup, Field(discriminator="type")]
 
 
 class AccessControlMode(StrEnum):
-    LEGACY_STATIC_ADMIN = "legacy-static-admin"
+    DISABLED = "disabled"
     ENFORCED = "enforced"
 
 
@@ -42,25 +64,14 @@ class AccessProviderCapabilities(BaseModel):
     safe_resource_filtering: StrictBool
     multi_requirement_check: StrictBool
     relationship_management: StrictBool
+    group_subjects: StrictBool
+    multi_principal: StrictBool
+    max_direct_resource_keys: Annotated[StrictInt, Field(ge=1, le=10000)]
 
 
 class ShareUnit(StrEnum):
-    REVISION = "revision"
+    ARTIFACT = "artifact"
     MEMORY_ENTRY = "memory_entry"
-
-
-class AccessOperationCapability(BaseModel):
-    model_config = ConfigDict(
-        extra="forbid",
-    )
-    enabled: StrictBool
-
-
-class AccessOperationCapabilities(BaseModel):
-    model_config = ConfigDict(
-        extra="forbid",
-    )
-    skill_publication: AccessOperationCapability
 
 
 class AccessAction(StrEnum):
@@ -72,10 +83,11 @@ class AccessAction(StrEnum):
     SCOPE_DELEGATE = "scope.delegate"
     SCOPE_ADMIN = "scope.admin"
     ARTIFACT_READ = "artifact.read"
-    HANDOFF_EVIDENCE_READ = "handoff.evidence.read"
+    ARTIFACT_WRITE = "artifact.write"
+    ARTIFACT_SHARE = "artifact.share"
+    HANDOFF_EVIDENCE_INSPECT = "handoff.evidence.inspect"
     HANDOFF_ACKNOWLEDGE = "handoff.acknowledge"
     PROMPT_USE = "prompt.use"
-    SKILL_PUBLISH = "skill.publish"
 
 
 class AccessResourceType(StrEnum):
@@ -84,7 +96,7 @@ class AccessResourceType(StrEnum):
     ARTIFACT = "artifact"
 
 
-class Type(StrEnum):
+class Type2(StrEnum):
     SERVER = "server"
 
 
@@ -96,7 +108,7 @@ class ServerAccessResource(BaseModel):
     deployment_id: Annotated[StrictStr, Field(max_length=128, min_length=1, pattern="^[\\x21-\\x7E]+$")]
 
 
-class Type1(StrEnum):
+class Type3(StrEnum):
     SCOPE = "scope"
 
 
@@ -108,7 +120,7 @@ class ScopeAccessResource(BaseModel):
     scope_id: Annotated[StrictStr, Field(max_length=256, min_length=1, pattern=".*\\S.*")]
 
 
-class Type2(StrEnum):
+class Type4(StrEnum):
     MEMORY_ENTRY = "memory_entry"
 
 
@@ -116,13 +128,34 @@ class MemoryEntryAccessSelector(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
     )
-    type: Type2
+    type: Type4
     entry_id: Annotated[StrictStr, Field(max_length=128, min_length=1, pattern="^[\\x21-\\x7E]+$")]
-    entry_version_id: Annotated[StrictStr, Field(max_length=128, min_length=1, pattern="^[\\x21-\\x7E]+$")]
 
 
-class Type3(StrEnum):
+class AccessArtifactIdentity(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    family: Annotated[StrictStr, Field(max_length=128, min_length=1, pattern="^[\\x21-\\x7E]+$")]
+    artifact_id: Annotated[StrictStr, Field(max_length=128, min_length=1, pattern="^[\\x21-\\x7E]+$")]
+
+
+class Type5(StrEnum):
     ARTIFACT = "artifact"
+
+
+class ArtifactAccessResource(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    type: Literal["artifact"]
+    scope_id: Annotated[StrictStr, Field(max_length=256, min_length=1, pattern=".*\\S.*")]
+    identity: AccessArtifactIdentity
+    selector: MemoryEntryAccessSelector | None = None
+
+
+class AccessResource(RootModel[ServerAccessResource | ScopeAccessResource | ArtifactAccessResource]):
+    root: Annotated[ServerAccessResource | ScopeAccessResource | ArtifactAccessResource, Field(discriminator="type")]
 
 
 class AccessDecision(BaseModel):
@@ -131,7 +164,21 @@ class AccessDecision(BaseModel):
     )
     allowed: StrictBool
     reason_code: Annotated[StrictStr, Field(max_length=64, min_length=1)]
-    policy_revision: Annotated[StrictStr | None, Field(max_length=64, min_length=1)]
+
+
+class AccessCheckRequest(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    action: AccessAction
+    resource: AccessResource
+
+
+class AccessCheckBatchRequest(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    checks: Annotated[list[AccessCheckRequest], Field(max_length=100, min_length=1)]
 
 
 class AccessCheckBatchResponse(BaseModel):
@@ -152,12 +199,21 @@ class ListAccessResourcesRequest(BaseModel):
     limit: Annotated[StrictInt, Field(ge=1, le=500)] = 100
 
 
+class AccessResourcePage(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    items: Annotated[list[AccessResource], Field(max_length=500)]
+    total: Annotated[StrictInt, Field(ge=0)]
+    next_cursor: Annotated[StrictStr | None, Field(...)]
+
+
 class AccessRole(StrEnum):
     HANDOFF_VIEWER = "handoff.viewer"
     HANDOFF_RECEIVER = "handoff.receiver"
     ARTIFACT_VIEWER = "artifact.viewer"
     PROMPT_USER = "prompt.user"
-    SKILL_PUBLISHER = "skill.publisher"
+    ARTIFACT_OWNER = "artifact.owner"
     SCOPE_VIEWER = "scope.viewer"
     SCOPE_CONTRIBUTOR = "scope.contributor"
     SCOPE_REVIEWER = "scope.reviewer"
@@ -172,10 +228,17 @@ class ListAccessRolesRequest(BaseModel):
         extra="forbid",
     )
     resource_type: AccessResourceType | None = None
+    family: Annotated[StrictStr | None, Field(max_length=128, min_length=1)] = None
 
 
 class ArtifactFamily(RootModel[StrictStr]):
     root: Annotated[StrictStr, Field(max_length=128, min_length=1)]
+
+
+class AssignableSubjectType(StrEnum):
+    USER = "user"
+    SERVICE = "service"
+    GROUP = "group"
 
 
 class AccessRoleDescriptor(BaseModel):
@@ -186,6 +249,8 @@ class AccessRoleDescriptor(BaseModel):
     resource_type: AccessResourceType
     actions: list[AccessAction]
     artifact_families: list[ArtifactFamily]
+    assignable_subject_types: list[AssignableSubjectType]
+    system_managed: StrictBool
 
 
 class AccessRolePage(BaseModel):
@@ -200,21 +265,130 @@ class AccessBindingState(StrEnum):
     REVOKED = "revoked"
 
 
+class AccessBinding(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    binding_id: Annotated[StrictStr, Field(max_length=64, min_length=1)]
+    subject: AccessSubject
+    resource: AccessResource
+    role: AccessRole
+    granted_by: AccessPrincipal
+    reason: Annotated[StrictStr | None, Field(max_length=1024)]
+    created_at: AwareDatetime
+    expires_at: Annotated[AwareDatetime | None, Field(...)]
+    state: AccessBindingState
+    version: Annotated[StrictInt, Field(ge=1)]
+    policy_revision: Annotated[StrictStr, Field(max_length=64, min_length=1)]
+    idempotency_key: Annotated[StrictStr, Field(max_length=255, min_length=1)]
+    revoked_at: Annotated[AwareDatetime | None, Field(...)]
+    revoked_by: Annotated[AccessPrincipal | None, Field(...)]
+
+
+class ListAccessBindingsRequest(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    management_resource: AccessResource
+    subject: AccessSubject | None = None
+    role: AccessRole | None = None
+    state: AccessBindingState | None = None
+    cursor: Annotated[StrictStr | None, Field(max_length=2048)] = None
+    limit: Annotated[StrictInt, Field(ge=1, le=500)] = 100
+
+
+class AccessBindingPage(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    items: Annotated[list[AccessBinding], Field(max_length=500)]
+    next_cursor: Annotated[StrictStr | None, Field(max_length=2048)]
+
+
+class CreateAccessBindingRequest(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    subject: AccessSubject
+    resource: AccessResource
+    role: AccessRole
+    idempotency_key: Annotated[StrictStr, Field(max_length=255, min_length=1)]
+    reason: Annotated[StrictStr | None, Field(max_length=1024)] = None
+    expires_at: AwareDatetime | None = None
+
+
 class RevokeAccessBindingRequest(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
     )
     binding_id: Annotated[StrictStr, Field(max_length=64, min_length=1)]
     expected_version: Annotated[StrictInt, Field(ge=1)]
+    idempotency_key: Annotated[StrictStr, Field(max_length=255, min_length=1)]
 
 
-class ListAccessAuditRequest(BaseModel):
+class ReassignHandoffReceiverRequest(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
     )
-    scope_id: Annotated[StrictStr | None, Field(max_length=256, min_length=1, pattern=".*\\S.*")] = None
-    after: Annotated[StrictInt | None, Field(ge=0)] = None
-    limit: Annotated[StrictInt, Field(ge=1, le=500)] = 100
+    binding_id: Annotated[StrictStr, Field(max_length=64, min_length=1)]
+    expected_version: Annotated[StrictInt, Field(ge=1)]
+    subject: AccessPrincipal
+    expires_at: AwareDatetime | None = None
+    reason: Annotated[StrictStr | None, Field(max_length=1024)] = None
+    idempotency_key: Annotated[StrictStr, Field(max_length=255, min_length=1)]
+
+
+class HandoffReceiverReassignment(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    revoked_binding: AccessBinding
+    created_binding: AccessBinding
+
+
+class Result(StrEnum):
+    ALLOWED = "allowed"
+    DENIED = "denied"
+
+
+class AccessAuditTimeRange(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    start: AwareDatetime
+    end: AwareDatetime
+
+
+class AccessAuditEvent(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    cursor: Annotated[StrictInt, Field(ge=1)]
+    event_id: Annotated[StrictStr, Field(max_length=64, min_length=1)]
+    occurred_at: AwareDatetime
+    request_id: Annotated[StrictStr | None, Field(max_length=128)]
+    transport: Annotated[StrictStr, Field(max_length=16, min_length=1)]
+    operation: Annotated[StrictStr, Field(max_length=128, min_length=1)]
+    principal: AccessPrincipal
+    action: AccessAction
+    resource: AccessResource
+    allowed: StrictBool
+    reason_code: Annotated[StrictStr, Field(max_length=64, min_length=1)]
+    policy_revision: Annotated[StrictStr | None, Field(max_length=64, min_length=1)]
+    matched_subject: Annotated[AccessSubject | None, Field(...)]
+    binding_id: Annotated[StrictStr | None, Field(max_length=64)]
+    target: Annotated[AccessSubject | None, Field(...)]
+    role: Annotated[AccessRole | None, Field(...)]
+    expected_version: Annotated[StrictInt | None, Field(ge=1)]
+    result_version: Annotated[StrictInt | None, Field(ge=1)]
+
+
+class AccessAuditPage(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    items: Annotated[list[AccessAuditEvent], Field(max_length=500)]
+    next_cursor: Annotated[StrictStr | None, Field(max_length=2048)]
 
 
 class ArtifactReference(BaseModel):
@@ -1143,122 +1317,19 @@ class AccessMeResponse(BaseModel):
     resource_kinds: list[AccessResourceType]
     provider_capabilities: AccessProviderCapabilities
     artifact_families: list[ArtifactFamilyAccessCapability]
-    operation_capabilities: AccessOperationCapabilities
 
 
-class ArtifactAccessResource(BaseModel):
+class ListAccessAuditRequest(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
     )
-    type: Literal["artifact"]
-    scope_id: Annotated[StrictStr, Field(max_length=256, min_length=1, pattern=".*\\S.*")]
-    reference: ArtifactReference
-    selector: Annotated[MemoryEntryAccessSelector | None, Field(...)]
-
-
-class AccessResource(RootModel[ServerAccessResource | ScopeAccessResource | ArtifactAccessResource]):
-    root: Annotated[ServerAccessResource | ScopeAccessResource | ArtifactAccessResource, Field(discriminator="type")]
-
-
-class AccessCheckRequest(BaseModel):
-    model_config = ConfigDict(
-        extra="forbid",
-    )
-    action: AccessAction
-    resource: AccessResource
-
-
-class AccessCheckBatchRequest(BaseModel):
-    model_config = ConfigDict(
-        extra="forbid",
-    )
-    checks: Annotated[list[AccessCheckRequest], Field(max_length=100, min_length=1)]
-
-
-class AccessResourcePage(BaseModel):
-    model_config = ConfigDict(
-        extra="forbid",
-    )
-    items: Annotated[list[AccessResource], Field(max_length=500)]
-    total: Annotated[StrictInt, Field(ge=0)]
-    next_cursor: Annotated[StrictStr | None, Field(...)]
-
-
-class AccessBinding(BaseModel):
-    model_config = ConfigDict(
-        extra="forbid",
-    )
-    binding_id: Annotated[StrictStr, Field(max_length=64, min_length=1)]
-    subject: AccessPrincipal
-    resource: AccessResource
-    role: AccessRole
-    granted_by: AccessPrincipal
-    reason: Annotated[StrictStr | None, Field(max_length=1024)]
-    created_at: AwareDatetime
-    expires_at: Annotated[AwareDatetime | None, Field(...)]
-    state: AccessBindingState
-    version: Annotated[StrictInt, Field(ge=1)]
-    policy_revision: Annotated[StrictStr, Field(max_length=64, min_length=1)]
-    idempotency_key: Annotated[StrictStr, Field(max_length=255, min_length=1)]
-    revoked_at: Annotated[AwareDatetime | None, Field(...)]
-    revoked_by: Annotated[AccessPrincipal | None, Field(...)]
-
-
-class ListAccessBindingsRequest(BaseModel):
-    model_config = ConfigDict(
-        extra="forbid",
-    )
-    subject: AccessPrincipal | None = None
-    resource: AccessResource | None = None
-    include_revoked: StrictBool = False
-
-
-class AccessBindingPage(BaseModel):
-    model_config = ConfigDict(
-        extra="forbid",
-    )
-    items: Annotated[list[AccessBinding], Field(max_length=500)]
-
-
-class CreateAccessBindingRequest(BaseModel):
-    model_config = ConfigDict(
-        extra="forbid",
-    )
-    subject: AccessPrincipal
-    resource: AccessResource
-    role: AccessRole
-    idempotency_key: Annotated[StrictStr, Field(max_length=255, min_length=1)]
-    reason: Annotated[StrictStr | None, Field(max_length=1024)] = None
-    expires_at: AwareDatetime | None = None
-
-
-class AccessAuditEvent(BaseModel):
-    model_config = ConfigDict(
-        extra="forbid",
-    )
-    cursor: Annotated[StrictInt, Field(ge=1)]
-    event_id: Annotated[StrictStr, Field(max_length=64, min_length=1)]
-    occurred_at: AwareDatetime
-    request_id: Annotated[StrictStr | None, Field(max_length=128)]
-    transport: Annotated[StrictStr, Field(max_length=16, min_length=1)]
-    operation: Annotated[StrictStr, Field(max_length=128, min_length=1)]
-    principal: AccessPrincipal
-    action: AccessAction
-    resource: AccessResource
-    allowed: StrictBool
-    reason_code: Annotated[StrictStr, Field(max_length=64, min_length=1)]
-    policy_revision: Annotated[StrictStr | None, Field(max_length=64)]
-    binding_id: Annotated[StrictStr | None, Field(max_length=64)]
-    target: Annotated[AccessPrincipal | None, Field(...)]
-    role: Annotated[AccessRole | None, Field(...)]
-
-
-class AccessAuditPage(BaseModel):
-    model_config = ConfigDict(
-        extra="forbid",
-    )
-    items: Annotated[list[AccessAuditEvent], Field(max_length=500)]
-    next_cursor: Annotated[StrictInt | None, Field(ge=1)]
+    resource: Annotated[ServerAccessResource | ScopeAccessResource, Field(discriminator="type")]
+    action: AccessAction | None = None
+    subject: AccessSubject | None = None
+    result: Result | None = None
+    time_range: AccessAuditTimeRange | None = None
+    cursor: Annotated[StrictStr | None, Field(max_length=2048)] = None
+    limit: Annotated[StrictInt, Field(ge=1, le=500)] = 100
 
 
 class Capabilities(BaseModel):

@@ -59,7 +59,7 @@ from powercontext.builtin.persistence.sqlite.memory_index import SQLiteMemoryFTS
 from powercontext.builtin.persistence.sqlite.profile import SQLiteConfig, SQLiteProfile
 from powercontext.builtin.persistence.tables import BUILTIN_TABLES
 from powercontext.builtin.runtime._scope_cache import ScopeCacheObserver
-from powercontext.builtin.runtime.application import BuiltinRuntime
+from powercontext.builtin.runtime.application import BuiltinRuntime, ScheduledExperienceRunner, ScheduledSourceRunner
 from powercontext.builtin.runtime.config import BuiltinConfig, ExternalSkillsConfig, InferenceConfig, RuntimeConfig
 from powercontext.builtin.runtime.models import MemorySearchMode, RuntimeCapabilities
 from powercontext.builtin.runtime.protocols import RuntimeTracing
@@ -170,6 +170,8 @@ async def open_builtin_runtime(
     instrumentation: InstrumentationSettings | None = None,
     scope_cache_observer: ScopeCacheObserver | None = None,
     tracing: RuntimeTracing | None = None,
+    scheduled_source_runner: ScheduledSourceRunner | None = None,
+    scheduled_experience_runner: ScheduledExperienceRunner | None = None,
 ) -> AsyncIterator[BuiltinRuntime]:
     """Open the selected database, inference adapters, and built-in runtime."""
 
@@ -281,6 +283,8 @@ async def open_builtin_runtime(
                 recall_token_estimator=contexts.estimate_recall_tokens,
                 readiness=RuntimeReadinessChecks(readiness_probes),
                 tracing=tracing,
+                scheduled_source_runner=scheduled_source_runner,
+                scheduled_experience_runner=scheduled_experience_runner,
             )
         )
         if config.handoff_report.enabled:

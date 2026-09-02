@@ -409,7 +409,7 @@ paths:
       tags: [handoff]
       summary: Commit an explicit Handoff milestone
       operationId: commit_handoff
-      x-powercontext-access: {action: scope.contribute, resource: {type: scope, scope-id-from: scope_id}}
+      x-powercontext-access: {resolver: commit_handoff_access}
       requestBody:
         required: true
         content:
@@ -656,7 +656,7 @@ paths:
       summary: Revise an exact Memory entry
       description: Replace active entry content against an explicit current Memory Revision.
       operationId: revise_memory_entry
-      x-powercontext-access: {action: scope.contribute, resource: {type: scope, scope-id-from: scope_id}}
+      x-powercontext-access: {resolver: exact_memory_write_access}
       requestBody:
         required: true
         content:
@@ -693,7 +693,7 @@ paths:
       summary: Retire an exact Memory entry
       description: Deactivate an entry against an explicit current Memory Revision without deleting history.
       operationId: retire_memory_entry
-      x-powercontext-access: {action: scope.contribute, resource: {type: scope, scope-id-from: scope_id}}
+      x-powercontext-access: {resolver: exact_memory_write_access}
       requestBody:
         required: true
         content:
@@ -765,7 +765,7 @@ paths:
       summary: Propose Experience content
       description: Persist a pending Experience Candidate without creating an Artifact Revision.
       operationId: propose_experience
-      x-powercontext-access: {action: scope.contribute, resource: {type: scope, scope-id-from: scope_id}}
+      x-powercontext-access: {resolver: experience_candidate_write_access}
       requestBody:
         required: true
         content:
@@ -800,7 +800,7 @@ paths:
       summary: Generate an Experience Candidate
       description: Use the configured model and caller-selected exact evidence; persist only a schema-valid pending Candidate.
       operationId: generate_experience
-      x-powercontext-access: {action: scope.contribute, resource: {type: scope, scope-id-from: scope_id}}
+      x-powercontext-access: {resolver: experience_candidate_write_access}
       requestBody:
         required: true
         content:
@@ -870,7 +870,7 @@ paths:
       summary: Propose managed Skill content
       description: Persist a pending managed Skill Candidate without creating an Artifact Revision.
       operationId: propose_skill
-      x-powercontext-access: {action: scope.contribute, resource: {type: scope, scope-id-from: scope_id}}
+      x-powercontext-access: {resolver: skill_candidate_write_access}
       requestBody:
         required: true
         content:
@@ -905,7 +905,7 @@ paths:
       summary: Generate a managed Skill Candidate
       description: Use the configured model with an explicit provenance shape; persist only a schema-valid pending Candidate.
       operationId: generate_skill
-      x-powercontext-access: {action: scope.contribute, resource: {type: scope, scope-id-from: scope_id}}
+      x-powercontext-access: {resolver: skill_candidate_write_access}
       requestBody:
         required: true
         content:
@@ -973,9 +973,9 @@ paths:
     post:
       tags: [skill]
       summary: List safe publication targets for an exact managed Skill
-      description: Return only enabled opaque host-local targets after the exact Skill read and publish checks both allow.
+      description: Return only enabled opaque host-local targets after artifact.read allows the logical Skill identity.
       operationId: list_skill_publication_targets
-      x-powercontext-access: {resolver: publish_managed_skill_access}
+      x-powercontext-access: {resolver: exact_skill_access}
       requestBody:
         required: true
         content:
@@ -1008,9 +1008,9 @@ paths:
     post:
       tags: [skill]
       summary: Publish an exact managed Skill to one configured target
-      description: Publish only after artifact.read and skill.publish both allow; target_id is resolved after authorization.
+      description: Publish an exact Revision only after artifact.read allows its logical Skill identity; target_id is resolved after authorization.
       operationId: publish_managed_skill
-      x-powercontext-access: {resolver: publish_managed_skill_access}
+      x-powercontext-access: {resolver: exact_skill_access}
       requestBody:
         required: true
         content:
@@ -2157,12 +2157,41 @@ paths:
           $ref: "#/components/responses/InvalidRequest"
         "503":
           $ref: "#/components/responses/Unavailable"
+  /v1/access/bindings/reassign-handoff-receiver:
+    post:
+      tags: [access]
+      summary: Atomically reassign the single Handoff receiver
+      operationId: reassign_handoff_receiver_binding
+      x-powercontext-access: {action: access.self, resource: {type: server}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ReassignHandoffReceiverRequest"
+      responses:
+        "200":
+          description: The revoked previous receiver and active replacement Binding.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HandoffReceiverReassignment"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/InvalidRequest"
+        "503":
+          $ref: "#/components/responses/Unavailable"
   /v1/access/audit/list:
     post:
       tags: [access]
       summary: List data-minimized Access audit events
       operationId: list_access_audit
-      x-powercontext-access: {resolver: access_audit_access}
+      x-powercontext-access: {action: access.self, resource: {type: server}}
       requestBody:
         required: true
         content:
@@ -2279,22 +2308,49 @@ components:
     AccessPrincipal:
       type: object
       additionalProperties: false
-      required: [type, issuer, id]
+      required: [type, id]
       properties:
-        type: {type: string, minLength: 1, maxLength: 64}
-        issuer: {type: string, minLength: 1, maxLength: 255}
+        type: {type: string, enum: [user, service]}
         id: {type: string, minLength: 1, maxLength: 255}
+        description: {type: string, minLength: 1, maxLength: 255, nullable: true}
+    AccessGroup:
+      type: object
+      additionalProperties: false
+      required: [type, id]
+      properties:
+        type: {type: string, enum: [group]}
+        id: {type: string, minLength: 1, maxLength: 255}
+        description: {type: string, minLength: 1, maxLength: 255, nullable: true}
+    AccessSubject:
+      oneOf:
+        - $ref: "#/components/schemas/AccessPrincipal"
+        - $ref: "#/components/schemas/AccessGroup"
+      discriminator:
+        propertyName: type
+        mapping:
+          user: "#/components/schemas/AccessPrincipal"
+          service: "#/components/schemas/AccessPrincipal"
+          group: "#/components/schemas/AccessGroup"
     AccessControlMode:
       type: string
-      enum: [legacy-static-admin, enforced]
+      enum: [disabled, enforced]
     AccessProviderCapabilities:
       type: object
       additionalProperties: false
-      required: [safe_resource_filtering, multi_requirement_check, relationship_management]
+      required:
+        - safe_resource_filtering
+        - multi_requirement_check
+        - relationship_management
+        - group_subjects
+        - multi_principal
+        - max_direct_resource_keys
       properties:
         safe_resource_filtering: {type: boolean}
         multi_requirement_check: {type: boolean}
         relationship_management: {type: boolean}
+        group_subjects: {type: boolean}
+        multi_principal: {type: boolean}
+        max_direct_resource_keys: {type: integer, minimum: 1, maximum: 10000}
     ArtifactFamilyAccessCapability:
       type: object
       additionalProperties: false
@@ -2304,7 +2360,7 @@ components:
         enabled: {type: boolean}
         share_unit:
           type: string
-          enum: [revision, memory_entry]
+          enum: [artifact, memory_entry]
         actions:
           type: array
           items:
@@ -2313,19 +2369,6 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/AccessRole"
-    AccessOperationCapability:
-      type: object
-      additionalProperties: false
-      required: [enabled]
-      properties:
-        enabled: {type: boolean}
-    AccessOperationCapabilities:
-      type: object
-      additionalProperties: false
-      required: [skill_publication]
-      properties:
-        skill_publication:
-          $ref: "#/components/schemas/AccessOperationCapability"
     AccessMeResponse:
       type: object
       additionalProperties: false
@@ -2335,7 +2378,6 @@ components:
         - resource_kinds
         - provider_capabilities
         - artifact_families
-        - operation_capabilities
       properties:
         principal:
           $ref: "#/components/schemas/AccessPrincipal"
@@ -2351,8 +2393,6 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/ArtifactFamilyAccessCapability"
-        operation_capabilities:
-          $ref: "#/components/schemas/AccessOperationCapabilities"
     AccessAction:
       type: string
       enum:
@@ -2364,10 +2404,11 @@ components:
         - scope.delegate
         - scope.admin
         - artifact.read
-        - handoff.evidence.read
+        - artifact.write
+        - artifact.share
+        - handoff.evidence.inspect
         - handoff.acknowledge
         - prompt.use
-        - skill.publish
     AccessResourceType:
       type: string
       enum: [server, scope, artifact]
@@ -2388,20 +2429,26 @@ components:
     MemoryEntryAccessSelector:
       type: object
       additionalProperties: false
-      required: [type, entry_id, entry_version_id]
+      required: [type, entry_id]
       properties:
         type: {type: string, enum: [memory_entry]}
         entry_id: {type: string, minLength: 1, maxLength: 128, pattern: '^[\x21-\x7E]+$'}
-        entry_version_id: {type: string, minLength: 1, maxLength: 128, pattern: '^[\x21-\x7E]+$'}
+    AccessArtifactIdentity:
+      type: object
+      additionalProperties: false
+      required: [family, artifact_id]
+      properties:
+        family: {type: string, minLength: 1, maxLength: 128, pattern: '^[\x21-\x7E]+$'}
+        artifact_id: {type: string, minLength: 1, maxLength: 128, pattern: '^[\x21-\x7E]+$'}
     ArtifactAccessResource:
       type: object
       additionalProperties: false
-      required: [type, scope_id, reference, selector]
+      required: [type, scope_id, identity]
       properties:
         type: {type: string, enum: [artifact]}
         scope_id: {type: string, minLength: 1, maxLength: 256, pattern: '.*\S.*'}
-        reference:
-          $ref: "#/components/schemas/ArtifactReference"
+        identity:
+          $ref: "#/components/schemas/AccessArtifactIdentity"
         selector:
           allOf:
             - $ref: "#/components/schemas/MemoryEntryAccessSelector"
@@ -2420,11 +2467,10 @@ components:
     AccessDecision:
       type: object
       additionalProperties: false
-      required: [allowed, reason_code, policy_revision]
+      required: [allowed, reason_code]
       properties:
         allowed: {type: boolean}
         reason_code: {type: string, minLength: 1, maxLength: 64}
-        policy_revision: {type: string, minLength: 1, maxLength: 64, nullable: true}
     AccessCheckRequest:
       type: object
       additionalProperties: false
@@ -2486,7 +2532,7 @@ components:
         - handoff.receiver
         - artifact.viewer
         - prompt.user
-        - skill.publisher
+        - artifact.owner
         - scope.viewer
         - scope.contributor
         - scope.reviewer
@@ -2502,10 +2548,11 @@ components:
           allOf:
             - $ref: "#/components/schemas/AccessResourceType"
           nullable: true
+        family: {type: string, minLength: 1, maxLength: 128, nullable: true}
     AccessRoleDescriptor:
       type: object
       additionalProperties: false
-      required: [role, resource_type, actions, artifact_families]
+      required: [role, resource_type, actions, artifact_families, assignable_subject_types, system_managed]
       properties:
         role:
           $ref: "#/components/schemas/AccessRole"
@@ -2518,6 +2565,10 @@ components:
         artifact_families:
           type: array
           items: {type: string, minLength: 1, maxLength: 128}
+        assignable_subject_types:
+          type: array
+          items: {type: string, enum: [user, service, group]}
+        system_managed: {type: boolean}
     AccessRolePage:
       type: object
       additionalProperties: false
@@ -2552,7 +2603,7 @@ components:
       properties:
         binding_id: {type: string, minLength: 1, maxLength: 64}
         subject:
-          $ref: "#/components/schemas/AccessPrincipal"
+          $ref: "#/components/schemas/AccessSubject"
         resource:
           $ref: "#/components/schemas/AccessResource"
         role:
@@ -2575,33 +2626,42 @@ components:
     ListAccessBindingsRequest:
       type: object
       additionalProperties: false
+      required: [management_resource]
       properties:
+        management_resource:
+          $ref: "#/components/schemas/AccessResource"
         subject:
           allOf:
-            - $ref: "#/components/schemas/AccessPrincipal"
+            - $ref: "#/components/schemas/AccessSubject"
           nullable: true
-        resource:
+        role:
           allOf:
-            - $ref: "#/components/schemas/AccessResource"
+            - $ref: "#/components/schemas/AccessRole"
           nullable: true
-        include_revoked: {type: boolean, default: false}
+        state:
+          allOf:
+            - $ref: "#/components/schemas/AccessBindingState"
+          nullable: true
+        cursor: {type: string, maxLength: 2048, nullable: true}
+        limit: {type: integer, minimum: 1, maximum: 500, default: 100}
     AccessBindingPage:
       type: object
       additionalProperties: false
-      required: [items]
+      required: [items, next_cursor]
       properties:
         items:
           type: array
           maxItems: 500
           items:
             $ref: "#/components/schemas/AccessBinding"
+        next_cursor: {type: string, maxLength: 2048, nullable: true}
     CreateAccessBindingRequest:
       type: object
       additionalProperties: false
       required: [subject, resource, role, idempotency_key]
       properties:
         subject:
-          $ref: "#/components/schemas/AccessPrincipal"
+          $ref: "#/components/schemas/AccessSubject"
         resource:
           $ref: "#/components/schemas/AccessResource"
         role:
@@ -2612,17 +2672,65 @@ components:
     RevokeAccessBindingRequest:
       type: object
       additionalProperties: false
-      required: [binding_id, expected_version]
+      required: [binding_id, expected_version, idempotency_key]
       properties:
         binding_id: {type: string, minLength: 1, maxLength: 64}
         expected_version: {type: integer, minimum: 1}
+        idempotency_key: {type: string, minLength: 1, maxLength: 255}
+    ReassignHandoffReceiverRequest:
+      type: object
+      additionalProperties: false
+      required: [binding_id, expected_version, subject, idempotency_key]
+      properties:
+        binding_id: {type: string, minLength: 1, maxLength: 64}
+        expected_version: {type: integer, minimum: 1}
+        subject:
+          $ref: "#/components/schemas/AccessPrincipal"
+        expires_at: {type: string, format: date-time, nullable: true}
+        reason: {type: string, maxLength: 1024, nullable: true}
+        idempotency_key: {type: string, minLength: 1, maxLength: 255}
+    HandoffReceiverReassignment:
+      type: object
+      additionalProperties: false
+      required: [revoked_binding, created_binding]
+      properties:
+        revoked_binding:
+          $ref: "#/components/schemas/AccessBinding"
+        created_binding:
+          $ref: "#/components/schemas/AccessBinding"
     ListAccessAuditRequest:
       type: object
       additionalProperties: false
+      required: [resource]
       properties:
-        scope_id: {type: string, minLength: 1, maxLength: 256, pattern: '.*\S.*', nullable: true}
-        after: {type: integer, minimum: 0, nullable: true}
+        resource:
+          oneOf:
+            - $ref: "#/components/schemas/ServerAccessResource"
+            - $ref: "#/components/schemas/ScopeAccessResource"
+          discriminator:
+            propertyName: type
+        action:
+          allOf:
+            - $ref: "#/components/schemas/AccessAction"
+          nullable: true
+        subject:
+          allOf:
+            - $ref: "#/components/schemas/AccessSubject"
+          nullable: true
+        result: {type: string, enum: [allowed, denied], nullable: true}
+        time_range:
+          allOf:
+            - $ref: "#/components/schemas/AccessAuditTimeRange"
+          nullable: true
+        cursor: {type: string, maxLength: 2048, nullable: true}
         limit: {type: integer, minimum: 1, maximum: 500, default: 100}
+    AccessAuditTimeRange:
+      type: object
+      additionalProperties: false
+      required: [start, end]
+      properties:
+        start: {type: string, format: date-time}
+        end: {type: string, format: date-time}
     AccessAuditEvent:
       type: object
       additionalProperties: false
@@ -2639,9 +2747,12 @@ components:
         - allowed
         - reason_code
         - policy_revision
+        - matched_subject
         - binding_id
         - target
         - role
+        - expected_version
+        - result_version
       properties:
         cursor: {type: integer, minimum: 1}
         event_id: {type: string, minLength: 1, maxLength: 64}
@@ -2657,16 +2768,22 @@ components:
           $ref: "#/components/schemas/AccessResource"
         allowed: {type: boolean}
         reason_code: {type: string, minLength: 1, maxLength: 64}
-        policy_revision: {type: string, maxLength: 64, nullable: true}
+        policy_revision: {type: string, minLength: 1, maxLength: 64, nullable: true}
+        matched_subject:
+          allOf:
+            - $ref: "#/components/schemas/AccessSubject"
+          nullable: true
         binding_id: {type: string, maxLength: 64, nullable: true}
         target:
           allOf:
-            - $ref: "#/components/schemas/AccessPrincipal"
+            - $ref: "#/components/schemas/AccessSubject"
           nullable: true
         role:
           allOf:
             - $ref: "#/components/schemas/AccessRole"
           nullable: true
+        expected_version: {type: integer, minimum: 1, nullable: true}
+        result_version: {type: integer, minimum: 1, nullable: true}
     AccessAuditPage:
       type: object
       additionalProperties: false
@@ -2677,7 +2794,7 @@ components:
           maxItems: 500
           items:
             $ref: "#/components/schemas/AccessAuditEvent"
-        next_cursor: {type: integer, minimum: 1, nullable: true}
+        next_cursor: {type: string, maxLength: 2048, nullable: true}
     ActivateHandoffRequest:
       type: object
       additionalProperties: false

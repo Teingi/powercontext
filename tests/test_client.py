@@ -31,10 +31,10 @@ from powercontext.client import (
 from powercontext.client.settings import ClientSettings
 from powercontext.http import (
     AccessAction,
+    AccessArtifactIdentity,
     AccessCheckRequest,
     AccessResource,
     ArtifactAccessResource,
-    ArtifactReference,
     CaptureContentSourceRequest,
     GetHandoffReportRequest,
 )
@@ -48,7 +48,7 @@ def test_client_exposes_typed_access_check() -> None:
             requests.append(request)
             return httpx.Response(
                 200,
-                json={"allowed": True, "reason_code": "role-binding", "policy_revision": "7"},
+                json={"allowed": True, "reason_code": "role-binding"},
             )
 
         async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as http_client:
@@ -60,7 +60,7 @@ def test_client_exposes_typed_access_check() -> None:
                         root=ArtifactAccessResource(
                             type="artifact",
                             scope_id="scope-a",
-                            reference=ArtifactReference(family="handoff", artifact_id="handoff-a", revision=3),
+                            identity=AccessArtifactIdentity(family="handoff", artifact_id="handoff-a"),
                             selector=None,
                         )
                     ),
@@ -69,7 +69,7 @@ def test_client_exposes_typed_access_check() -> None:
 
         assert decision.allowed is True
         assert requests[0].url.path == "/v1/access/check"
-        assert json.loads(requests[0].content)["resource"]["reference"]["artifact_id"] == "handoff-a"
+        assert json.loads(requests[0].content)["resource"]["identity"]["artifact_id"] == "handoff-a"
 
     asyncio.run(scenario())
 

@@ -50,8 +50,8 @@ _UNSAFE_BIND_CLI_MESSAGE = (
 # operator can set instead of surfacing pydantic's internal validation dump.
 _MISSING_BEARER_CLI_MESSAGE = (
     "authentication is enabled but no bearer token is configured; "
-    "set POWERCONTEXT_SERVER_AUTH_TOKEN=... or disable it with "
-    "POWERCONTEXT_SERVER_AUTH_ENABLED=false"
+    "set POWERCONTEXT_SERVER_AUTH_TOKEN=... or disable Access Control with "
+    "POWERCONTEXT_SERVER_ACCESS_MODE=disabled"
 )
 
 app = typer.Typer(

@@ -17,9 +17,10 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from enum import StrEnum
+from typing import TypeAlias
 
 from powercontext.server.authz.errors import AccessInvalidRequestError
 
@@ -39,10 +40,11 @@ class AccessAction(StrEnum):
     SCOPE_DELEGATE = "scope.delegate"
     SCOPE_ADMIN = "scope.admin"
     ARTIFACT_READ = "artifact.read"
-    HANDOFF_EVIDENCE_READ = "handoff.evidence.read"
+    ARTIFACT_WRITE = "artifact.write"
+    ARTIFACT_SHARE = "artifact.share"
+    HANDOFF_EVIDENCE_INSPECT = "handoff.evidence.inspect"
     HANDOFF_ACKNOWLEDGE = "handoff.acknowledge"
     PROMPT_USE = "prompt.use"
-    SKILL_PUBLISH = "skill.publish"
 
 
 PUBLIC_ACCESS_ACTIONS = tuple(action for action in AccessAction if action is not AccessAction.ACCESS_SELF)
@@ -63,7 +65,7 @@ class AccessRole(StrEnum):
     HANDOFF_RECEIVER = "handoff.receiver"
     ARTIFACT_VIEWER = "artifact.viewer"
     PROMPT_USER = "prompt.user"
-    SKILL_PUBLISHER = "skill.publisher"
+    ARTIFACT_OWNER = "artifact.owner"
     SCOPE_VIEWER = "scope.viewer"
     SCOPE_CONTRIBUTOR = "scope.contributor"
     SCOPE_REVIEWER = "scope.reviewer"
@@ -82,51 +84,70 @@ class AccessBindingState(StrEnum):
 
 @dataclass(frozen=True, slots=True)
 class PrincipalRef:
-    """Stable opaque identity established by authentication."""
+    """Canonical user or service identity established by authentication."""
 
     type: str
-    issuer: str
     id: str
+    description: str | None = field(default=None, compare=False)
 
     def __post_init__(self) -> None:
-        if not (
-            _valid_text(self.type, maximum=64)
-            and _valid_text(self.issuer, maximum=255)
-            and _valid_text(self.id, maximum=255)
-        ):
+        if self.type not in {"user", "service"} or not _valid_text(self.id, maximum=255):
+            raise AccessInvalidRequestError("principal")
+        if self.description is not None and not _valid_text(self.description, maximum=255):
             raise AccessInvalidRequestError("principal")
 
     @property
     def key(self) -> str:
-        return _canonical_json({"id": self.id, "issuer": self.issuer, "type": self.type})
+        """Return the deployment-wide identity key; display metadata is excluded."""
+
+        return self.id
 
 
 @dataclass(frozen=True, slots=True)
-class AccessArtifactReference:
-    """Exact immutable Artifact identity used by one Access resource."""
+class GroupRef:
+    """Canonical group identity resolved by a trusted identity source."""
+
+    type: str
+    id: str
+    description: str | None = field(default=None, compare=False)
+
+    def __post_init__(self) -> None:
+        if self.type != "group" or not _valid_text(self.id, maximum=255):
+            raise AccessInvalidRequestError("group")
+        if self.description is not None and not _valid_text(self.description, maximum=255):
+            raise AccessInvalidRequestError("group")
+
+    @property
+    def key(self) -> str:
+        """Return the deployment-wide identity key; display metadata is excluded."""
+
+        return self.id
+
+
+AccessSubjectRef: TypeAlias = PrincipalRef | GroupRef
+
+
+@dataclass(frozen=True, slots=True)
+class ArtifactIdentity:
+    """Version-independent identity of one logical Artifact."""
 
     family: str
     artifact_id: str
-    revision: int
 
     def __post_init__(self) -> None:
         if not _valid_text(self.family, maximum=128) or not _valid_text(self.artifact_id, maximum=128):
-            raise AccessInvalidRequestError("artifact-reference")
-        if isinstance(self.revision, bool) or not isinstance(self.revision, int) or self.revision < 1:
-            raise AccessInvalidRequestError("artifact-reference")
+            raise AccessInvalidRequestError("artifact-identity")
 
 
 @dataclass(frozen=True, slots=True)
 class MemoryEntrySelector:
-    """Exact Memory Entry Version selected inside one Memory Revision."""
+    """Version-independent selector for one logical Memory Entry."""
 
     entry_id: str
-    entry_version_id: str
-
     type: str = "memory_entry"
 
     def __post_init__(self) -> None:
-        if not _valid_text(self.entry_id, maximum=128) or not _valid_text(self.entry_version_id, maximum=128):
+        if self.type != "memory_entry" or not _valid_text(self.entry_id, maximum=128):
             raise AccessInvalidRequestError("memory-entry-selector")
 
 
@@ -137,7 +158,7 @@ class ResourceRef:
     type: AccessResourceType
     deployment_id: str | None = None
     scope_id: str | None = None
-    reference: AccessArtifactReference | None = None
+    identity: ArtifactIdentity | None = None
     selector: MemoryEntrySelector | None = None
 
     def __post_init__(self) -> None:
@@ -145,20 +166,18 @@ class ResourceRef:
             valid = (
                 _valid_text(self.deployment_id, maximum=128)
                 and self.scope_id is None
-                and self.reference is None
+                and self.identity is None
                 and self.selector is None
             )
         elif self.type is AccessResourceType.SCOPE:
             valid = (
                 self.deployment_id is None
                 and _valid_text(self.scope_id, maximum=256)
-                and self.reference is None
+                and self.identity is None
                 and self.selector is None
             )
         else:
-            valid = (
-                self.deployment_id is None and _valid_text(self.scope_id, maximum=256) and self.reference is not None
-            )
+            valid = self.deployment_id is None and _valid_text(self.scope_id, maximum=256) and self.identity is not None
         if not valid:
             raise AccessInvalidRequestError("resource")
 
@@ -177,31 +196,22 @@ class ResourceRef:
         *,
         family: str,
         artifact_id: str,
-        revision: int,
         selector: MemoryEntrySelector | None = None,
     ) -> ResourceRef:
         return cls(
             type=AccessResourceType.ARTIFACT,
             scope_id=scope_id,
-            reference=AccessArtifactReference(
-                family=family,
-                artifact_id=artifact_id,
-                revision=revision,
-            ),
+            identity=ArtifactIdentity(family=family, artifact_id=artifact_id),
             selector=selector,
         )
 
     @property
     def family(self) -> str | None:
-        return None if self.reference is None else self.reference.family
+        return None if self.identity is None else self.identity.family
 
     @property
     def artifact_id(self) -> str | None:
-        return None if self.reference is None else self.reference.artifact_id
-
-    @property
-    def revision(self) -> int | None:
-        return None if self.reference is None else self.reference.revision
+        return None if self.identity is None else self.identity.artifact_id
 
     @property
     def key(self) -> str:
@@ -210,13 +220,12 @@ class ResourceRef:
         elif self.type is AccessResourceType.SCOPE:
             value = {"scope_id": self.scope_id, "type": self.type.value}
         else:
-            if self.reference is None:
-                raise AccessInvalidRequestError("artifact-reference")
+            if self.identity is None:
+                raise AccessInvalidRequestError("artifact-identity")
             value = {
-                "reference": {
-                    "artifact_id": self.reference.artifact_id,
-                    "family": self.reference.family,
-                    "revision": self.reference.revision,
+                "identity": {
+                    "artifact_id": self.identity.artifact_id,
+                    "family": self.identity.family,
                 },
                 "scope_id": self.scope_id,
                 "selector": (
@@ -224,7 +233,6 @@ class ResourceRef:
                     if self.selector is None
                     else {
                         "entry_id": self.selector.entry_id,
-                        "entry_version_id": self.selector.entry_version_id,
                         "type": self.selector.type,
                     }
                 ),
@@ -239,11 +247,13 @@ class ResourceRef:
 
 @dataclass(frozen=True, slots=True)
 class AccessDecision:
-    """One low-sensitivity authorization result."""
+    """One low-sensitivity authorization result plus internal attribution."""
 
     allowed: bool
     reason_code: str
     policy_revision: str | None
+    matched_subject: AccessSubjectRef | None = None
+    matched_binding_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -251,7 +261,7 @@ class AccessBinding:
     """One persisted role assignment."""
 
     binding_id: str
-    subject: PrincipalRef
+    subject: AccessSubjectRef
     resource: ResourceRef
     role: AccessRole
     granted_by: PrincipalRef
@@ -270,6 +280,41 @@ class AccessBinding:
 
 
 @dataclass(frozen=True, slots=True)
+class ArtifactOwnerRelation:
+    """The single direct owner of one logical Artifact."""
+
+    resource: ResourceRef
+    owner: PrincipalRef
+    established_at: datetime
+    policy_revision: str
+    idempotency_key: str
+
+
+@dataclass(frozen=True, slots=True)
+class CandidateOwnerAttestation:
+    """Server-attested proposed owner locked to one Review Candidate."""
+
+    scope_id: str
+    candidate_id: str
+    family: str
+    proposed_owner: PrincipalRef
+    target: ResourceRef | None
+    idempotency_key: str
+
+    def __post_init__(self) -> None:
+        if not _valid_text(self.scope_id, maximum=256) or not _valid_text(self.candidate_id, maximum=128):
+            raise AccessInvalidRequestError("candidate-owner")
+        if not _valid_text(self.family, maximum=128):
+            raise AccessInvalidRequestError("candidate-owner")
+        if self.target is not None and (
+            self.target.type is not AccessResourceType.ARTIFACT
+            or self.target.scope_id != self.scope_id
+            or self.target.family != self.family
+        ):
+            raise AccessInvalidRequestError("candidate-owner")
+
+
+@dataclass(frozen=True, slots=True)
 class AccessAuditEvent:
     """Data-minimized authorization or relationship audit record."""
 
@@ -285,71 +330,74 @@ class AccessAuditEvent:
     allowed: bool
     reason_code: str
     policy_revision: str | None
+    matched_subject: AccessSubjectRef | None = None
     binding_id: str | None = None
-    target: PrincipalRef | None = None
+    target: AccessSubjectRef | None = None
     role: AccessRole | None = None
+    expected_version: int | None = None
+    result_version: int | None = None
 
 
+# Parent-to-child implications are separate so management roles never become
+# accidental content roles.
 ROLE_ACTIONS: dict[AccessRole, frozenset[AccessAction]] = {
-    AccessRole.HANDOFF_VIEWER: frozenset({AccessAction.ARTIFACT_READ, AccessAction.HANDOFF_EVIDENCE_READ}),
+    AccessRole.HANDOFF_VIEWER: frozenset({AccessAction.ARTIFACT_READ, AccessAction.HANDOFF_EVIDENCE_INSPECT}),
     AccessRole.HANDOFF_RECEIVER: frozenset({
         AccessAction.ARTIFACT_READ,
-        AccessAction.HANDOFF_EVIDENCE_READ,
+        AccessAction.HANDOFF_EVIDENCE_INSPECT,
         AccessAction.HANDOFF_ACKNOWLEDGE,
     }),
     AccessRole.ARTIFACT_VIEWER: frozenset({AccessAction.ARTIFACT_READ}),
     AccessRole.PROMPT_USER: frozenset({AccessAction.ARTIFACT_READ, AccessAction.PROMPT_USE}),
-    AccessRole.SKILL_PUBLISHER: frozenset({AccessAction.ARTIFACT_READ, AccessAction.SKILL_PUBLISH}),
-    AccessRole.SCOPE_VIEWER: frozenset({
-        AccessAction.SCOPE_READ,
+    AccessRole.ARTIFACT_OWNER: frozenset({
         AccessAction.ARTIFACT_READ,
-        AccessAction.HANDOFF_EVIDENCE_READ,
+        AccessAction.ARTIFACT_WRITE,
+        AccessAction.ARTIFACT_SHARE,
+        AccessAction.HANDOFF_EVIDENCE_INSPECT,
+    }),
+    AccessRole.SCOPE_VIEWER: frozenset({AccessAction.SCOPE_READ}),
+    AccessRole.SCOPE_CONTRIBUTOR: frozenset({AccessAction.SCOPE_READ, AccessAction.SCOPE_CONTRIBUTE}),
+    AccessRole.SCOPE_REVIEWER: frozenset({AccessAction.SCOPE_READ, AccessAction.SCOPE_REVIEW}),
+    AccessRole.SCOPE_DELEGATOR: frozenset({AccessAction.SCOPE_READ, AccessAction.SCOPE_DELEGATE}),
+    AccessRole.SCOPE_ADMIN: frozenset({AccessAction.SCOPE_ADMIN}),
+    AccessRole.SERVER_OBSERVER: frozenset({AccessAction.SERVER_OBSERVE}),
+    AccessRole.SERVER_ADMIN: frozenset({AccessAction.SERVER_ADMIN}),
+}
+
+
+ROLE_CHILD_ACTIONS: dict[AccessRole, frozenset[AccessAction]] = {
+    AccessRole.SCOPE_VIEWER: frozenset({
+        AccessAction.ARTIFACT_READ,
+        AccessAction.HANDOFF_EVIDENCE_INSPECT,
         AccessAction.PROMPT_USE,
     }),
     AccessRole.SCOPE_CONTRIBUTOR: frozenset({
-        AccessAction.SCOPE_READ,
-        AccessAction.SCOPE_CONTRIBUTE,
         AccessAction.ARTIFACT_READ,
-        AccessAction.HANDOFF_EVIDENCE_READ,
+        AccessAction.HANDOFF_EVIDENCE_INSPECT,
         AccessAction.HANDOFF_ACKNOWLEDGE,
         AccessAction.PROMPT_USE,
     }),
     AccessRole.SCOPE_REVIEWER: frozenset({
-        AccessAction.SCOPE_READ,
-        AccessAction.SCOPE_REVIEW,
         AccessAction.ARTIFACT_READ,
-        AccessAction.HANDOFF_EVIDENCE_READ,
+        AccessAction.HANDOFF_EVIDENCE_INSPECT,
         AccessAction.PROMPT_USE,
     }),
     AccessRole.SCOPE_DELEGATOR: frozenset({
-        AccessAction.SCOPE_READ,
-        AccessAction.SCOPE_DELEGATE,
         AccessAction.ARTIFACT_READ,
-        AccessAction.HANDOFF_EVIDENCE_READ,
+        AccessAction.HANDOFF_EVIDENCE_INSPECT,
         AccessAction.PROMPT_USE,
     }),
-    AccessRole.SCOPE_ADMIN: frozenset({
-        AccessAction.SCOPE_READ,
-        AccessAction.SCOPE_CONTRIBUTE,
-        AccessAction.SCOPE_REVIEW,
-        AccessAction.SCOPE_DELEGATE,
-        AccessAction.SCOPE_ADMIN,
-        AccessAction.ARTIFACT_READ,
-        AccessAction.HANDOFF_EVIDENCE_READ,
-        AccessAction.HANDOFF_ACKNOWLEDGE,
-        AccessAction.PROMPT_USE,
-        AccessAction.SKILL_PUBLISH,
-    }),
-    AccessRole.SERVER_OBSERVER: frozenset({AccessAction.SERVER_OBSERVE}),
-    AccessRole.SERVER_ADMIN: frozenset(AccessAction),
+    AccessRole.SCOPE_ADMIN: frozenset({AccessAction.ARTIFACT_SHARE}),
+    AccessRole.SERVER_ADMIN: frozenset({AccessAction.SCOPE_ADMIN, AccessAction.ARTIFACT_SHARE}),
 }
+
 
 ROLE_RESOURCE_TYPES: dict[AccessRole, AccessResourceType] = {
     AccessRole.HANDOFF_VIEWER: AccessResourceType.ARTIFACT,
     AccessRole.HANDOFF_RECEIVER: AccessResourceType.ARTIFACT,
     AccessRole.ARTIFACT_VIEWER: AccessResourceType.ARTIFACT,
     AccessRole.PROMPT_USER: AccessResourceType.ARTIFACT,
-    AccessRole.SKILL_PUBLISHER: AccessResourceType.ARTIFACT,
+    AccessRole.ARTIFACT_OWNER: AccessResourceType.ARTIFACT,
     AccessRole.SCOPE_VIEWER: AccessResourceType.SCOPE,
     AccessRole.SCOPE_CONTRIBUTOR: AccessResourceType.SCOPE,
     AccessRole.SCOPE_REVIEWER: AccessResourceType.SCOPE,
@@ -358,6 +406,13 @@ ROLE_RESOURCE_TYPES: dict[AccessRole, AccessResourceType] = {
     AccessRole.SERVER_OBSERVER: AccessResourceType.SERVER,
     AccessRole.SERVER_ADMIN: AccessResourceType.SERVER,
 }
+
+
+ROLE_SUBJECT_TYPES: dict[AccessRole, frozenset[str]] = {
+    role: frozenset({"user", "service", "group"}) for role in AccessRole
+}
+ROLE_SUBJECT_TYPES[AccessRole.HANDOFF_RECEIVER] = frozenset({"user", "service"})
+ROLE_SUBJECT_TYPES[AccessRole.ARTIFACT_OWNER] = frozenset({"user", "service"})
 
 
 def _valid_text(value: object, *, maximum: int) -> bool:
@@ -372,15 +427,21 @@ __all__ = (
     "DEFAULT_DEPLOYMENT_ID",
     "PUBLIC_ACCESS_ACTIONS",
     "ROLE_ACTIONS",
+    "ROLE_CHILD_ACTIONS",
     "ROLE_RESOURCE_TYPES",
+    "ROLE_SUBJECT_TYPES",
     "AccessAction",
-    "AccessArtifactReference",
     "AccessAuditEvent",
     "AccessBinding",
     "AccessBindingState",
     "AccessDecision",
     "AccessResourceType",
     "AccessRole",
+    "AccessSubjectRef",
+    "ArtifactIdentity",
+    "ArtifactOwnerRelation",
+    "CandidateOwnerAttestation",
+    "GroupRef",
     "MemoryEntrySelector",
     "PrincipalRef",
     "ResourceRef",

@@ -119,7 +119,7 @@ def _access_request(request: AccessRequest) -> dict[str, object]:
         "subject": {
             "type": request.subject.type,
             "id": request.subject.id,
-            "properties": {"issuer": request.subject.issuer},
+            "properties": ({} if request.subject.description is None else {"description": request.subject.description}),
         },
         "action": {"name": request.action.value},
         "resource": _resource(request.resource),
@@ -137,11 +137,10 @@ def _resource(resource: ResourceRef) -> dict[str, object]:
         properties["deployment_id"] = resource.deployment_id
     if resource.scope_id is not None:
         properties["scope_id"] = resource.scope_id
-    if resource.reference is not None:
-        properties["reference"] = {
-            "family": resource.reference.family,
-            "artifact_id": resource.reference.artifact_id,
-            "revision": resource.reference.revision,
+    if resource.identity is not None:
+        properties["identity"] = {
+            "family": resource.identity.family,
+            "artifact_id": resource.identity.artifact_id,
         }
     if resource.selector is not None:
         properties["selector"] = _selector(resource.selector)
@@ -152,7 +151,6 @@ def _selector(selector: MemoryEntrySelector) -> dict[str, str]:
     return {
         "type": selector.type,
         "entry_id": selector.entry_id,
-        "entry_version_id": selector.entry_version_id,
     }
 
 

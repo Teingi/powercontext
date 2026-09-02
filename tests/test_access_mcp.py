@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import Self
 
@@ -26,8 +27,11 @@ from starlette.middleware import Middleware
 from powercontext.builtin.persistence.sqlite import SQLiteConfig, SQLiteProfile
 from powercontext.builtin.runtime import MemoryEntriesPage
 from powercontext.server.app import create_app
+from powercontext.server.authentication import StaticBearerAuthenticationProvider
 from powercontext.server.authz import (
     AccessAuditContext,
+    AccessBinding,
+    AccessBindingState,
     AccessControlService,
     AccessRole,
     BuiltinAuthorizationProvider,
@@ -37,10 +41,10 @@ from powercontext.server.authz import (
 )
 from powercontext.server.authz.repository import ACCESS_TABLES, RelationalAccessRepository
 from powercontext.server.mcp import mount_mcp
-from powercontext.server.middleware import StaticBearerMiddleware
+from powercontext.server.middleware import AuthenticationMiddleware
 
-ADMIN = PrincipalRef(type="user", issuer="https://identity.example", id="admin")
-BOB = PrincipalRef(type="user", issuer="https://identity.example", id="bob")
+ADMIN = PrincipalRef(type="service", id="admin")
+BOB = PrincipalRef(type="user", id="bob")
 
 
 class _MemoryApplication:
@@ -57,8 +61,24 @@ def test_mcp_internal_bridge_preserves_principal_and_audits_mcp_transport() -> N
     async def scenario() -> None:
         async with SQLiteProfile.open(SQLiteConfig(), tables=ACCESS_TABLES) as profile:
             repository = RelationalAccessRepository(profile.database)
+            await repository.create_binding(
+                AccessBinding(
+                    binding_id="seed-admin",
+                    subject=ADMIN,
+                    resource=ResourceRef.server(),
+                    role=AccessRole.SERVER_ADMIN,
+                    granted_by=ADMIN,
+                    reason="test bootstrap",
+                    created_at=datetime.now(UTC),
+                    expires_at=None,
+                    state=AccessBindingState.ACTIVE,
+                    version=1,
+                    policy_revision="pending",
+                    idempotency_key="seed-admin",
+                )
+            )
             service = AccessControlService(
-                BuiltinAuthorizationProvider(repository, bootstrap_administrators=(ADMIN,)),
+                BuiltinAuthorizationProvider(repository),
                 relationships=repository,
                 audit=repository,
             )
@@ -72,14 +92,15 @@ def test_mcp_internal_bridge_preserves_principal_and_audits_mcp_transport() -> N
                 ),
                 context=AccessAuditContext(transport="test", operation="seed"),
             )
+            authentication = StaticBearerAuthenticationProvider("bob-token", BOB)
             app = create_app(
                 application=SimpleNamespace(memory=_MemoryApplication()),
                 access_control=service,
+                authentication_provider=authentication,
                 middleware=(
                     Middleware(
-                        StaticBearerMiddleware,
-                        token="bob-token",  # noqa: S106 - test credential.
-                        principal=BOB,
+                        AuthenticationMiddleware,
+                        provider=authentication,
                     ),
                 ),
             )
@@ -109,7 +130,7 @@ def test_mcp_internal_bridge_preserves_principal_and_audits_mcp_transport() -> N
                 result = await client.call_tool("list_memory_entries", {"scope_id": "scope-a"})
                 assert result.is_error is False
 
-            audit = await repository.list_audit()
+            audit = await repository.list_audit(resource=ResourceRef.server())
             decision = next(event for event in audit if event.operation == "list_memory_entries")
             assert decision.transport == "mcp"
             assert decision.principal == BOB

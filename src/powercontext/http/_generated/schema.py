@@ -398,10 +398,7 @@ OPENAPI_SCHEMA: dict[str, JsonValue] = {
                     "503": {"$ref": "#/components/responses/Unavailable"},
                     "500": {"$ref": "#/components/responses/InternalError"},
                 },
-                "x-powercontext-access": {
-                    "action": "scope.contribute",
-                    "resource": {"type": "scope", "scope-id-from": "scope_id"},
-                },
+                "x-powercontext-access": {"resolver": "commit_handoff_access"},
             }
         },
         "/v1/handoff/continue": {
@@ -615,10 +612,7 @@ OPENAPI_SCHEMA: dict[str, JsonValue] = {
                     "503": {"$ref": "#/components/responses/Unavailable"},
                     "500": {"$ref": "#/components/responses/InternalError"},
                 },
-                "x-powercontext-access": {
-                    "action": "scope.contribute",
-                    "resource": {"type": "scope", "scope-id-from": "scope_id"},
-                },
+                "x-powercontext-access": {"resolver": "exact_memory_write_access"},
             }
         },
         "/v1/memory/entries/retire": {
@@ -651,10 +645,7 @@ OPENAPI_SCHEMA: dict[str, JsonValue] = {
                     "503": {"$ref": "#/components/responses/Unavailable"},
                     "500": {"$ref": "#/components/responses/InternalError"},
                 },
-                "x-powercontext-access": {
-                    "action": "scope.contribute",
-                    "resource": {"type": "scope", "scope-id-from": "scope_id"},
-                },
+                "x-powercontext-access": {"resolver": "exact_memory_write_access"},
             }
         },
         "/v1/memory/changes": {
@@ -715,10 +706,7 @@ OPENAPI_SCHEMA: dict[str, JsonValue] = {
                     "503": {"$ref": "#/components/responses/Unavailable"},
                     "500": {"$ref": "#/components/responses/InternalError"},
                 },
-                "x-powercontext-access": {
-                    "action": "scope.contribute",
-                    "resource": {"type": "scope", "scope-id-from": "scope_id"},
-                },
+                "x-powercontext-access": {"resolver": "experience_candidate_write_access"},
             }
         },
         "/v1/experience/generate": {
@@ -751,10 +739,7 @@ OPENAPI_SCHEMA: dict[str, JsonValue] = {
                     "503": {"$ref": "#/components/responses/Unavailable"},
                     "500": {"$ref": "#/components/responses/InternalError"},
                 },
-                "x-powercontext-access": {
-                    "action": "scope.contribute",
-                    "resource": {"type": "scope", "scope-id-from": "scope_id"},
-                },
+                "x-powercontext-access": {"resolver": "experience_candidate_write_access"},
             }
         },
         "/v1/experience/get": {
@@ -808,10 +793,7 @@ OPENAPI_SCHEMA: dict[str, JsonValue] = {
                     "503": {"$ref": "#/components/responses/Unavailable"},
                     "500": {"$ref": "#/components/responses/InternalError"},
                 },
-                "x-powercontext-access": {
-                    "action": "scope.contribute",
-                    "resource": {"type": "scope", "scope-id-from": "scope_id"},
-                },
+                "x-powercontext-access": {"resolver": "skill_candidate_write_access"},
             }
         },
         "/v1/skill/generate": {
@@ -841,10 +823,7 @@ OPENAPI_SCHEMA: dict[str, JsonValue] = {
                     "503": {"$ref": "#/components/responses/Unavailable"},
                     "500": {"$ref": "#/components/responses/InternalError"},
                 },
-                "x-powercontext-access": {
-                    "action": "scope.contribute",
-                    "resource": {"type": "scope", "scope-id-from": "scope_id"},
-                },
+                "x-powercontext-access": {"resolver": "skill_candidate_write_access"},
             }
         },
         "/v1/skill/get": {
@@ -879,10 +858,10 @@ OPENAPI_SCHEMA: dict[str, JsonValue] = {
                 "summary": "List safe publication targets for an exact managed Skill",
                 "description": "Return only enabled "
                 "opaque host-local "
-                "targets after the "
-                "exact Skill read and "
-                "publish checks both "
-                "allow.",
+                "targets after "
+                "artifact.read allows "
+                "the logical Skill "
+                "identity.",
                 "operationId": "list_skill_publication_targets",
                 "requestBody": {
                     "content": {
@@ -909,16 +888,17 @@ OPENAPI_SCHEMA: dict[str, JsonValue] = {
                     "503": {"$ref": "#/components/responses/Unavailable"},
                     "500": {"$ref": "#/components/responses/InternalError"},
                 },
-                "x-powercontext-access": {"resolver": "publish_managed_skill_access"},
+                "x-powercontext-access": {"resolver": "exact_skill_access"},
             }
         },
         "/v1/skills/publish": {
             "post": {
                 "tags": ["skill"],
                 "summary": "Publish an exact managed Skill to one configured target",
-                "description": "Publish only after artifact.read and "
-                "skill.publish both allow; target_id is "
-                "resolved after authorization.",
+                "description": "Publish an exact Revision only after "
+                "artifact.read allows its logical Skill "
+                "identity; target_id is resolved after "
+                "authorization.",
                 "operationId": "publish_managed_skill",
                 "requestBody": {
                     "content": {
@@ -942,7 +922,7 @@ OPENAPI_SCHEMA: dict[str, JsonValue] = {
                     "503": {"$ref": "#/components/responses/Unavailable"},
                     "500": {"$ref": "#/components/responses/InternalError"},
                 },
-                "x-powercontext-access": {"resolver": "publish_managed_skill_access"},
+                "x-powercontext-access": {"resolver": "exact_skill_access"},
             }
         },
         "/v1/external-skills/scan": {
@@ -1973,6 +1953,33 @@ OPENAPI_SCHEMA: dict[str, JsonValue] = {
                 "x-powercontext-access": {"action": "access.self", "resource": {"type": "server"}},
             }
         },
+        "/v1/access/bindings/reassign-handoff-receiver": {
+            "post": {
+                "tags": ["access"],
+                "summary": "Atomically reassign the single Handoff receiver",
+                "operationId": "reassign_handoff_receiver_binding",
+                "requestBody": {
+                    "content": {
+                        "application/json": {"schema": {"$ref": "#/components/schemas/ReassignHandoffReceiverRequest"}}
+                    },
+                    "required": True,
+                },
+                "responses": {
+                    "200": {
+                        "description": "The revoked previous receiver and active replacement Binding.",
+                        "content": {
+                            "application/json": {"schema": {"$ref": "#/components/schemas/HandoffReceiverReassignment"}}
+                        },
+                    },
+                    "401": {"$ref": "#/components/responses/Unauthorized"},
+                    "403": {"$ref": "#/components/responses/Forbidden"},
+                    "409": {"$ref": "#/components/responses/Conflict"},
+                    "422": {"$ref": "#/components/responses/InvalidRequest"},
+                    "503": {"$ref": "#/components/responses/Unavailable"},
+                },
+                "x-powercontext-access": {"action": "access.self", "resource": {"type": "server"}},
+            }
+        },
         "/v1/access/audit/list": {
             "post": {
                 "tags": ["access"],
@@ -1994,7 +2001,7 @@ OPENAPI_SCHEMA: dict[str, JsonValue] = {
                     "422": {"$ref": "#/components/responses/InvalidRequest"},
                     "503": {"$ref": "#/components/responses/Unavailable"},
                 },
-                "x-powercontext-access": {"resolver": "access_audit_access"},
+                "x-powercontext-access": {"action": "access.self", "resource": {"type": "server"}},
             }
         },
     },
@@ -2002,48 +2009,70 @@ OPENAPI_SCHEMA: dict[str, JsonValue] = {
         "schemas": {
             "AccessPrincipal": {
                 "properties": {
-                    "type": {"type": "string", "maxLength": 64, "minLength": 1},
-                    "issuer": {"type": "string", "maxLength": 255, "minLength": 1},
+                    "type": {"type": "string", "enum": ["user", "service"]},
                     "id": {"type": "string", "maxLength": 255, "minLength": 1},
+                    "description": {"type": "string", "maxLength": 255, "minLength": 1, "nullable": True},
                 },
                 "additionalProperties": False,
                 "type": "object",
-                "required": ["type", "issuer", "id"],
+                "required": ["type", "id"],
             },
-            "AccessControlMode": {"type": "string", "enum": ["legacy-static-admin", "enforced"]},
+            "AccessGroup": {
+                "properties": {
+                    "type": {"type": "string", "enum": ["group"]},
+                    "id": {"type": "string", "maxLength": 255, "minLength": 1},
+                    "description": {"type": "string", "maxLength": 255, "minLength": 1, "nullable": True},
+                },
+                "additionalProperties": False,
+                "type": "object",
+                "required": ["type", "id"],
+            },
+            "AccessSubject": {
+                "oneOf": [
+                    {"$ref": "#/components/schemas/AccessPrincipal"},
+                    {"$ref": "#/components/schemas/AccessGroup"},
+                ],
+                "discriminator": {
+                    "propertyName": "type",
+                    "mapping": {
+                        "user": "#/components/schemas/AccessPrincipal",
+                        "service": "#/components/schemas/AccessPrincipal",
+                        "group": "#/components/schemas/AccessGroup",
+                    },
+                },
+            },
+            "AccessControlMode": {"type": "string", "enum": ["disabled", "enforced"]},
             "AccessProviderCapabilities": {
                 "properties": {
                     "safe_resource_filtering": {"type": "boolean"},
                     "multi_requirement_check": {"type": "boolean"},
                     "relationship_management": {"type": "boolean"},
+                    "group_subjects": {"type": "boolean"},
+                    "multi_principal": {"type": "boolean"},
+                    "max_direct_resource_keys": {"type": "integer", "maximum": 10000.0, "minimum": 1.0},
                 },
                 "additionalProperties": False,
                 "type": "object",
-                "required": ["safe_resource_filtering", "multi_requirement_check", "relationship_management"],
+                "required": [
+                    "safe_resource_filtering",
+                    "multi_requirement_check",
+                    "relationship_management",
+                    "group_subjects",
+                    "multi_principal",
+                    "max_direct_resource_keys",
+                ],
             },
             "ArtifactFamilyAccessCapability": {
                 "properties": {
                     "family": {"type": "string", "maxLength": 128, "minLength": 1},
                     "enabled": {"type": "boolean"},
-                    "share_unit": {"type": "string", "enum": ["revision", "memory_entry"]},
+                    "share_unit": {"type": "string", "enum": ["artifact", "memory_entry"]},
                     "actions": {"items": {"$ref": "#/components/schemas/AccessAction"}, "type": "array"},
                     "grantable_roles": {"items": {"$ref": "#/components/schemas/AccessRole"}, "type": "array"},
                 },
                 "additionalProperties": False,
                 "type": "object",
                 "required": ["family", "enabled", "share_unit", "actions", "grantable_roles"],
-            },
-            "AccessOperationCapability": {
-                "properties": {"enabled": {"type": "boolean"}},
-                "additionalProperties": False,
-                "type": "object",
-                "required": ["enabled"],
-            },
-            "AccessOperationCapabilities": {
-                "properties": {"skill_publication": {"$ref": "#/components/schemas/AccessOperationCapability"}},
-                "additionalProperties": False,
-                "type": "object",
-                "required": ["skill_publication"],
             },
             "AccessMeResponse": {
                 "properties": {
@@ -2055,18 +2084,10 @@ OPENAPI_SCHEMA: dict[str, JsonValue] = {
                         "items": {"$ref": "#/components/schemas/ArtifactFamilyAccessCapability"},
                         "type": "array",
                     },
-                    "operation_capabilities": {"$ref": "#/components/schemas/AccessOperationCapabilities"},
                 },
                 "additionalProperties": False,
                 "type": "object",
-                "required": [
-                    "principal",
-                    "mode",
-                    "resource_kinds",
-                    "provider_capabilities",
-                    "artifact_families",
-                    "operation_capabilities",
-                ],
+                "required": ["principal", "mode", "resource_kinds", "provider_capabilities", "artifact_families"],
             },
             "AccessAction": {
                 "type": "string",
@@ -2079,10 +2100,11 @@ OPENAPI_SCHEMA: dict[str, JsonValue] = {
                     "scope.delegate",
                     "scope.admin",
                     "artifact.read",
-                    "handoff.evidence.read",
+                    "artifact.write",
+                    "artifact.share",
+                    "handoff.evidence.inspect",
                     "handoff.acknowledge",
                     "prompt.use",
-                    "skill.publish",
                 ],
             },
             "AccessResourceType": {"type": "string", "enum": ["server", "scope", "artifact"]},
@@ -2113,22 +2135,25 @@ OPENAPI_SCHEMA: dict[str, JsonValue] = {
                 "properties": {
                     "type": {"type": "string", "enum": ["memory_entry"]},
                     "entry_id": {"type": "string", "maxLength": 128, "minLength": 1, "pattern": "^[\\x21-\\x7E]+$"},
-                    "entry_version_id": {
-                        "type": "string",
-                        "maxLength": 128,
-                        "minLength": 1,
-                        "pattern": "^[\\x21-\\x7E]+$",
-                    },
                 },
                 "additionalProperties": False,
                 "type": "object",
-                "required": ["type", "entry_id", "entry_version_id"],
+                "required": ["type", "entry_id"],
+            },
+            "AccessArtifactIdentity": {
+                "properties": {
+                    "family": {"type": "string", "maxLength": 128, "minLength": 1, "pattern": "^[\\x21-\\x7E]+$"},
+                    "artifact_id": {"type": "string", "maxLength": 128, "minLength": 1, "pattern": "^[\\x21-\\x7E]+$"},
+                },
+                "additionalProperties": False,
+                "type": "object",
+                "required": ["family", "artifact_id"],
             },
             "ArtifactAccessResource": {
                 "properties": {
                     "type": {"type": "string", "enum": ["artifact"]},
                     "scope_id": {"type": "string", "maxLength": 256, "minLength": 1, "pattern": ".*\\S.*"},
-                    "reference": {"$ref": "#/components/schemas/ArtifactReference"},
+                    "identity": {"$ref": "#/components/schemas/AccessArtifactIdentity"},
                     "selector": {
                         "allOf": [{"$ref": "#/components/schemas/MemoryEntryAccessSelector"}],
                         "nullable": True,
@@ -2136,7 +2161,7 @@ OPENAPI_SCHEMA: dict[str, JsonValue] = {
                 },
                 "additionalProperties": False,
                 "type": "object",
-                "required": ["type", "scope_id", "reference", "selector"],
+                "required": ["type", "scope_id", "identity"],
             },
             "AccessResource": {
                 "oneOf": [
@@ -2157,11 +2182,10 @@ OPENAPI_SCHEMA: dict[str, JsonValue] = {
                 "properties": {
                     "allowed": {"type": "boolean"},
                     "reason_code": {"type": "string", "maxLength": 64, "minLength": 1},
-                    "policy_revision": {"type": "string", "maxLength": 64, "minLength": 1, "nullable": True},
                 },
                 "additionalProperties": False,
                 "type": "object",
-                "required": ["allowed", "reason_code", "policy_revision"],
+                "required": ["allowed", "reason_code"],
             },
             "AccessCheckRequest": {
                 "properties": {
@@ -2230,7 +2254,7 @@ OPENAPI_SCHEMA: dict[str, JsonValue] = {
                     "handoff.receiver",
                     "artifact.viewer",
                     "prompt.user",
-                    "skill.publisher",
+                    "artifact.owner",
                     "scope.viewer",
                     "scope.contributor",
                     "scope.reviewer",
@@ -2242,7 +2266,8 @@ OPENAPI_SCHEMA: dict[str, JsonValue] = {
             },
             "ListAccessRolesRequest": {
                 "properties": {
-                    "resource_type": {"allOf": [{"$ref": "#/components/schemas/AccessResourceType"}], "nullable": True}
+                    "resource_type": {"allOf": [{"$ref": "#/components/schemas/AccessResourceType"}], "nullable": True},
+                    "family": {"type": "string", "maxLength": 128, "minLength": 1, "nullable": True},
                 },
                 "additionalProperties": False,
                 "type": "object",
@@ -2256,10 +2281,22 @@ OPENAPI_SCHEMA: dict[str, JsonValue] = {
                         "items": {"type": "string", "maxLength": 128, "minLength": 1},
                         "type": "array",
                     },
+                    "assignable_subject_types": {
+                        "items": {"type": "string", "enum": ["user", "service", "group"]},
+                        "type": "array",
+                    },
+                    "system_managed": {"type": "boolean"},
                 },
                 "additionalProperties": False,
                 "type": "object",
-                "required": ["role", "resource_type", "actions", "artifact_families"],
+                "required": [
+                    "role",
+                    "resource_type",
+                    "actions",
+                    "artifact_families",
+                    "assignable_subject_types",
+                    "system_managed",
+                ],
             },
             "AccessRolePage": {
                 "properties": {
@@ -2277,7 +2314,7 @@ OPENAPI_SCHEMA: dict[str, JsonValue] = {
             "AccessBinding": {
                 "properties": {
                     "binding_id": {"type": "string", "maxLength": 64, "minLength": 1},
-                    "subject": {"$ref": "#/components/schemas/AccessPrincipal"},
+                    "subject": {"$ref": "#/components/schemas/AccessSubject"},
                     "resource": {"$ref": "#/components/schemas/AccessResource"},
                     "role": {"$ref": "#/components/schemas/AccessRole"},
                     "granted_by": {"$ref": "#/components/schemas/AccessPrincipal"},
@@ -2312,24 +2349,33 @@ OPENAPI_SCHEMA: dict[str, JsonValue] = {
             },
             "ListAccessBindingsRequest": {
                 "properties": {
-                    "subject": {"allOf": [{"$ref": "#/components/schemas/AccessPrincipal"}], "nullable": True},
-                    "resource": {"allOf": [{"$ref": "#/components/schemas/AccessResource"}], "nullable": True},
-                    "include_revoked": {"type": "boolean", "default": False},
+                    "management_resource": {"$ref": "#/components/schemas/AccessResource"},
+                    "subject": {"allOf": [{"$ref": "#/components/schemas/AccessSubject"}], "nullable": True},
+                    "role": {"allOf": [{"$ref": "#/components/schemas/AccessRole"}], "nullable": True},
+                    "state": {"allOf": [{"$ref": "#/components/schemas/AccessBindingState"}], "nullable": True},
+                    "cursor": {"type": "string", "maxLength": 2048, "nullable": True},
+                    "limit": {"type": "integer", "maximum": 500.0, "minimum": 1.0, "default": 100},
                 },
                 "additionalProperties": False,
                 "type": "object",
+                "required": ["management_resource"],
             },
             "AccessBindingPage": {
                 "properties": {
-                    "items": {"items": {"$ref": "#/components/schemas/AccessBinding"}, "type": "array", "maxItems": 500}
+                    "items": {
+                        "items": {"$ref": "#/components/schemas/AccessBinding"},
+                        "type": "array",
+                        "maxItems": 500,
+                    },
+                    "next_cursor": {"type": "string", "maxLength": 2048, "nullable": True},
                 },
                 "additionalProperties": False,
                 "type": "object",
-                "required": ["items"],
+                "required": ["items", "next_cursor"],
             },
             "CreateAccessBindingRequest": {
                 "properties": {
-                    "subject": {"$ref": "#/components/schemas/AccessPrincipal"},
+                    "subject": {"$ref": "#/components/schemas/AccessSubject"},
                     "resource": {"$ref": "#/components/schemas/AccessResource"},
                     "role": {"$ref": "#/components/schemas/AccessRole"},
                     "idempotency_key": {"type": "string", "maxLength": 255, "minLength": 1},
@@ -2344,25 +2390,62 @@ OPENAPI_SCHEMA: dict[str, JsonValue] = {
                 "properties": {
                     "binding_id": {"type": "string", "maxLength": 64, "minLength": 1},
                     "expected_version": {"type": "integer", "minimum": 1.0},
+                    "idempotency_key": {"type": "string", "maxLength": 255, "minLength": 1},
                 },
                 "additionalProperties": False,
                 "type": "object",
-                "required": ["binding_id", "expected_version"],
+                "required": ["binding_id", "expected_version", "idempotency_key"],
+            },
+            "ReassignHandoffReceiverRequest": {
+                "properties": {
+                    "binding_id": {"type": "string", "maxLength": 64, "minLength": 1},
+                    "expected_version": {"type": "integer", "minimum": 1.0},
+                    "subject": {"$ref": "#/components/schemas/AccessPrincipal"},
+                    "expires_at": {"type": "string", "format": "date-time", "nullable": True},
+                    "reason": {"type": "string", "maxLength": 1024, "nullable": True},
+                    "idempotency_key": {"type": "string", "maxLength": 255, "minLength": 1},
+                },
+                "additionalProperties": False,
+                "type": "object",
+                "required": ["binding_id", "expected_version", "subject", "idempotency_key"],
+            },
+            "HandoffReceiverReassignment": {
+                "properties": {
+                    "revoked_binding": {"$ref": "#/components/schemas/AccessBinding"},
+                    "created_binding": {"$ref": "#/components/schemas/AccessBinding"},
+                },
+                "additionalProperties": False,
+                "type": "object",
+                "required": ["revoked_binding", "created_binding"],
             },
             "ListAccessAuditRequest": {
                 "properties": {
-                    "scope_id": {
-                        "type": "string",
-                        "maxLength": 256,
-                        "minLength": 1,
-                        "pattern": ".*\\S.*",
-                        "nullable": True,
+                    "resource": {
+                        "oneOf": [
+                            {"$ref": "#/components/schemas/ServerAccessResource"},
+                            {"$ref": "#/components/schemas/ScopeAccessResource"},
+                        ],
+                        "discriminator": {"propertyName": "type"},
                     },
-                    "after": {"type": "integer", "minimum": 0.0, "nullable": True},
+                    "action": {"allOf": [{"$ref": "#/components/schemas/AccessAction"}], "nullable": True},
+                    "subject": {"allOf": [{"$ref": "#/components/schemas/AccessSubject"}], "nullable": True},
+                    "result": {"type": "string", "enum": ["allowed", "denied"], "nullable": True},
+                    "time_range": {"allOf": [{"$ref": "#/components/schemas/AccessAuditTimeRange"}], "nullable": True},
+                    "cursor": {"type": "string", "maxLength": 2048, "nullable": True},
                     "limit": {"type": "integer", "maximum": 500.0, "minimum": 1.0, "default": 100},
                 },
                 "additionalProperties": False,
                 "type": "object",
+                "required": ["resource"],
+            },
+            "AccessAuditTimeRange": {
+                "properties": {
+                    "start": {"type": "string", "format": "date-time"},
+                    "end": {"type": "string", "format": "date-time"},
+                },
+                "additionalProperties": False,
+                "type": "object",
+                "required": ["start", "end"],
             },
             "AccessAuditEvent": {
                 "properties": {
@@ -2377,10 +2460,13 @@ OPENAPI_SCHEMA: dict[str, JsonValue] = {
                     "resource": {"$ref": "#/components/schemas/AccessResource"},
                     "allowed": {"type": "boolean"},
                     "reason_code": {"type": "string", "maxLength": 64, "minLength": 1},
-                    "policy_revision": {"type": "string", "maxLength": 64, "nullable": True},
+                    "policy_revision": {"type": "string", "maxLength": 64, "minLength": 1, "nullable": True},
+                    "matched_subject": {"allOf": [{"$ref": "#/components/schemas/AccessSubject"}], "nullable": True},
                     "binding_id": {"type": "string", "maxLength": 64, "nullable": True},
-                    "target": {"allOf": [{"$ref": "#/components/schemas/AccessPrincipal"}], "nullable": True},
+                    "target": {"allOf": [{"$ref": "#/components/schemas/AccessSubject"}], "nullable": True},
                     "role": {"allOf": [{"$ref": "#/components/schemas/AccessRole"}], "nullable": True},
+                    "expected_version": {"type": "integer", "minimum": 1.0, "nullable": True},
+                    "result_version": {"type": "integer", "minimum": 1.0, "nullable": True},
                 },
                 "additionalProperties": False,
                 "type": "object",
@@ -2397,9 +2483,12 @@ OPENAPI_SCHEMA: dict[str, JsonValue] = {
                     "allowed",
                     "reason_code",
                     "policy_revision",
+                    "matched_subject",
                     "binding_id",
                     "target",
                     "role",
+                    "expected_version",
+                    "result_version",
                 ],
             },
             "AccessAuditPage": {
@@ -2409,7 +2498,7 @@ OPENAPI_SCHEMA: dict[str, JsonValue] = {
                         "type": "array",
                         "maxItems": 500,
                     },
-                    "next_cursor": {"type": "integer", "minimum": 1.0, "nullable": True},
+                    "next_cursor": {"type": "string", "maxLength": 2048, "nullable": True},
                 },
                 "additionalProperties": False,
                 "type": "object",
