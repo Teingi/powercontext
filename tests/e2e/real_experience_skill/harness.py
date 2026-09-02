@@ -39,7 +39,7 @@ from typing import Any, Never
 
 import uvicorn
 from dotenv import load_dotenv
-from sqlalchemy import bindparam, text
+from sqlalchemy import bindparam, inspect, text
 
 from powercontext.builtin.artifacts.experience import ExperienceCandidateInput, ExperienceContent
 from powercontext.builtin.artifacts.skill import CodexSkillRoot
@@ -2083,7 +2083,7 @@ async def _discover_harness_scopes(database: DatabaseConfig) -> tuple[str, ...]:
     async def discover(profile: OceanBaseProfile | SeekDBProfile | SQLiteProfile) -> tuple[str, ...]:
         scopes: set[str] = set()
         async with profile.database.transaction() as connection:
-            for table_name in _SCOPE_TABLES:
+            for table_name in await _existing_scope_tables(connection):
                 statement = text(
                     f"SELECT DISTINCT scope_id FROM {table_name} WHERE scope_id LIKE :prefix"  # noqa: S608
                 )
@@ -2128,9 +2128,10 @@ async def _purge_database_scopes(
 ) -> dict[str, object]:
     async def purge(profile: OceanBaseProfile | SeekDBProfile | SQLiteProfile) -> dict[str, object]:
         async with profile.database.transaction() as connection:
-            before = await _scope_counts(connection, scopes)
+            tables = await _existing_scope_tables(connection)
+            before = await _scope_counts(connection, scopes, tables=tables)
             if scopes:
-                for table_name in _SCOPE_TABLES:
+                for table_name in tables:
                     statement = text(
                         f"DELETE FROM {table_name} WHERE scope_id IN :scope_ids"  # noqa: S608
                     ).bindparams(bindparam("scope_ids", expanding=True))
@@ -2164,11 +2165,22 @@ async def _purge_database_scopes(
         return await purge(profile)
 
 
-async def _scope_counts(connection: Any, scopes: tuple[str, ...]) -> dict[str, dict[str, int]]:
+async def _existing_scope_tables(connection: Any) -> tuple[str, ...]:
+    table_names = set(await connection.run_sync(lambda sync_connection: inspect(sync_connection).get_table_names()))
+    return tuple(table_name for table_name in _SCOPE_TABLES if table_name in table_names)
+
+
+async def _scope_counts(
+    connection: Any,
+    scopes: tuple[str, ...],
+    *,
+    tables: tuple[str, ...] | None = None,
+) -> dict[str, dict[str, int]]:
     counts = {scope: dict.fromkeys(_SCOPE_TABLES, 0) for scope in scopes}
     if not scopes:
         return counts
-    for table_name in _SCOPE_TABLES:
+    existing_tables = await _existing_scope_tables(connection) if tables is None else tables
+    for table_name in existing_tables:
         statement = text(
             f"SELECT scope_id, COUNT(*) FROM {table_name} "  # noqa: S608
             "WHERE scope_id IN :scope_ids GROUP BY scope_id"
