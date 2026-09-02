@@ -41,7 +41,7 @@ PowerContext 当前主要按领域动作暴露接口，例如 Source capture、M
 
 - 直接以 Source 与 Artifact 建模，不增加统一上层概念。
 - 保持 Source 无 Revision、Artifact 的精确引用必须包含 Revision。
-- 让新增基础 Source API 的字段名与领域模型 `SourceRef.source_type` 一致，同时不修改任何既有 API schema。
+- 让新增基础 Source API 直接使用扁平的 `scope_id`、`source_type`、`source_id` 身份字段，同时不修改任何既有 API schema。
 - 为未来 Artifact Family 提供固定的基础 API surface。
 - 使用 REST 风格的名词路径和 HTTP 方法。
 - 保留现有领域命令及 Candidate Review 边界。
@@ -62,10 +62,11 @@ PowerContext 当前主要按领域动作暴露接口，例如 Source capture、M
 
 ## Source
 
-Source 是耐久证据。新增基础 API 中，`scope_id` 与 `source_ref` 共同表达完整身份：
+Source 是耐久证据。新增基础 API 中，完整身份直接由 `(scope_id, source_type, source_id)` 联合构成：
 
 ```json
 {
+  "scope_id": "scp_01j8m4v2n7q9x3k6c5t0b1d2ef",
   "source_type": "content",
   "source_id": "src_01J..."
 }
@@ -85,11 +86,12 @@ Source 是耐久证据。新增基础 API 中，`scope_id` 与 `source_ref` 共�
 }
 ```
 
-新增基础 API 的 `source_ref` transport shape 直接使用 `{source_type, source_id}`，完整引用仍是 response 顶层的
-`scope_id` 与 `source_ref` 组合。该 shape 只属于本 RFC 新增的 schema，不修改既有 HTTP reference schema。
+Source 基础 API 的 path parameter、`SourceRecord`、`SourceSummary` 和 `SourceSearchHit` 均直接使用扁平的
+`scope_id`、`source_type`、`source_id`，不定义额外的引用 envelope。该约定只适用于本 RFC 新增的 schema，
+不修改既有 HTTP reference schema。
 
 新的 `POST /v1/scopes/{scope_id}/sources/{source_type}` 不接受调用方指定 `source_id`，而由服务端生成 opaque
-`source_id`，并在 `SourceRecord.source_ref` 与 `Location` 中返回。
+`source_id`，并在 `SourceRecord.source_id` 与 `Location` 中返回。
 
 Source 没有 Revision。本 RFC 不提供 Source Replace/Delete：
 
@@ -237,8 +239,8 @@ Artifact lifecycle head 的联合唯一键是 `(scope_id, family, artifact_id)`�
 - 子对象使用子集合表达；
 - List 返回 typed items 和分页元数据；
 - `PUT` 只接受完整 replacement；Artifact Replace/Delete 必须通过 `If-Match` 携带当前 head 的 ETag，不能静默覆盖并发写入；
-- 新增基础 API 的 response 复用领域 `SourceRef`、`ArtifactReference`、Artifact Revision 和 Source journal
-  position 的语义，但不修改既有 HTTP schema；
+- 新增 Source 基础 API 的 response 直接返回扁平身份字段；Artifact response 继续复用 `ArtifactReference`、
+  Artifact Revision 和 Source journal position 的语义，但不修改既有 HTTP schema；
 - Create 与 List 的 path 包含联合唯一键前缀：Source 使用 `scope_id + source_type`，Artifact 使用
   `scope_id + family`；
 - 具名 Source path 包含 `scope_id + source_type + source_id`；Artifact head path 包含
@@ -261,10 +263,8 @@ Artifact lifecycle head 的联合唯一键是 `(scope_id, family, artifact_id)`�
 ```json
 {
   "scope_id": "scp_01j8m4v2n7q9x3k6c5t0b1d2ef",
-  "source_ref": {
-    "source_type": "content",
-    "source_id": "src_01J..."
-  },
+  "source_type": "content",
+  "source_id": "src_01J...",
   "content": "退款流程必须保留人工复核。",
   "metadata": {
     "title": "退款流程约束",
@@ -281,7 +281,8 @@ Artifact lifecycle head 的联合唯一键是 `(scope_id, family, artifact_id)`�
   "schema": "SourceRecord",
   "field_semantics": {
     "scope_id": "Source 所属 Scope；所有 Get、List、Search 必须显式关联",
-    "source_ref": "本 RFC 新增基础 API 使用的 scope-local SourceRef；包含 source_type + source_id，不包含 Revision",
+    "source_type": "稳定 Source 类型，也是联合身份的一部分",
+    "source_id": "Source type 内的稳定 opaque ID，也是联合身份的一部分；没有 Revision",
     "content": "Source type 对应的权威内容；content type 首期为 string",
     "metadata": "来源、标题、媒体类型等 Source-specific 元数据；保持可扩展对象",
     "created_at": "服务端耐久接收时间",
@@ -329,7 +330,7 @@ Artifact lifecycle head 的联合唯一键是 `(scope_id, family, artifact_id)`�
     "schema_version": "Family content schema 版本",
     "metadata": "标题、标签等非内容字段；具体约束由 Family 定义",
     "content": "Family-specific JSON content",
-    "source_refs": "直接 Source evidence；每项使用本 RFC 的 scope-local SourceRef shape",
+    "source_refs": "直接 Source evidence；每项包含 source_type 与 source_id，并在当前 scope_id 内定位 Source",
     "artifact_refs": "直接 Artifact evidence，必须是精确 ArtifactReference",
     "created_at": "当前 Revision 的提交时间",
     "content_digest": "当前 Revision canonical content 的摘要"
@@ -451,10 +452,8 @@ List 与 Search 使用不同 path、operationId 和 response schema。`GET
     },
     "body": {
       "scope_id": "scp_01j8m4v2n7q9x3k6c5t0b1d2ef",
-      "source_ref": {
-        "source_type": "content",
-        "source_id": "src_01J..."
-      },
+      "source_type": "content",
+      "source_id": "src_01J...",
       "content": "退款流程必须保留人工复核。",
       "metadata": {
         "title": "退款流程约束",
@@ -486,7 +485,7 @@ List 与 Search 使用不同 path、operationId 和 response schema。`GET
 `Location` 与 `position`，不追加 journal；相同 key 对应不同 canonical request 时返回
 `409 idempotency_conflict`。该绑定与 Source 一样耐久，不允许在同一 Scope 和 Source type 下复用 key 创建另一条 Source。
 
-`Idempotency-Key` 只控制 Create 重试，不写入 `source_ref`，也不参与后续 Get/List/Search。服务端不得按
+`Idempotency-Key` 只控制 Create 重试，不作为 Source 返回字段，也不参与后续 Get/List/Search。服务端不得按
 `content_digest` 自动合并 Source，因为内容相同的两次写入可能代表两条不同证据。
 
 ## Source Get 定义与示例
@@ -515,10 +514,8 @@ List 与 Search 使用不同 path、operationId 和 response schema。`GET
     "schema": "SourceRecord",
     "body": {
       "scope_id": "scp_01j8m4v2n7q9x3k6c5t0b1d2ef",
-      "source_ref": {
-        "source_type": "content",
-        "source_id": "src_01J..."
-      },
+      "source_type": "content",
+      "source_id": "src_01J...",
       "content": "退款流程必须保留人工复核。",
       "metadata": {
         "title": "退款流程约束",
@@ -575,10 +572,8 @@ List 与 Search 使用不同 path、operationId 和 response schema。`GET
       "items": [
         {
           "scope_id": "scp_01j8m4v2n7q9x3k6c5t0b1d2ef",
-          "source_ref": {
-            "source_type": "content",
-            "source_id": "src_01J..."
-          },
+          "source_type": "content",
+          "source_id": "src_01J...",
           "metadata": {
             "title": "退款流程约束"
           },
@@ -649,10 +644,9 @@ List 与 Search 使用不同 path、operationId 和 response schema。`GET
         "mode": "keyword",
         "hits": [
           {
-            "source_ref": {
-              "source_type": "content",
-              "source_id": "src_01J..."
-            },
+            "scope_id": "scp_01j8m4v2n7q9x3k6c5t0b1d2ef",
+            "source_type": "content",
+            "source_id": "src_01J...",
             "metadata": {
               "title": "退款流程约束"
             },
@@ -670,10 +664,9 @@ List 与 Search 使用不同 path、operationId 和 response schema。`GET
         "mode": null,
         "hits": [
           {
-            "source_ref": {
-              "source_type": "content",
-              "source_id": "src_01J..."
-            },
+            "scope_id": "scp_01j8m4v2n7q9x3k6c5t0b1d2ef",
+            "source_type": "content",
+            "source_id": "src_01J...",
             "metadata": {
               "title": "退款流程约束"
             },
@@ -1507,7 +1500,6 @@ lineage 和授权结果，不能建立第二份业务数据或独立身份空间
 {
   "contract_source": "openapi/powercontext.yaml",
   "schemas": [
-    "SourceRef",
     "SourceRecord",
     "CreateSourceRequest",
     "SourceSummary",
@@ -1541,7 +1533,8 @@ Runtime 中已注册的 schema 校验；generated Client 将其暴露为 JSON ob
 
 # Implementation plan
 
-1. 在 OpenAPI 中为新增基础 API 增加 `{source_type, source_id}` 结构的 `SourceRef`，不修改既有 HTTP schema。
+1. 在 OpenAPI 中让 `SourceRecord`、`SourceSummary` 与 `SourceSearchHit` 直接包含 `scope_id`、`source_type`、
+   `source_id`，不增加 Source 引用 envelope，也不修改既有 HTTP schema。
 2. 增加要求 `Idempotency-Key` 且由服务端生成 `source_id` 的
    `POST /v1/scopes/{scope_id}/sources/{source_type}`，以及使用同一联合键前缀的 Source Get/List 和 Scope-bound Search。
 3. 增加按 `(scope_id, family, artifact_id[, revision])` 定位的 Artifact create、head get、exact revision get、list、
