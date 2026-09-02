@@ -35,11 +35,7 @@ from powercontext.server.authz.models import (
     PrincipalRef,
     ResourceRef,
 )
-from powercontext.server.authz.repository import (
-    ACCESS_TABLES,
-    RelationalAccessRepository,
-    ensure_access_policy_revision_columns,
-)
+from powercontext.server.authz.repository import ACCESS_TABLES, RelationalAccessRepository
 from powercontext.server.authz.service import (
     AccessControlService,
     AccessProviderCapabilities,
@@ -120,8 +116,6 @@ async def _open_access_repository(
     else:
         raise BuiltinConfigurationError("database")
     async with profile_context as profile:
-        async with profile.database.transaction() as connection:
-            await ensure_access_policy_revision_columns(connection)
         yield RelationalAccessRepository(profile.database)
 
 

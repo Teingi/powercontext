@@ -12,12 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Dialect-neutral persistence for terminal Access relationships.
-
-The table names intentionally describe the final relationship model instead of
-reusing the earlier experimental, revision-bound schema. This lets an operator
-evaluate the unmerged implementation without altering obsolete Access tables.
-"""
+"""Dialect-neutral persistence for terminal Access relationships."""
 
 from __future__ import annotations
 
@@ -173,6 +168,9 @@ ACCESS_AUDIT_EVENTS_TABLE = Table(
     Column("principal_type", identity_string(16), nullable=False),
     Column("principal_id", identity_string(255), nullable=False),
     Column("principal_description", Text),
+    Column("actor_type", identity_string(16)),
+    Column("actor_id", identity_string(255)),
+    Column("actor_description", Text),
     Column("action", identity_string(64), nullable=False),
     Column("resource_type", identity_string(16), nullable=False),
     Column("deployment_id", identity_string(128)),
@@ -206,10 +204,6 @@ ACCESS_TABLES = (
     ACCESS_AUDIT_EVENTS_TABLE,
 )
 _POLICY_HEAD = "authorization"
-
-
-async def ensure_access_policy_revision_columns(_connection: object, /) -> None:
-    """Keep the composition hook; the terminal schema needs no in-place migration."""
 
 
 class RelationalAccessRepository:
@@ -921,6 +915,7 @@ def _audit_row(event: AccessAuditEvent) -> dict[str, object | None]:
         "transport": event.transport,
         "operation": event.operation,
         **_subject_row("principal", event.principal),
+        **_optional_subject_row("actor", event.actor),
         "action": event.action.value,
         **_resource_row(event.resource),
         "allowed": event.allowed,
@@ -944,6 +939,7 @@ def _decode_audit(row: Mapping[Any, Any]) -> AccessAuditEvent:
         transport=str(row["transport"]),
         operation=str(row["operation"]),
         principal=_principal(row, "principal"),
+        actor=_optional_principal(row, "actor"),
         action=AccessAction(str(row["action"])),
         resource=_decode_resource(row),
         allowed=bool(row["allowed"]),
@@ -1049,4 +1045,4 @@ def _digest(value: str) -> str:
     return sha256(value.encode("utf-8")).hexdigest()
 
 
-__all__ = ("ACCESS_TABLES", "RelationalAccessRepository", "ensure_access_policy_revision_columns")
+__all__ = ("ACCESS_TABLES", "RelationalAccessRepository")

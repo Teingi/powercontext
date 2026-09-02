@@ -70,6 +70,15 @@ class _FailingAuthenticationProvider:
         return ProviderReadiness(ready=False)
 
 
+class _ActingAuthenticationProvider:
+    async def authenticate(self, request) -> AuthenticationResult:
+        del request
+        return AuthenticationResult(subject=BOB, actor=ADMIN, credential_id="delegated-test")
+
+    async def readiness(self) -> ProviderReadiness:
+        return ProviderReadiness(ready=True)
+
+
 def test_enforced_mode_cannot_silently_start_without_authentication_or_provider() -> None:
     with pytest.raises(ValueError, match="requires authentication and authorization Providers"):
         ServerSettings(access=AccessControlConfig(mode="enforced"))
@@ -192,6 +201,56 @@ def test_access_audit_time_range_filters_results_and_binds_the_cursor() -> None:
                     json=payload | {"time_range": {"start": now.isoformat(), "end": now.isoformat()}},
                 )
                 assert invalid.status_code == 422
+
+    asyncio.run(scenario())
+
+
+def test_access_audit_persists_the_trusted_actor_separately_from_the_subject() -> None:
+    async def scenario() -> None:
+        async with SQLiteProfile.open(SQLiteConfig(), tables=ACCESS_TABLES) as profile:
+            repository = RelationalAccessRepository(profile.database)
+            await _seed_admin(repository)
+            service = AccessControlService(
+                BuiltinAuthorizationProvider(repository),
+                relationships=repository,
+                audit=repository,
+            )
+            provider = _ActingAuthenticationProvider()
+            app = create_app(
+                access_control=service,
+                authentication_provider=provider,
+                middleware=(Middleware(AuthenticationMiddleware, provider=provider),),
+            )
+            async with _client(app) as client:
+                checked = await client.post(
+                    "/v1/access/check",
+                    headers=_auth("delegated-token"),
+                    json={
+                        "action": "scope.read",
+                        "resource": {"type": "scope", "scope_id": "scope-a"},
+                    },
+                )
+                assert checked.status_code == 200
+
+            admin_app = _app(service, principal=ADMIN, token="admin-token")  # noqa: S106 - test credential.
+            async with _client(admin_app) as admin:
+                audit = await admin.post(
+                    "/v1/access/audit/list",
+                    headers=_auth("admin-token"),
+                    json={
+                        "resource": {"type": "scope", "scope_id": "scope-a"},
+                        "subject": {"type": "user", "id": "bob"},
+                    },
+                )
+            assert audit.status_code == 200, audit.json()
+            assert len(audit.json()["items"]) == 1
+            event = audit.json()["items"][0]
+            assert event["principal"] == {"type": "user", "id": "bob", "description": None}
+            assert event["actor"] == {
+                "type": "service",
+                "id": "admin",
+                "description": "deployment administrator",
+            }
 
     asyncio.run(scenario())
 

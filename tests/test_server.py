@@ -333,6 +333,7 @@ def test_server_factory_optionally_requires_bearer_authentication() -> None:
             auth=AuthenticationConfig(provider="static-bearer", token=SecretStr("server-secret")),
             access=AccessControlConfig(mode="enforced"),
             authorization_provider="builtin",
+            database=SQLiteConfig(),
             mcp=McpConfig(enabled=False),
         )
     )

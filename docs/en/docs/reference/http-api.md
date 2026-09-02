@@ -124,7 +124,8 @@ scope role allows it. Use `/v1/access/me` to
 verify which Principal the deployment established, `/v1/access/check` for one decision, and
 `/v1/access/resources/list` for a non-discovering list of already visible resources. Creation is idempotent per
 grantor and key; revocation uses `binding_id` plus `expected_version`. Relationship and decision events are available
-to Server administrators through `/v1/access/audit/list`.
+to Server administrators through `/v1/access/audit/list`. When authentication establishes delegated execution, each
+audit event keeps the effective `principal` and the trusted `actor` as separate opaque identities.
 
 The Access wire contract has only three Resource Kinds: `server`, `scope`, and `artifact`. An Artifact Resource uses
 the logical identity `{family, artifact_id}` and deliberately contains no Revision. Memory can narrow a grant with a

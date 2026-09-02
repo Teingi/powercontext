@@ -370,6 +370,7 @@ class AccessAuditEvent(BaseModel):
     transport: Annotated[StrictStr, Field(max_length=16, min_length=1)]
     operation: Annotated[StrictStr, Field(max_length=128, min_length=1)]
     principal: AccessPrincipal
+    actor: Annotated[AccessPrincipal | None, Field(...)]
     action: AccessAction
     resource: AccessResource
     allowed: StrictBool

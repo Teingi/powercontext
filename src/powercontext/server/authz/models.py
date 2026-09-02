@@ -325,6 +325,7 @@ class AccessAuditEvent:
     transport: str
     operation: str
     principal: PrincipalRef
+    actor: PrincipalRef | None
     action: AccessAction
     resource: ResourceRef
     allowed: bool

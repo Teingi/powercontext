@@ -2742,6 +2742,7 @@ components:
         - transport
         - operation
         - principal
+        - actor
         - action
         - resource
         - allowed
@@ -2762,6 +2763,10 @@ components:
         operation: {type: string, minLength: 1, maxLength: 128}
         principal:
           $ref: "#/components/schemas/AccessPrincipal"
+        actor:
+          allOf:
+            - $ref: "#/components/schemas/AccessPrincipal"
+          nullable: true
         action:
           $ref: "#/components/schemas/AccessAction"
         resource:

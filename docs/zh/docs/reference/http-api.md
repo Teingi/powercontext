@@ -114,7 +114,8 @@ curl --fail \
 接收者可以读取和确认这个 Handoff 的历史、当前及未来 Revision；除非另有 scope role，否则不能在 scope 范围发现
 latest Handoff、读取其他 Handoff，也不能访问父 scope 的 Memory。用 `/v1/access/me` 确认部署建立的 Principal，用 `/v1/access/check` 检查一个决策，
 用 `/v1/access/resources/list` 非发现式地列出已经可见的资源。创建操作按授权者与幂等键保证幂等；撤销时必须提交
-`binding_id` 和 `expected_version`。Server 管理员可通过 `/v1/access/audit/list` 查看关系变更与决策事件。
+`binding_id` 和 `expected_version`。Server 管理员可通过 `/v1/access/audit/list` 查看关系变更与决策事件。认证层确认代办执行时，
+每条审计事件会把 effective `principal` 与可信 `actor` 记录为两个独立的 opaque identity。
 
 Access wire contract 只使用 `server`、`scope` 和 `artifact` 三种 Resource Kind。Artifact Resource 使用逻辑 identity
 `{family, artifact_id}`，刻意不包含 Revision；Memory 可使用仅含 `entry_id` 的 `memory_entry` selector 缩小授权单位。

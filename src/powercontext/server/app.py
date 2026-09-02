@@ -2438,6 +2438,7 @@ def _access_audit_response(value: AccessAuditEvent) -> TransportAccessAuditEvent
         transport=value.transport,
         operation=value.operation,
         principal=_access_principal_response(value.principal),
+        actor=None if value.actor is None else _access_principal_response(value.actor),
         action=TransportAccessAction(value.action.value),
         resource=_access_resource_response(value.resource),
         allowed=value.allowed,
