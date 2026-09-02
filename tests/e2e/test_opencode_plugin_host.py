@@ -85,6 +85,8 @@ def test_opencode_run_normalizes_prompt_before_recall_and_capture(tmp_path: Path
             path = tmp_path / name
             path.mkdir()
             env[f"XDG_{name.upper()}_HOME"] = str(path)
+        temp_directory = tmp_path / "tmp"
+        temp_directory.mkdir()
         installed_plugin = tmp_path / "config" / "opencode" / "plugins" / "powercontext-opencode.js"
         installed_plugin.parent.mkdir(parents=True)
         copyfile(plugin, installed_plugin)
@@ -94,6 +96,7 @@ def test_opencode_run_normalizes_prompt_before_recall_and_capture(tmp_path: Path
             "OPENCODE_TEST_HOME": str(tmp_path),
             "POWERCONTEXT_OPENCODE_BASE_URL": f"http://127.0.0.1:{server.server_port}",
             "POWERCONTEXT_OPENCODE_SCOPE_ID": "project:test",
+            "TMPDIR": str(temp_directory),
         })
         process = subprocess.Popen(
             [
