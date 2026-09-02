@@ -11,16 +11,19 @@
 
 API 直接复用 PowerContext 已有的 Source、Artifact、Artifact Revision 和 Scope 语义，不增加二者之上的统一对象概念，不增加统一 selector、联合引用、统一 envelope、类型注册接口或跨类型 List/Search。Scope 的创建、查询、组织与 binding 由 [PR #1401](https://github.com/oceanbase/powercontext/pull/1401) 定义，本 RFC 只把调用方已经取得的 `scope_id` 作为 Source/Artifact 请求边界。
 
-写入和生成仍是两个独立提交边界。Source Create 只返回 Source 的耐久写入结果，不携带生成参数或联合生成结果。需要“写入 Source 后立即生成 Memory 并等待结果”的调用方，顺序调用 `POST /v1/sources` 与现有 `POST /v1/memory/flush` 即可。
+写入和生成仍是两个独立提交边界。Source Create 只返回 Source 的耐久写入结果，不携带生成参数或联合生成结果。需要“写入 Source 后立即生成 Memory 并等待结果”的调用方，顺序调用
+`POST /v1/scopes/{scope_id}/sources/{source_type}` 与现有 `POST /v1/memory/flush` 即可。
 
 接口遵守以下约定：
 
-- Source 资源路径固定为 `/v1/sources`，Artifact 资源路径固定为 `/v1/artifacts`，搜索结果路径固定为
-  `/v1/source-search-results` 与 `/v1/artifact-search-results`；
+- Source 资源位于 `/v1/scopes/{scope_id}/sources/{source_type}`，Artifact 资源位于
+  `/v1/scopes/{scope_id}/artifacts/{family}`；具名对象 URI 继续追加 `source_id` 或 `artifact_id`；
+- Search 使用 Scope 下独立的 `/v1/scopes/{scope_id}/source-search-results` 与
+  `/v1/scopes/{scope_id}/artifact-search-results` 结果集合；
 - `GET` 用于读取、列举和搜索，`POST` 用于创建，`PUT` 用于完整替换 Artifact head，`DELETE` 用于删除；
 - Artifact 历史 Revision 不可变；`PUT` 替换当前 head 时，Runtime 在内部创建下一 Revision，而不是覆盖历史 Revision；
 - List 使用 `items + next_cursor`，继续遵守 PowerContext 当前的 snake_case 与 cursor 约定。
-- 所有 HTTP `SourceReference` 使用 `source_type` 表达 Source 类型，不再使用历史字段 `name`。
+- 本 RFC 新增的基础 Source API 使用 `source_type` 表达 Source 类型；既有 API contract 不在本 RFC 中修改。
 
 # Motivation
 
@@ -37,8 +40,8 @@ PowerContext 当前主要按领域动作暴露接口，例如 Source capture、M
 # Goals
 
 - 直接以 Source 与 Artifact 建模，不增加统一上层概念。
-- 保持 `SourceReference` 无 Revision、`ArtifactReference` 必须包含 Revision。
-- 将共享 HTTP `SourceReference` 的类型字段统一为 `source_type`。
+- 保持 Source 无 Revision、Artifact 的精确引用必须包含 Revision。
+- 让新增基础 Source API 的字段名与领域模型 `SourceRef.source_type` 一致，同时不修改任何既有 API schema。
 - 为未来 Artifact Family 提供固定的基础 API surface。
 - 使用 REST 风格的名词路径和 HTTP 方法。
 - 保留现有领域命令及 Candidate Review 边界。
@@ -51,6 +54,7 @@ PowerContext 当前主要按领域动作暴露接口，例如 Source capture、M
 - 不提供跨 Source type、跨 Artifact Family 或 Source/Artifact 混合 List/Search。
 - 不把 Candidate、Memory Entry、Handoff Draft 重新定义为 Artifact。
 - 不替代 Memory、Experience、Skill、Handoff 和 Candidate 的领域命令。
+- 不修改或重新描述任何既有 API 的 request、response、状态码或幂等语义。
 - 不在本 RFC 中设计跨 Scope 共享、RBAC/ACL、恢复、物理清除或批量操作。
 - 不要求所有 Artifact Family 绕过其既有 Review 或生命周期约束。
 
@@ -58,7 +62,7 @@ PowerContext 当前主要按领域动作暴露接口，例如 Source capture、M
 
 ## Source
 
-Source 是耐久证据。精确身份复用现有 `SourceReference`：
+Source 是耐久证据。新增基础 API 中，`scope_id` 与 `source_ref` 共同表达完整身份：
 
 ```json
 {
@@ -67,16 +71,25 @@ Source 是耐久证据。精确身份复用现有 `SourceReference`：
 }
 ```
 
-`source_type` 是稳定的 Source 类型，`source_id` 是该类型下的稳定 Source 标识。精确身份是
-`(scope_id, source_type, source_id)`；由于 `SourceReference` 不携带 `scope_id`，它只在请求已经确定的 Scope 内精确。
+`source_type` 是稳定的 Source 类型，`source_id` 是该类型下的稳定 Source 标识。Source 表必须以
+`(scope_id, source_type, source_id)` 建立联合唯一约束；不能假设 `source_id` 跨 Scope 或跨 Source type 全局唯一：
 
-本 RFC 将共享 HTTP `SourceReference` 从历史结构 `{name, source_id}` 统一为
-`{source_type, source_id}`。该字段重命名同步适用于 Source、Memory、Experience、Skill、Candidate、Handoff 和
-Work 等所有复用 `SourceReference` 的 HTTP request/response，不保留第二套并行引用结构。
+```json
+{
+  "table": "sources",
+  "unique_key": [
+    "scope_id",
+    "source_type",
+    "source_id"
+  ]
+}
+```
 
-新的 `POST /v1/sources` 不接受调用方指定 `source_id`，而由服务端生成 opaque `source_id` 并在
-`SourceRecord.source_ref` 与 `Location` 中返回。现有兼容入口 `POST /v1/sources/content` 继续接收调用方提供的
-`source_id`，用于把消息 ID、文档 ID、事件 ID 等上游稳定身份映射为 Source identity。
+新增基础 API 的 `source_ref` transport shape 直接使用 `{source_type, source_id}`，完整引用仍是 response 顶层的
+`scope_id` 与 `source_ref` 组合。该 shape 只属于本 RFC 新增的 schema，不修改既有 HTTP reference schema。
+
+新的 `POST /v1/scopes/{scope_id}/sources/{source_type}` 不接受调用方指定 `source_id`，而由服务端生成 opaque
+`source_id`，并在 `SourceRecord.source_ref` 与 `Location` 中返回。
 
 Source 没有 Revision。本 RFC 不提供 Source Replace/Delete：
 
@@ -97,6 +110,25 @@ Artifact 是可提交、可演进的正式制品。精确身份复用现有 `Art
 
 Revision 是 Artifact 身份的一部分，也是并发前置条件。Create 生成 Revision 1；Replace 校验当前 head 后创建下一 Revision；任何操作都不得原地覆盖历史 Revision。
 
+Artifact lifecycle head 的联合唯一键是 `(scope_id, family, artifact_id)`；不可变 Revision 表的联合唯一键是
+`(scope_id, family, artifact_id, revision)`：
+
+```json
+{
+  "artifact_head_unique_key": [
+    "scope_id",
+    "family",
+    "artifact_id"
+  ],
+  "artifact_revision_unique_key": [
+    "scope_id",
+    "family",
+    "artifact_id",
+    "revision"
+  ]
+}
+```
+
 ## Scope dependency
 
 `scope_id` 是 Source 与 Artifact 的隔离和查询边界，不是 Source，也不是 Artifact。Scope 的创建、读取、列举、metadata、Organization Parent、Context References 与 binding 均由 [PR #1401](https://github.com/oceanbase/powercontext/pull/1401) 的 Scope API 负责。本 RFC 不重复声明任何 Scope path、operationId、schema、分页或授权规则；调用方先通过该 API 获得 `scope_id`，再调用本文定义的 Source/Artifact API。
@@ -113,67 +145,67 @@ Revision 是 Artifact 身份的一部分，也是并发前置条件。Create 生
     "function": "Source Create",
     "operation_id": "create_source",
     "method": "POST",
-    "path": "/v1/sources"
+    "path": "/v1/scopes/{scope_id}/sources/{source_type}"
   },
   {
     "function": "Source Get",
     "operation_id": "get_source",
     "method": "GET",
-    "path": "/v1/sources/{source_id}"
+    "path": "/v1/scopes/{scope_id}/sources/{source_type}/{source_id}"
   },
   {
     "function": "Source List",
     "operation_id": "list_sources",
     "method": "GET",
-    "path": "/v1/sources"
+    "path": "/v1/scopes/{scope_id}/sources/{source_type}"
   },
   {
     "function": "Source Search",
     "operation_id": "search_sources",
     "method": "GET",
-    "path": "/v1/source-search-results"
+    "path": "/v1/scopes/{scope_id}/source-search-results"
   },
   {
     "function": "Artifact Create",
     "operation_id": "create_artifact",
     "method": "POST",
-    "path": "/v1/artifacts"
+    "path": "/v1/scopes/{scope_id}/artifacts/{family}"
   },
   {
     "function": "Artifact Head Get",
     "operation_id": "get_artifact",
     "method": "GET",
-    "path": "/v1/artifacts/{artifact_id}"
+    "path": "/v1/scopes/{scope_id}/artifacts/{family}/{artifact_id}"
   },
   {
     "function": "Artifact Revision Get",
     "operation_id": "get_artifact_revision",
     "method": "GET",
-    "path": "/v1/artifacts/{artifact_id}/revisions/{revision}"
+    "path": "/v1/scopes/{scope_id}/artifacts/{family}/{artifact_id}/revisions/{revision}"
   },
   {
     "function": "Artifact List",
     "operation_id": "list_artifacts",
     "method": "GET",
-    "path": "/v1/artifacts"
+    "path": "/v1/scopes/{scope_id}/artifacts/{family}"
   },
   {
     "function": "Artifact Search",
     "operation_id": "search_artifacts",
     "method": "GET",
-    "path": "/v1/artifact-search-results"
+    "path": "/v1/scopes/{scope_id}/artifact-search-results"
   },
   {
     "function": "Artifact Replace",
     "operation_id": "replace_artifact",
     "method": "PUT",
-    "path": "/v1/artifacts/{artifact_id}"
+    "path": "/v1/scopes/{scope_id}/artifacts/{family}/{artifact_id}"
   },
   {
     "function": "Artifact Delete",
     "operation_id": "delete_artifact",
     "method": "DELETE",
-    "path": "/v1/artifacts/{artifact_id}"
+    "path": "/v1/scopes/{scope_id}/artifacts/{family}/{artifact_id}"
   }
 ]
 ```
@@ -188,17 +220,22 @@ Revision 是 Artifact 身份的一部分，也是并发前置条件。Create 生
 - 子对象使用子集合表达；
 - List 返回 typed items 和分页元数据；
 - `PUT` 只接受完整 replacement；Artifact Replace/Delete 必须通过 `If-Match` 携带当前 head 的 ETag，不能静默覆盖并发写入；
-- response 直接复用 `SourceReference`、`ArtifactReference`、Artifact Revision 和 Source journal position；
-- `SourceReference` 的字段固定为 `source_type + source_id`；历史字段 `name` 不再出现在 HTTP contract；
-- Create 的 `scope_id` 与 `source_type` / `family` 放在 request body；GET、PUT 与 DELETE 用于定位既有对象的
-  `scope_id` 与 `source_type` / `family` 放在 query parameter，PUT request body 只承载完整 replacement；
-- 基础集合固定为 `/v1/sources` 与 `/v1/artifacts`；
+- 新增基础 API 的 response 复用领域 `SourceRef`、`ArtifactReference`、Artifact Revision 和 Source journal
+  position 的语义，但不修改既有 HTTP schema；
+- Create 与 List 的 path 包含联合唯一键前缀：Source 使用 `scope_id + source_type`，Artifact 使用
+  `scope_id + family`；
+- 具名 Source path 包含 `scope_id + source_type + source_id`；Artifact head path 包含
+  `scope_id + family + artifact_id`，精确 Revision path 再追加 `revision`；
+- PUT request body 只承载完整 replacement；联合唯一键分量不在 body 或 query 中重复；
+- Search 不是具名资源定位：`scope_id` 作为授权与隔离边界放在 path，`source_type` / `family`、`q`、`mode`、
+  cursor 和时间范围作为 query filter；
 - 字段名继续使用现有 snake_case；
 - Scope identity 与可见性由 PR #1401 的 Scope API 负责；本文不从 Source/Artifact 数据反向推导或列举 Scope。
 
-所有 path parameter 必须按 RFC 3986 编码并由服务端只解码一次。`source_type`、`family` 与 `scope_id` 不作为
-path parameter。通用 `POST /v1/sources` 返回的 `source_id` 是服务端生成的 opaque path identity，调用方不得解析或
-依赖其格式；兼容入口接收的 `source_id` 与 `artifact_id` 应使用 path-segment-safe 值。
+所有 path parameter 必须分别按 RFC 3986 path segment 编码并由服务端只解码一次。PR #1401 新生成的
+`scp_...` Scope ID 是 path-segment-safe；实现仍必须为既有 `scope_id` 以及允许的 `source_type`、`family`、
+`source_id`、`artifact_id` 覆盖保留字符和 encoded slash 的网关/路由一致性测试，不能把两个不同联合键错误映射到同一 URI。
+通用 Source Create 返回的 `source_id` 是服务端生成的 opaque path identity，调用方不得解析或依赖其格式。
 
 # Common response conventions
 
@@ -206,7 +243,7 @@ path parameter。通用 `POST /v1/sources` 返回的 `source_id` 是服务端生
 
 ```json
 {
-  "scope_id": "git:github.com/acme/payments",
+  "scope_id": "scp_01j8m4v2n7q9x3k6c5t0b1d2ef",
   "source_ref": {
     "source_type": "content",
     "source_id": "src_01J..."
@@ -227,7 +264,7 @@ path parameter。通用 `POST /v1/sources` 返回的 `source_id` 是服务端生
   "schema": "SourceRecord",
   "field_semantics": {
     "scope_id": "Source 所属 Scope；所有 Get、List、Search 必须显式关联",
-    "source_ref": "现有精确 SourceReference；不包含 Revision",
+    "source_ref": "本 RFC 新增基础 API 使用的 scope-local SourceRef；包含 source_type + source_id，不包含 Revision",
     "content": "Source type 对应的权威内容；content type 首期为 string",
     "metadata": "来源、标题、媒体类型等 Source-specific 元数据；保持可扩展对象",
     "created_at": "服务端耐久接收时间",
@@ -241,7 +278,7 @@ path parameter。通用 `POST /v1/sources` 返回的 `source_id` 是服务端生
 
 ```json
 {
-  "scope_id": "git:github.com/acme/payments",
+  "scope_id": "scp_01j8m4v2n7q9x3k6c5t0b1d2ef",
   "artifact_ref": {
     "family": "company.example.decision",
     "artifact_id": "dec_01J...",
@@ -275,7 +312,7 @@ path parameter。通用 `POST /v1/sources` 返回的 `source_id` 是服务端生
     "schema_version": "Family content schema 版本",
     "metadata": "标题、标签等非内容字段；具体约束由 Family 定义",
     "content": "Family-specific JSON content",
-    "source_refs": "直接 Source evidence，必须是精确 SourceReference",
+    "source_refs": "直接 Source evidence；每项使用本 RFC 的 scope-local SourceRef shape",
     "artifact_refs": "直接 Artifact evidence，必须是精确 ArtifactReference",
     "created_at": "当前 Revision 的提交时间",
     "content_digest": "当前 Revision canonical content 的摘要"
@@ -322,8 +359,10 @@ Artifact head response 使用标准 `ETag` header 暴露当前 Revision；`PUT` 
 
 List 读取资源集合，返回不带排名语义的 `SourcePage{items,next_cursor}` 或 `ArtifactPage{items,next_cursor}`。Search 读取独立的虚拟、只读搜索结果集合：
 
-- `GET /v1/source-search-results` 返回 `SourceSearchResultPage{query,mode,hits,next_cursor}`；
-- `GET /v1/artifact-search-results` 返回 `ArtifactSearchResultPage{query,mode,hits,next_cursor}`。
+- `GET /v1/scopes/{scope_id}/source-search-results` 返回
+  `SourceSearchResultPage{query,mode,hits,next_cursor}`；
+- `GET /v1/scopes/{scope_id}/artifact-search-results` 返回
+  `ArtifactSearchResultPage{query,mode,hits,next_cursor}`。
 
 “搜索结果集合”不是另一份持久化 Source/Artifact，也没有可单独 Get、Create、Update 或 Delete 的搜索结果对象。它只是一次查询产生的命中视图；每个 hit 都携带原始资源的精确引用以及可选的 `score`、`snippets`。
 
@@ -344,32 +383,41 @@ Cursor 必须绑定调用方身份与授权上下文、请求 endpoint、`scope_
 
 Source 首期公开 Create、Get、List、Search。每次查询只处理一个 `scope_id` 与一个 `source_type`。
 
-List 与 Search 使用不同 path、operationId 和 response schema。`GET /v1/sources` 永远是 `list_sources`，不接受 `type`、`q` 或 `mode`；`GET /v1/source-search-results` 永远是 `search_sources`，不通过参数切换成 List。这样 generated Client 暴露对称且不误导的方法：`list_sources()` / `search_sources()` 与 `list_artifacts()` / `search_artifacts()`。
+List 与 Search 使用不同 path、operationId 和 response schema。`GET
+/v1/scopes/{scope_id}/sources/{source_type}` 永远是 `list_sources`，不接受 `type`、`q` 或 `mode`；`GET
+/v1/scopes/{scope_id}/source-search-results` 永远是 `search_sources`，不通过参数切换成 List。Search 的
+`source_type` 是必填 filter，不是具名 Source 的资源身份。
 
-## Source Create 定义与兼容示例
+## Source Create 定义与示例
 
 ```json
 {
   "operation_id": "create_source",
   "request": {
     "method": "POST",
-    "path": "/v1/sources",
+    "path": "/v1/scopes/{scope_id}/sources/{source_type}",
+    "path_parameters": {
+      "required": [
+        "scope_id",
+        "source_type"
+      ],
+      "example": {
+        "scope_id": "scp_01j8m4v2n7q9x3k6c5t0b1d2ef",
+        "source_type": "content"
+      }
+    },
     "headers": {
       "Content-Type": "application/json",
       "Idempotency-Key": "idem_01J..."
     },
     "body": {
       "required_fields": [
-        "scope_id",
-        "source_type",
         "content"
       ],
       "optional_fields": [
         "metadata"
       ],
       "example": {
-        "scope_id": "git:github.com/acme/payments",
-        "source_type": "content",
         "content": "退款流程必须保留人工复核。",
         "metadata": {
           "title": "退款流程约束",
@@ -382,10 +430,10 @@ List 与 Search 使用不同 path、operationId 和 response schema。`GET /v1/s
     "status": 201,
     "schema": "SourceRecord",
     "headers": {
-      "Location": "/v1/sources/src_01J...?scope_id=git%3Agithub.com%2Facme%2Fpayments&source_type=content"
+      "Location": "/v1/scopes/scp_01j8m4v2n7q9x3k6c5t0b1d2ef/sources/content/src_01J..."
     },
     "body": {
-      "scope_id": "git:github.com/acme/payments",
+      "scope_id": "scp_01j8m4v2n7q9x3k6c5t0b1d2ef",
       "source_ref": {
         "source_type": "content",
         "source_id": "src_01J..."
@@ -421,62 +469,8 @@ List 与 Search 使用不同 path、operationId 和 response schema。`GET /v1/s
 `Location` 与 `position`，不追加 journal；相同 key 对应不同 canonical request 时返回
 `409 idempotency_conflict`。该绑定与 Source 一样耐久，不允许在同一 Scope 和 Source type 下复用 key 创建另一条 Source。
 
-`Idempotency-Key` 只控制 Create 重试，不写入 `SourceReference`，也不参与后续 Get/List/Search。服务端不得按
+`Idempotency-Key` 只控制 Create 重试，不写入 `source_ref`，也不参与后续 Get/List/Search。服务端不得按
 `content_digest` 自动合并 Source，因为内容相同的两次写入可能代表两条不同证据。
-
-现有 `POST /v1/sources/content` 保留为 `content` 的强类型兼容 facade。其请求继续由调用方提供 `source_id`，但
-response 中共享的 `SourceReference` 字段随本 RFC 从 `name` 改为 `source_type`：
-
-```json
-{
-  "operation_id": "capture_content_source",
-  "request": {
-    "method": "POST",
-    "path": "/v1/sources/content",
-    "headers": {
-      "Content-Type": "application/json"
-    },
-    "body": {
-      "required_fields": [
-        "scope_id",
-        "source_id",
-        "content"
-      ],
-      "optional_fields": [
-        "metadata"
-      ],
-      "example": {
-        "scope_id": "git:github.com/acme/payments",
-        "source_id": "upstream-refund-rule-001",
-        "content": "退款流程必须保留人工复核。",
-        "metadata": {
-          "title": "退款流程约束",
-          "media_type": "text/plain"
-        }
-      }
-    }
-  },
-  "success": {
-    "status": 202,
-    "schema": "CaptureContentSourceResponse",
-    "body": {
-      "status": "accepted",
-      "source": {
-        "source_type": "content",
-        "source_id": "upstream-refund-rule-001"
-      },
-      "position": 42
-    }
-  }
-}
-```
-
-新旧入口在解析 Source identity 后复用同一个持久化写入能力，但身份来源和 HTTP response 不同：新入口通过
-`Idempotency-Key` 绑定服务端生成的 `source_id` 并返回 `201 SourceRecord`；兼容入口直接使用调用方提供的
-`source_id` 并返回 `202 CaptureContentSourceResponse`。兼容入口以
-`(scope_id, source_type="content", source_id)` 为稳定身份；
-相同身份和相同 canonical payload 重放时返回原结果且不推进 journal position，相同身份但 payload 不同沿用现有
-`409 source_conflict`。
 
 ## Source Get 定义与示例
 
@@ -485,23 +479,17 @@ response 中共享的 `SourceReference` 字段随本 RFC 从 `name` 改为 `sour
   "operation_id": "get_source",
   "request": {
     "method": "GET",
-    "path": "/v1/sources/{source_id}",
+    "path": "/v1/scopes/{scope_id}/sources/{source_type}/{source_id}",
     "path_parameters": {
       "required": [
+        "scope_id",
+        "source_type",
         "source_id"
       ],
       "example": {
+        "scope_id": "scp_01j8m4v2n7q9x3k6c5t0b1d2ef",
+        "source_type": "content",
         "source_id": "src_01J..."
-      }
-    },
-    "query_parameters": {
-      "required": [
-        "scope_id",
-        "source_type"
-      ],
-      "example": {
-        "scope_id": "git:github.com/acme/payments",
-        "source_type": "content"
       }
     }
   },
@@ -509,7 +497,7 @@ response 中共享的 `SourceReference` 字段随本 RFC 从 `name` 改为 `sour
     "status": 200,
     "schema": "SourceRecord",
     "body": {
-      "scope_id": "git:github.com/acme/payments",
+      "scope_id": "scp_01j8m4v2n7q9x3k6c5t0b1d2ef",
       "source_ref": {
         "source_type": "content",
         "source_id": "src_01J..."
@@ -540,12 +528,18 @@ response 中共享的 `SourceReference` 字段随本 RFC 从 `name` 改为 `sour
   "operation_id": "list_sources",
   "request": {
     "method": "GET",
-    "path": "/v1/sources",
-    "query_parameters": {
+    "path": "/v1/scopes/{scope_id}/sources/{source_type}",
+    "path_parameters": {
       "required": [
         "scope_id",
         "source_type"
       ],
+      "example": {
+        "scope_id": "scp_01j8m4v2n7q9x3k6c5t0b1d2ef",
+        "source_type": "content"
+      }
+    },
+    "query_parameters": {
       "optional": [
         "limit",
         "cursor",
@@ -553,8 +547,6 @@ response 中共享的 `SourceReference` 字段随本 RFC 从 `name` 改为 `sour
         "created_before"
       ],
       "example": {
-        "scope_id": "git:github.com/acme/payments",
-        "source_type": "content",
         "limit": 50
       }
     }
@@ -565,7 +557,7 @@ response 中共享的 `SourceReference` 字段随本 RFC 从 `name` 改为 `sour
     "body": {
       "items": [
         {
-          "scope_id": "git:github.com/acme/payments",
+          "scope_id": "scp_01j8m4v2n7q9x3k6c5t0b1d2ef",
           "source_ref": {
             "source_type": "content",
             "source_id": "src_01J..."
@@ -591,10 +583,17 @@ response 中共享的 `SourceReference` 字段随本 RFC 从 `name` 改为 `sour
   "operation_id": "search_sources",
   "request": {
     "method": "GET",
-    "path": "/v1/source-search-results",
+    "path": "/v1/scopes/{scope_id}/source-search-results",
+    "path_parameters": {
+      "required": [
+        "scope_id"
+      ],
+      "example": {
+        "scope_id": "scp_01j8m4v2n7q9x3k6c5t0b1d2ef"
+      }
+    },
     "query_parameters": {
       "required": [
-        "scope_id",
         "source_type"
       ],
       "optional": [
@@ -607,14 +606,12 @@ response 中共享的 `SourceReference` 字段随本 RFC 从 `name` 改为 `sour
       ],
       "examples": {
         "ranked": {
-          "scope_id": "git:github.com/acme/payments",
           "source_type": "content",
           "q": "refund manual review",
           "mode": "auto",
           "limit": 20
         },
         "without_query": {
-          "scope_id": "git:github.com/acme/payments",
           "source_type": "content",
           "created_after": "2026-09-01T00:00:00Z",
           "limit": 20
@@ -686,14 +683,22 @@ Artifact 基础接口对未来 Family 使用固定 path。新增 Family 只需�
   "operation_id": "create_artifact",
   "request": {
     "method": "POST",
-    "path": "/v1/artifacts",
+    "path": "/v1/scopes/{scope_id}/artifacts/{family}",
+    "path_parameters": {
+      "required": [
+        "scope_id",
+        "family"
+      ],
+      "example": {
+        "scope_id": "scp_01j8m4v2n7q9x3k6c5t0b1d2ef",
+        "family": "company.example.decision"
+      }
+    },
     "headers": {
       "Content-Type": "application/json"
     },
     "body": {
       "required_fields": [
-        "scope_id",
-        "family",
         "schema_version",
         "content"
       ],
@@ -705,8 +710,6 @@ Artifact 基础接口对未来 Family 使用固定 path。新增 Family 只需�
         "idempotency_key"
       ],
       "example": {
-        "scope_id": "git:github.com/acme/payments",
-        "family": "company.example.decision",
         "artifact_id": "dec_01J...",
         "schema_version": 1,
         "metadata": {
@@ -730,11 +733,11 @@ Artifact 基础接口对未来 Family 使用固定 path。新增 Family 只需�
     "status": 201,
     "schema": "ArtifactRevision",
     "headers": {
-      "Location": "/v1/artifacts/dec_01J...?scope_id=git%3Agithub.com%2Facme%2Fpayments&family=company.example.decision",
+      "Location": "/v1/scopes/scp_01j8m4v2n7q9x3k6c5t0b1d2ef/artifacts/company.example.decision/dec_01J...",
       "ETag": "revision:1"
     },
     "body": {
-      "scope_id": "git:github.com/acme/payments",
+      "scope_id": "scp_01j8m4v2n7q9x3k6c5t0b1d2ef",
       "artifact_ref": {
         "family": "company.example.decision",
         "artifact_id": "dec_01J...",
@@ -773,23 +776,17 @@ Revision 1，不再创建另一个 Artifact；相同 key 对应不同 canonical 
   "operation_id": "get_artifact",
   "request": {
     "method": "GET",
-    "path": "/v1/artifacts/{artifact_id}",
+    "path": "/v1/scopes/{scope_id}/artifacts/{family}/{artifact_id}",
     "path_parameters": {
       "required": [
+        "scope_id",
+        "family",
         "artifact_id"
       ],
       "example": {
+        "scope_id": "scp_01j8m4v2n7q9x3k6c5t0b1d2ef",
+        "family": "company.example.decision",
         "artifact_id": "dec_01J..."
-      }
-    },
-    "query_parameters": {
-      "required": [
-        "scope_id",
-        "family"
-      ],
-      "example": {
-        "scope_id": "git:github.com/acme/payments",
-        "family": "company.example.decision"
       }
     }
   },
@@ -800,7 +797,7 @@ Revision 1，不再创建另一个 Artifact；相同 key 对应不同 canonical 
       "ETag": "revision:1"
     },
     "body": {
-      "scope_id": "git:github.com/acme/payments",
+      "scope_id": "scp_01j8m4v2n7q9x3k6c5t0b1d2ef",
       "artifact_ref": {
         "family": "company.example.decision",
         "artifact_id": "dec_01J...",
@@ -840,25 +837,19 @@ Revision 1，不再创建另一个 Artifact；相同 key 对应不同 canonical 
   "operation_id": "get_artifact_revision",
   "request": {
     "method": "GET",
-    "path": "/v1/artifacts/{artifact_id}/revisions/{revision}",
+    "path": "/v1/scopes/{scope_id}/artifacts/{family}/{artifact_id}/revisions/{revision}",
     "path_parameters": {
       "required": [
+        "scope_id",
+        "family",
         "artifact_id",
         "revision"
       ],
       "example": {
+        "scope_id": "scp_01j8m4v2n7q9x3k6c5t0b1d2ef",
+        "family": "company.example.decision",
         "artifact_id": "dec_01J...",
         "revision": 1
-      }
-    },
-    "query_parameters": {
-      "required": [
-        "scope_id",
-        "family"
-      ],
-      "example": {
-        "scope_id": "git:github.com/acme/payments",
-        "family": "company.example.decision"
       }
     }
   },
@@ -867,7 +858,7 @@ Revision 1，不再创建另一个 Artifact；相同 key 对应不同 canonical 
     "schema": "ArtifactRevision",
     "headers": {},
     "body": {
-      "scope_id": "git:github.com/acme/payments",
+      "scope_id": "scp_01j8m4v2n7q9x3k6c5t0b1d2ef",
       "artifact_ref": {
         "family": "company.example.decision",
         "artifact_id": "dec_01J...",
@@ -909,12 +900,18 @@ Revision 1，不再创建另一个 Artifact；相同 key 对应不同 canonical 
   "operation_id": "list_artifacts",
   "request": {
     "method": "GET",
-    "path": "/v1/artifacts",
-    "query_parameters": {
+    "path": "/v1/scopes/{scope_id}/artifacts/{family}",
+    "path_parameters": {
       "required": [
         "scope_id",
         "family"
       ],
+      "example": {
+        "scope_id": "scp_01j8m4v2n7q9x3k6c5t0b1d2ef",
+        "family": "company.example.decision"
+      }
+    },
+    "query_parameters": {
       "optional": [
         "limit",
         "cursor",
@@ -922,8 +919,6 @@ Revision 1，不再创建另一个 Artifact；相同 key 对应不同 canonical 
         "created_before"
       ],
       "example": {
-        "scope_id": "git:github.com/acme/payments",
-        "family": "company.example.decision",
         "limit": 50
       }
     }
@@ -960,10 +955,17 @@ Revision 1，不再创建另一个 Artifact；相同 key 对应不同 canonical 
   "operation_id": "search_artifacts",
   "request": {
     "method": "GET",
-    "path": "/v1/artifact-search-results",
+    "path": "/v1/scopes/{scope_id}/artifact-search-results",
+    "path_parameters": {
+      "required": [
+        "scope_id"
+      ],
+      "example": {
+        "scope_id": "scp_01j8m4v2n7q9x3k6c5t0b1d2ef"
+      }
+    },
     "query_parameters": {
       "required": [
-        "scope_id",
         "family"
       ],
       "optional": [
@@ -975,7 +977,6 @@ Revision 1，不再创建另一个 Artifact；相同 key 对应不同 canonical 
         "created_before"
       ],
       "example": {
-        "scope_id": "git:github.com/acme/payments",
         "family": "company.example.decision",
         "q": "refund manual review",
         "mode": "auto",
@@ -1029,23 +1030,17 @@ Revision 1，不再创建另一个 Artifact；相同 key 对应不同 canonical 
   "operation_id": "replace_artifact",
   "request": {
     "method": "PUT",
-    "path": "/v1/artifacts/{artifact_id}",
+    "path": "/v1/scopes/{scope_id}/artifacts/{family}/{artifact_id}",
     "path_parameters": {
       "required": [
+        "scope_id",
+        "family",
         "artifact_id"
       ],
       "example": {
+        "scope_id": "scp_01j8m4v2n7q9x3k6c5t0b1d2ef",
+        "family": "company.example.decision",
         "artifact_id": "dec_01J..."
-      }
-    },
-    "query_parameters": {
-      "required": [
-        "scope_id",
-        "family"
-      ],
-      "example": {
-        "scope_id": "git:github.com/acme/payments",
-        "family": "company.example.decision"
       }
     },
     "headers": {
@@ -1097,7 +1092,7 @@ Revision 1，不再创建另一个 Artifact；相同 key 对应不同 canonical 
       "ETag": "revision:2"
     },
     "body": {
-      "scope_id": "git:github.com/acme/payments",
+      "scope_id": "scp_01j8m4v2n7q9x3k6c5t0b1d2ef",
       "artifact_ref": {
         "family": "company.example.decision",
         "artifact_id": "dec_01J...",
@@ -1158,23 +1153,17 @@ Revision 1，不再创建另一个 Artifact；相同 key 对应不同 canonical 
   "operation_id": "delete_artifact",
   "request": {
     "method": "DELETE",
-    "path": "/v1/artifacts/{artifact_id}",
+    "path": "/v1/scopes/{scope_id}/artifacts/{family}/{artifact_id}",
     "path_parameters": {
       "required": [
+        "scope_id",
+        "family",
         "artifact_id"
       ],
       "example": {
+        "scope_id": "scp_01j8m4v2n7q9x3k6c5t0b1d2ef",
+        "family": "company.example.decision",
         "artifact_id": "dec_01J..."
-      }
-    },
-    "query_parameters": {
-      "required": [
-        "scope_id",
-        "family"
-      ],
-      "example": {
-        "scope_id": "git:github.com/acme/payments",
-        "family": "company.example.decision"
       }
     },
     "headers": {
@@ -1239,7 +1228,11 @@ Revision 1，不再创建另一个 Artifact；相同 key 对应不同 canonical 
       "operation_id": "create_source",
       "request": {
         "method": "POST",
-        "path": "/v1/sources",
+        "path": "/v1/scopes/{scope_id}/sources/{source_type}",
+        "path_parameters": {
+          "scope_id": "scp_01j8m4v2n7q9x3k6c5t0b1d2ef",
+          "source_type": "content"
+        },
         "headers": {
           "Idempotency-Key": "idem_01J..."
         }
@@ -1258,7 +1251,7 @@ Revision 1，不再创建另一个 Artifact；相同 key 对应不同 canonical 
           "Content-Type": "application/json"
         },
         "body": {
-          "scope_id": "git:github.com/acme/payments"
+          "scope_id": "scp_01j8m4v2n7q9x3k6c5t0b1d2ef"
         }
       },
       "success": {
@@ -1358,7 +1351,8 @@ Revision 1，不再创建另一个 Artifact；相同 key 对应不同 canonical 
 ]
 ```
 
-当前 `/v1/capabilities` 应扩展为按 `source_type` 和 `artifact family` 声明实际支持的基础动作。调用方不能假设所有部署和所有 Family 都支持全部 mutation。
+支持的基础动作由 assembled Runtime 中的 Source type / Artifact Family 注册信息决定；不支持的基础动作返回
+`405 operation_not_supported`。本 RFC 不新增或扩展能力发现接口。
 
 Candidate 不是 Artifact。pending/rejected Candidate 不进入 Artifact List/Search；只有审批并成功提交后产生的 `result_artifact` 才能通过 Artifact API 读取。
 
@@ -1405,11 +1399,6 @@ Candidate 不是 Artifact。pending/rejected Candidate 不进入 Artifact List/S
     "meaning": "支持幂等键的操作将相同 key 绑定到了不同 canonical request；包括新 Source Create"
   },
   {
-    "http_status": 409,
-    "code": "source_conflict",
-    "meaning": "兼容 Source capture 的相同调用方 Source identity 对应不同 canonical payload"
-  },
-  {
     "http_status": 412,
     "code": "revision_conflict",
     "meaning": "If-Match 与当前 Artifact head 的 ETag 不一致"
@@ -1436,15 +1425,6 @@ Candidate 不是 Artifact。pending/rejected Candidate 不进入 Artifact List/S
 
 ```json
 [
-  {
-    "new_api": "POST /v1/sources",
-    "existing_api": [
-      "POST /v1/sources/content",
-      "capture_content_source"
-    ],
-    "relationship": "复用耐久 Source 写入，但采用不同的 identity 输入和 HTTP response",
-    "compatibility_rule": "新接口要求 Idempotency-Key、生成 source_id 并返回 201 SourceRecord；兼容接口继续接收 source_id 并返回 202 CaptureContentSourceResponse"
-  },
   {
     "new_api": "Source Get/List/Search",
     "existing_api": null,
@@ -1499,9 +1479,8 @@ Candidate 不是 Artifact。pending/rejected Candidate 不进入 Artifact List/S
 ]
 ```
 
-新接口不会删除或立即废弃任何领域 API，但共享 wire model 的字段重命名属于破坏性变更：所有
-`SourceReference.name` 必须在同一次 OpenAPI 变更中改为 `SourceReference.source_type`。双入口必须通过 parity
-test，验证它们命中同一权威 Source/Artifact Revision、content digest、lineage、授权和错误语义。
+本 RFC 不修改既有 API contract。新增基础入口必须直接读取同一权威 Source/Artifact Revision、content digest、
+lineage 和授权结果，不能建立第二份业务数据或独立身份空间。
 
 # OpenAPI contract
 
@@ -1511,7 +1490,7 @@ test，验证它们命中同一权威 Source/Artifact Revision、content digest�
 {
   "contract_source": "openapi/powercontext.yaml",
   "schemas": [
-    "SourceReference",
+    "SourceRef",
     "SourceRecord",
     "CreateSourceRequest",
     "SourceSummary",
@@ -1545,14 +1524,15 @@ Runtime 中已注册的 schema 校验；generated Client 将其暴露为 JSON ob
 
 # Implementation plan
 
-1. 在 OpenAPI 中把共享 `SourceReference.name` 全局重命名为 `source_type`，重新生成 Client，并同步迁移 Server mapping、CLI、Web UI 和 contract tests。
-2. 保留 `POST /v1/sources/content`，增加要求 `Idempotency-Key` 且由服务端生成 `source_id` 的 `POST /v1/sources`，以及 Source Get、`GET /v1/sources` List 与 `GET /v1/source-search-results` Search。
-3. 增加 Artifact create、head get、exact revision get、list、search-result、replace 和 delete paths。
-4. 建立 Source/Artifact 公共 application services，并让语义一致的既有接口委托它们。
-5. 扩展 `/v1/capabilities`，按 Source type / Artifact Family 声明可用动作。
-6. 运行 `make api-generate` 与 `make contract-test`，更新 checked-in generated Client。
-7. 为 SQLite 与 OceanBase 增加相同的 API behavior、cursor、CAS、授权和幂等测试。
-8. 增加 Source Create 后循环 Memory Flush 至 cursor 越过 position 的 SDK convenience example；不改变服务端契约。
+1. 在 OpenAPI 中为新增基础 API 增加 `{source_type, source_id}` 结构的 `SourceRef`，不修改既有 HTTP schema。
+2. 增加要求 `Idempotency-Key` 且由服务端生成 `source_id` 的
+   `POST /v1/scopes/{scope_id}/sources/{source_type}`，以及使用同一联合键前缀的 Source Get/List 和 Scope-bound Search。
+3. 增加按 `(scope_id, family, artifact_id[, revision])` 定位的 Artifact create、head get、exact revision get、list、
+   search-result、replace 和 delete paths。
+4. 建立 Source/Artifact 公共 application services，让新增入口读写现有权威 repository。
+5. 运行 `make api-generate` 与 `make contract-test`，更新 checked-in generated Client。
+6. 为 SQLite 与 OceanBase 增加相同的 API behavior、cursor、CAS、授权和幂等测试。
+7. 增加 Source Create 后循环 Memory Flush 至 cursor 越过 position 的 SDK convenience example；不改变服务端契约。
 
 # Acceptance criteria
 
@@ -1561,11 +1541,12 @@ Runtime 中已注册的 schema 校验；generated Client 将其暴露为 JSON ob
 | No umbrella concept | OpenAPI 中没有跨 Source/Artifact 的统一 selector、联合 request/response 或统一资源类型字段 |
 | No write-time generation | Source Create request/response 只表达 Source 耐久写入，不包含任何生成参数或生成结果 |
 | Source operations | Source 只公开 Create/Get/List/Search，不公开 Replace/Delete |
-| Source list/search | `GET /v1/sources` 使用 `list_sources`；`GET /v1/source-search-results` 使用 `search_sources`；不存在 `type` 分流参数，Search 的 `q` 可选 |
+| Source list/search | `GET /v1/scopes/{scope_id}/sources/{source_type}` 使用 `list_sources`；`GET /v1/scopes/{scope_id}/source-search-results` 使用 `search_sources`；Search 的 `source_type` 是 query filter，`q` 可选 |
 | Artifact operations | 固定 path 提供 Create/Get/List/Search/Replace/Delete；Replace 创建下一不可变 Revision |
 | REST paths | URL 使用名词；Create 使用 POST，Get/List/Search 使用 GET，完整 Replace 使用 PUT，Delete 使用 DELETE |
-| Exact identity | Source 使用 `{source_type, source_id}` 且无 Revision 的 SourceReference；Artifact head Get 和 exact revision Get 都返回包含 Revision 的 ArtifactReference |
-| Source-generated identity | `POST /v1/sources` 不接受 `source_id`，服务端生成 opaque `source_id` 并通过 body 与 `Location` 返回 |
+| Exact identity | Source 表联合唯一键为 `(scope_id, source_type, source_id)`；Artifact head 与 Revision 分别按 `(scope_id, family, artifact_id)` 和追加 `revision` 的键定位 |
+| Canonical URI | Source/Artifact Create、Get、List、Replace、Delete 的 identity 或 identity prefix 位于 path；Search 仅把 `scope_id` 放 path，其余检索条件放 query |
+| Source-generated identity | `POST /v1/scopes/{scope_id}/sources/{source_type}` 不接受 `source_id`，服务端生成 opaque `source_id` 并通过 body 与 `Location` 返回 |
 | Source create idempotency | `Idempotency-Key` 必填；相同 key/request 返回同一个 Source 与 position，不同 request 返回 `409 idempotency_conflict` |
 | Scope required | 所有 Source/Artifact Get/List/Search/Mutation 都显式携带 `scope_id` |
 | Scope dependency | 本 RFC 不定义 Scope API；所有 Source/Artifact 操作使用由 PR #1401 Scope API 提供的 `scope_id` |
@@ -1573,8 +1554,7 @@ Runtime 中已注册的 schema 校验；generated Client 将其暴露为 JSON ob
 | Concurrency | Artifact Replace/Delete 必须携带 current head ETag；缺失返回 `428`，冲突返回 `412 revision_conflict` |
 | Review gate | Experience/Skill 等 Review Family 不能通过基础 Create/Replace 绕过 Candidate approval |
 | Memory boundary | Source Create + Memory Flush 是两个调用；flush 是 bounded pending window，不宣称 exact single-Source 或 full refresh |
-| Compatibility | 现有 path、operation 与领域行为保持不变；所有复用 SourceReference 的 wire model 同步从 `name` 迁移为 `source_type` |
-| Source create compatibility | 新 `POST /v1/sources` 生成 ID 并返回 `201 SourceRecord`；现有 `/v1/sources/content` 继续接收调用方 ID、返回 `202 CaptureContentSourceResponse`，payload 冲突返回 `409 source_conflict` |
+| Compatibility | 本 RFC 不修改任何既有 path、operation、request/response schema 或领域行为 |
 | Extensibility | 新增 Direct Artifact Family 不增加基础 HTTP path 或 generated Client method |
 | Conformance | SQLite 与 OceanBase 通过相同 contract 与行为测试 |
 
@@ -1582,10 +1562,10 @@ Runtime 中已注册的 schema 校验；generated Client 将其暴露为 JSON ob
 
 - Family-specific Artifact `content` 在基础 generated Client 中只能是 JSON object，静态类型弱于强类型 Family API。
 - 新旧读取入口会并存一段时间，需要共享 application service 与 parity tests 防止行为漂移。
-- Direct Family 与 Review Family 的 mutation capability 不完全一致，调用方必须先读取 capabilities。
+- Direct Family 与 Review Family 的 mutation capability 不完全一致，调用方必须处理 `405 operation_not_supported`。
 - Artifact logical delete、历史 lineage 可验证与 retention 之间仍需 Family 实现正确衔接。
 - Source Create + Memory Flush 不是一个事务；客户端必须处理“Source 成功、flush 失败”的可重试状态。
-- `SourceReference.name` 到 `source_type` 是字段级破坏性变更，需要所有 generated Client 与调用方同步迁移。
+- 把联合键分量放入 path 后，Server 与网关必须对保留字符执行一致的 path-segment 编解码，否则旧格式 ID 可能无法寻址。
 - Source 与 Artifact 各增加一个独立 search-result collection 和 response schema，OpenAPI surface 略有增加，但 generated Client 方法与返回类型保持明确对称。
 
 # Related PowerContext RFCs

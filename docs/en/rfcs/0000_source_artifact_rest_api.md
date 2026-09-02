@@ -17,9 +17,9 @@ Scope creation, retrieval, listing, organization, and bindings are defined by
 [PR #1401](https://github.com/oceanbase/powercontext/pull/1401). This RFC only consumes an already resolved
 `scope_id` as the boundary of Source and Artifact operations; it defines no Scope endpoint or schema.
 
-Writing and generation remain separate commit boundaries. `POST /v1/sources` durably creates a Source and returns
-that Source. A caller that needs immediate Memory extraction composes it with the existing
-`POST /v1/memory/flush` operation.
+Writing and generation remain separate commit boundaries. `POST /v1/scopes/{scope_id}/sources/{source_type}`
+durably creates a Source and returns that Source. A caller that needs immediate Memory extraction composes it with
+the existing `POST /v1/memory/flush` operation.
 
 The wire contract follows these rules:
 
@@ -27,7 +27,7 @@ The wire contract follows these rules:
 - `GET` reads, lists, and searches; `POST` creates; `PUT` fully replaces an Artifact head; `DELETE` deletes it;
 - Artifact revisions remain immutable: replacing a head commits the next revision instead of overwriting history;
 - list and search responses use typed items and `next_cursor`.
-- every HTTP `SourceReference` uses `source_type` for the Source type and no longer uses the historical `name` field.
+- the new base Source API names the Source type `source_type`; this RFC does not change an existing API contract.
 
 # Motivation
 
@@ -47,7 +47,7 @@ The required outcomes are:
 
 - Model Source and Artifact directly without introducing a shared parent concept.
 - Preserve Source identity without a revision and Artifact identity with an exact revision.
-- Standardize the shared HTTP `SourceReference` type field as `source_type`.
+- Align the new base Source API field with domain `SourceRef.source_type` without changing an existing API schema.
 - Keep a fixed base API surface as Artifact families are added.
 - Preserve existing domain commands and Candidate Review gates.
 - Define request metadata, responses, pagination, concurrency, and errors for every base operation.
@@ -59,6 +59,7 @@ The required outcomes are:
 - Cross-Source-type, cross-Artifact-family, or Source-and-Artifact combined list/search.
 - Reclassifying Candidates, Memory entries, or Handoff drafts as Artifacts.
 - Replacing Memory, Experience, Skill, Handoff, or Candidate commands.
+- Changing or restating any existing API request, response, status, or idempotency contract.
 - Cross-Scope sharing, ACL/RBAC, restore, physical purge, or bulk mutations.
 - Letting a family bypass an existing review or lifecycle rule.
 
@@ -66,7 +67,8 @@ The required outcomes are:
 
 ## Source and Artifact
 
-A Source is durable evidence with a stable `SourceReference`:
+A Source is durable evidence. In the new base API, top-level `scope_id` and `source_ref` together carry its complete
+identity:
 
 ```json
 {
@@ -75,18 +77,26 @@ A Source is durable evidence with a stable `SourceReference`:
 }
 ```
 
-`source_type` is the stable Source type, and `source_id` is the stable identifier within that type. Exact identity is
-`(scope_id, source_type, source_id)`. Because `SourceReference` does not carry `scope_id`, it is exact only within the
-Scope already established by the request.
+`source_type` is the stable Source type, and `source_id` is the stable identifier within that type. The Source table
+must enforce a composite unique key; `source_id` is not assumed to be globally unique across Scopes or Source types:
 
-This RFC changes the shared HTTP `SourceReference` from the historical `{name, source_id}` shape to
-`{source_type, source_id}`. The rename applies together to every Source, Memory, Experience, Skill, Candidate,
-Handoff, and Work HTTP request or response that reuses `SourceReference`; no second reference shape is introduced.
+```json
+{
+  "table": "sources",
+  "unique_key": [
+    "scope_id",
+    "source_type",
+    "source_id"
+  ]
+}
+```
 
-The new `POST /v1/sources` operation does not accept a caller-selected `source_id`. The server generates an opaque
-`source_id` and returns it in `SourceRecord.source_ref` and `Location`. The compatibility operation
-`POST /v1/sources/content` continues to accept a caller-supplied `source_id` for mapping an upstream message,
-document, or event identity into Source identity.
+The `source_ref` transport shape of the new base API is `{source_type, source_id}`. The complete reference is its
+combination with top-level `scope_id`. This shape belongs only to schemas added by this RFC and does not change an
+existing HTTP reference schema.
+
+The new `POST /v1/scopes/{scope_id}/sources/{source_type}` operation does not accept a caller-selected `source_id`.
+The Server generates an opaque `source_id` and returns it in `SourceRecord.source_ref` and `Location`.
 
 A Source has no revision. This RFC therefore does not add Source replace or delete operations. Corrections are new
 Sources so evidence already cited by Artifact lineage is never silently changed.
@@ -104,6 +114,24 @@ An Artifact is a committed, evolvable output with an exact `ArtifactReference`:
 Create commits revision 1. Replace validates the current head and commits the next revision. Exact historical
 revision URIs remain immutable.
 
+The Artifact lifecycle head unique key is `(scope_id, family, artifact_id)`. An immutable revision adds `revision`:
+
+```json
+{
+  "artifact_head_unique_key": [
+    "scope_id",
+    "family",
+    "artifact_id"
+  ],
+  "artifact_revision_unique_key": [
+    "scope_id",
+    "family",
+    "artifact_id",
+    "revision"
+  ]
+}
+```
+
 `scope_id` is the ownership, isolation, and query boundary for both concepts. It is neither a Source nor an
 Artifact. Scope operations, metadata, organization parents, context references, bindings, pagination, and
 authorization remain owned by PR #1401. Callers resolve a `scope_id` through that API before using the operations
@@ -120,7 +148,11 @@ defined here.
       "operation_id": "create_source",
       "request": {
         "method": "POST",
-        "path": "/v1/sources",
+        "path": "/v1/scopes/{scope_id}/sources/{source_type}",
+        "path_parameters": {
+          "scope_id": "scp_01j8m4v2n7q9x3k6c5t0b1d2ef",
+          "source_type": "content"
+        },
         "headers": {
           "Idempotency-Key": "idem_01J..."
         }
@@ -139,7 +171,7 @@ defined here.
           "Content-Type": "application/json"
         },
         "body": {
-          "scope_id": "git:github.com/acme/payments"
+          "scope_id": "scp_01j8m4v2n7q9x3k6c5t0b1d2ef"
         }
       },
       "success": {
@@ -187,67 +219,67 @@ The wire contract for each base operation is fixed as follows:
     "function": "Source Create",
     "operation_id": "create_source",
     "method": "POST",
-    "path": "/v1/sources"
+    "path": "/v1/scopes/{scope_id}/sources/{source_type}"
   },
   {
     "function": "Source Get",
     "operation_id": "get_source",
     "method": "GET",
-    "path": "/v1/sources/{source_id}"
+    "path": "/v1/scopes/{scope_id}/sources/{source_type}/{source_id}"
   },
   {
     "function": "Source List",
     "operation_id": "list_sources",
     "method": "GET",
-    "path": "/v1/sources"
+    "path": "/v1/scopes/{scope_id}/sources/{source_type}"
   },
   {
     "function": "Source Search",
     "operation_id": "search_sources",
     "method": "GET",
-    "path": "/v1/source-search-results"
+    "path": "/v1/scopes/{scope_id}/source-search-results"
   },
   {
     "function": "Artifact Create",
     "operation_id": "create_artifact",
     "method": "POST",
-    "path": "/v1/artifacts"
+    "path": "/v1/scopes/{scope_id}/artifacts/{family}"
   },
   {
     "function": "Artifact Head Get",
     "operation_id": "get_artifact",
     "method": "GET",
-    "path": "/v1/artifacts/{artifact_id}"
+    "path": "/v1/scopes/{scope_id}/artifacts/{family}/{artifact_id}"
   },
   {
     "function": "Artifact Revision Get",
     "operation_id": "get_artifact_revision",
     "method": "GET",
-    "path": "/v1/artifacts/{artifact_id}/revisions/{revision}"
+    "path": "/v1/scopes/{scope_id}/artifacts/{family}/{artifact_id}/revisions/{revision}"
   },
   {
     "function": "Artifact List",
     "operation_id": "list_artifacts",
     "method": "GET",
-    "path": "/v1/artifacts"
+    "path": "/v1/scopes/{scope_id}/artifacts/{family}"
   },
   {
     "function": "Artifact Search",
     "operation_id": "search_artifacts",
     "method": "GET",
-    "path": "/v1/artifact-search-results"
+    "path": "/v1/scopes/{scope_id}/artifact-search-results"
   },
   {
     "function": "Artifact Replace",
     "operation_id": "replace_artifact",
     "method": "PUT",
-    "path": "/v1/artifacts/{artifact_id}"
+    "path": "/v1/scopes/{scope_id}/artifacts/{family}/{artifact_id}"
   },
   {
     "function": "Artifact Delete",
     "operation_id": "delete_artifact",
     "method": "DELETE",
-    "path": "/v1/artifacts/{artifact_id}"
+    "path": "/v1/scopes/{scope_id}/artifacts/{family}/{artifact_id}"
   }
 ]
 ```
@@ -256,23 +288,28 @@ The `operation_id`, HTTP method, and URL pattern in this JSON definition togethe
 
 The API additionally requires:
 
-- Create carries `scope_id` and `source_type` / `family` in the request body. GET, PUT, and DELETE carry the
-  `scope_id` and `source_type` / `family` identity selectors in query parameters; the PUT body contains only the
-  complete replacement;
-- `source_type` and `family` are query or body fields, so a new type or family does not add a path;
-- resource collection paths are reserved for List, while `/v1/source-search-results` and
-  `/v1/artifact-search-results` are read-only virtual collections for Search hits;
+- Create and List paths carry the composite-key prefix: `scope_id + source_type` for Source and
+  `scope_id + family` for Artifact;
+- a named Source path carries `scope_id + source_type + source_id`; an Artifact head path carries
+  `scope_id + family + artifact_id`, and an exact revision path also carries `revision`;
+- the PUT body contains only the complete replacement and does not repeat identity fields in body or query;
+- Search is not named-resource lookup: `scope_id` is the path authorization/isolation boundary, while
+  `source_type` / `family`, `q`, `mode`, cursor, and time ranges are query filters;
+- `/v1/scopes/{scope_id}/source-search-results` and
+  `/v1/scopes/{scope_id}/artifact-search-results` are read-only virtual collections for Search hits;
 - fields use the existing snake_case convention;
 - a `source_id` generated by the generic Source Create operation is an opaque path identity that callers must not
   parse or depend on;
 - `PUT` accepts only a complete replacement; partial updates require a future `PATCH` contract;
 - Artifact replace and delete require the current `ETag` in `If-Match`;
-- `SourceReference` is always `{source_type, source_id}`; the historical HTTP field `name` is removed.
+- schemas added by this RFC use the domain-aligned `{source_type, source_id}` SourceRef shape without changing an
+  existing HTTP schema.
 
-Every path segment is RFC 3986 encoded and decoded exactly once. `source_type`, `family`, and `scope_id` are not path
-parameters. A `source_id` generated by the generic Source Create operation is an opaque path identity that callers
-must not parse or depend on. A `source_id` accepted by the compatibility operation and every `artifact_id` should be
-path-segment safe.
+Every path parameter is encoded as one RFC 3986 path segment and decoded exactly once. The `scp_...` IDs generated by
+PR #1401 are path-segment safe. Implementations must still test gateway/router consistency for reserved characters
+and encoded slashes in existing `scope_id` values and permitted `source_type`, `family`, `source_id`, and
+`artifact_id` values; two composite keys must never map to one URI. A `source_id` generated by Source Create is an
+opaque path identity that callers must not parse or depend on.
 
 ## Common response models
 
@@ -280,7 +317,7 @@ path-segment safe.
 
 ```json
 {
-  "scope_id": "git:github.com/acme/payments",
+  "scope_id": "scp_01j8m4v2n7q9x3k6c5t0b1d2ef",
   "source_ref": {
     "source_type": "content",
     "source_id": "src_01J..."
@@ -304,7 +341,7 @@ timestamp projection exists may return `created_at: null` without changing ident
 
 ```json
 {
-  "scope_id": "git:github.com/acme/payments",
+  "scope_id": "scp_01j8m4v2n7q9x3k6c5t0b1d2ef",
   "artifact_ref": {
     "family": "company.example.decision",
     "artifact_id": "dec_01J...",
@@ -369,35 +406,41 @@ use explicit summaries instead of presenting partial objects as complete records
 
 Each request addresses one `scope_id` and one `source_type`.
 
-List and Search have different paths, operationIds, and response schemas. `GET /v1/sources` is always
-`list_sources` and does not accept `type`, `q`, or `mode`. `GET /v1/source-search-results` is always
-`search_sources`; no query parameter switches it into List. Generated Clients therefore expose the symmetric
-methods `list_sources()` / `search_sources()` and `list_artifacts()` / `search_artifacts()`.
+List and Search have different paths, operationIds, and response schemas. `GET
+/v1/scopes/{scope_id}/sources/{source_type}` is always `list_sources` and does not accept `type`, `q`, or `mode`.
+`GET /v1/scopes/{scope_id}/source-search-results` is always `search_sources`; no query parameter switches it into
+List. Its required `source_type` is a search filter, not named-Source identity.
 
-### Source create contract and compatibility example
+### Source create contract and example
 
 ```json
 {
   "operation_id": "create_source",
   "request": {
     "method": "POST",
-    "path": "/v1/sources",
+    "path": "/v1/scopes/{scope_id}/sources/{source_type}",
+    "path_parameters": {
+      "required": [
+        "scope_id",
+        "source_type"
+      ],
+      "example": {
+        "scope_id": "scp_01j8m4v2n7q9x3k6c5t0b1d2ef",
+        "source_type": "content"
+      }
+    },
     "headers": {
       "Content-Type": "application/json",
       "Idempotency-Key": "idem_01J..."
     },
     "body": {
       "required_fields": [
-        "scope_id",
-        "source_type",
         "content"
       ],
       "optional_fields": [
         "metadata"
       ],
       "example": {
-        "scope_id": "git:github.com/acme/payments",
-        "source_type": "content",
         "content": "Refunds require manual review.",
         "metadata": {
           "title": "Refund constraint",
@@ -410,10 +453,10 @@ methods `list_sources()` / `search_sources()` and `list_artifacts()` / `search_a
     "status": 201,
     "schema": "SourceRecord",
     "headers": {
-      "Location": "/v1/sources/src_01J...?scope_id=git%3Agithub.com%2Facme%2Fpayments&source_type=content"
+      "Location": "/v1/scopes/scp_01j8m4v2n7q9x3k6c5t0b1d2ef/sources/content/src_01J..."
     },
     "body": {
-      "scope_id": "git:github.com/acme/payments",
+      "scope_id": "scp_01j8m4v2n7q9x3k6c5t0b1d2ef",
       "source_ref": {
         "source_type": "content",
         "source_id": "src_01J..."
@@ -450,63 +493,9 @@ canonical request returns the same `201 SourceRecord`, `Location`, and `position
 Binding the same key to a different canonical request returns `409 idempotency_conflict`. The binding is as durable as
 the Source, so the key cannot later create another Source in the same Scope and Source type.
 
-`Idempotency-Key` controls Create retries only. It is not part of `SourceReference` and is not used by Get, List, or
+`Idempotency-Key` controls Create retries only. It is not part of `source_ref` and is not used by Get, List, or
 Search. The server must not deduplicate Sources by `content_digest`, because identical content may represent distinct
 evidence events.
-
-Existing `POST /v1/sources/content` remains a strongly typed compatibility facade. Its request continues to take a
-caller-supplied `source_id`, while the shared `SourceReference` response field changes from `name` to `source_type`:
-
-```json
-{
-  "operation_id": "capture_content_source",
-  "request": {
-    "method": "POST",
-    "path": "/v1/sources/content",
-    "headers": {
-      "Content-Type": "application/json"
-    },
-    "body": {
-      "required_fields": [
-        "scope_id",
-        "source_id",
-        "content"
-      ],
-      "optional_fields": [
-        "metadata"
-      ],
-      "example": {
-        "scope_id": "git:github.com/acme/payments",
-        "source_id": "upstream-refund-rule-001",
-        "content": "Refunds require manual review.",
-        "metadata": {
-          "title": "Refund constraint",
-          "media_type": "text/plain"
-        }
-      }
-    }
-  },
-  "success": {
-    "status": 202,
-    "schema": "CaptureContentSourceResponse",
-    "body": {
-      "status": "accepted",
-      "source": {
-        "source_type": "content",
-        "source_id": "upstream-refund-rule-001"
-      },
-      "position": 42
-    }
-  }
-}
-```
-
-After resolving Source identity, both operations reuse the same durable write capability, but the identity source and
-HTTP responses differ. The new operation binds a server-generated `source_id` to `Idempotency-Key` and returns
-`201 SourceRecord`. The compatibility operation uses the caller-supplied `source_id` and returns
-`202 CaptureContentSourceResponse`. Its stable identity is `(scope_id, source_type="content", source_id)`; replaying
-that identity with the same canonical payload returns the original result without advancing the journal position, while
-a different payload preserves the existing `409 source_conflict` behavior.
 
 ### Source get contract and example
 
@@ -515,23 +504,17 @@ a different payload preserves the existing `409 source_conflict` behavior.
   "operation_id": "get_source",
   "request": {
     "method": "GET",
-    "path": "/v1/sources/{source_id}",
+    "path": "/v1/scopes/{scope_id}/sources/{source_type}/{source_id}",
     "path_parameters": {
       "required": [
+        "scope_id",
+        "source_type",
         "source_id"
       ],
       "example": {
+        "scope_id": "scp_01j8m4v2n7q9x3k6c5t0b1d2ef",
+        "source_type": "content",
         "source_id": "src_01J..."
-      }
-    },
-    "query_parameters": {
-      "required": [
-        "scope_id",
-        "source_type"
-      ],
-      "example": {
-        "scope_id": "git:github.com/acme/payments",
-        "source_type": "content"
       }
     }
   },
@@ -539,7 +522,7 @@ a different payload preserves the existing `409 source_conflict` behavior.
     "status": 200,
     "schema": "SourceRecord",
     "body": {
-      "scope_id": "git:github.com/acme/payments",
+      "scope_id": "scp_01j8m4v2n7q9x3k6c5t0b1d2ef",
       "source_ref": {
         "source_type": "content",
         "source_id": "src_01J..."
@@ -570,12 +553,18 @@ a different payload preserves the existing `409 source_conflict` behavior.
   "operation_id": "list_sources",
   "request": {
     "method": "GET",
-    "path": "/v1/sources",
-    "query_parameters": {
+    "path": "/v1/scopes/{scope_id}/sources/{source_type}",
+    "path_parameters": {
       "required": [
         "scope_id",
         "source_type"
       ],
+      "example": {
+        "scope_id": "scp_01j8m4v2n7q9x3k6c5t0b1d2ef",
+        "source_type": "content"
+      }
+    },
+    "query_parameters": {
       "optional": [
         "limit",
         "cursor",
@@ -583,8 +572,6 @@ a different payload preserves the existing `409 source_conflict` behavior.
         "created_before"
       ],
       "example": {
-        "scope_id": "git:github.com/acme/payments",
-        "source_type": "content",
         "limit": 50
       }
     }
@@ -595,7 +582,7 @@ a different payload preserves the existing `409 source_conflict` behavior.
     "body": {
       "items": [
         {
-          "scope_id": "git:github.com/acme/payments",
+          "scope_id": "scp_01j8m4v2n7q9x3k6c5t0b1d2ef",
           "source_ref": {
             "source_type": "content",
             "source_id": "src_01J..."
@@ -621,10 +608,17 @@ a different payload preserves the existing `409 source_conflict` behavior.
   "operation_id": "search_sources",
   "request": {
     "method": "GET",
-    "path": "/v1/source-search-results",
+    "path": "/v1/scopes/{scope_id}/source-search-results",
+    "path_parameters": {
+      "required": [
+        "scope_id"
+      ],
+      "example": {
+        "scope_id": "scp_01j8m4v2n7q9x3k6c5t0b1d2ef"
+      }
+    },
     "query_parameters": {
       "required": [
-        "scope_id",
         "source_type"
       ],
       "optional": [
@@ -637,14 +631,12 @@ a different payload preserves the existing `409 source_conflict` behavior.
       ],
       "examples": {
         "ranked": {
-          "scope_id": "git:github.com/acme/payments",
           "source_type": "content",
           "q": "manual review",
           "mode": "auto",
           "limit": 20
         },
         "without_query": {
-          "scope_id": "git:github.com/acme/payments",
           "source_type": "content",
           "created_after": "2026-09-01T00:00:00Z",
           "limit": 20
@@ -717,14 +709,22 @@ assembled Runtime instead of adding another set of endpoints.
   "operation_id": "create_artifact",
   "request": {
     "method": "POST",
-    "path": "/v1/artifacts",
+    "path": "/v1/scopes/{scope_id}/artifacts/{family}",
+    "path_parameters": {
+      "required": [
+        "scope_id",
+        "family"
+      ],
+      "example": {
+        "scope_id": "scp_01j8m4v2n7q9x3k6c5t0b1d2ef",
+        "family": "company.example.decision"
+      }
+    },
     "headers": {
       "Content-Type": "application/json"
     },
     "body": {
       "required_fields": [
-        "scope_id",
-        "family",
         "schema_version",
         "content"
       ],
@@ -736,8 +736,6 @@ assembled Runtime instead of adding another set of endpoints.
         "idempotency_key"
       ],
       "example": {
-        "scope_id": "git:github.com/acme/payments",
-        "family": "company.example.decision",
         "artifact_id": "dec_01J...",
         "schema_version": 1,
         "metadata": {
@@ -761,11 +759,11 @@ assembled Runtime instead of adding another set of endpoints.
     "status": 201,
     "schema": "ArtifactRevision",
     "headers": {
-      "Location": "/v1/artifacts/dec_01J...?scope_id=git%3Agithub.com%2Facme%2Fpayments&family=company.example.decision",
+      "Location": "/v1/scopes/scp_01j8m4v2n7q9x3k6c5t0b1d2ef/artifacts/company.example.decision/dec_01J...",
       "ETag": "revision:1"
     },
     "body": {
-      "scope_id": "git:github.com/acme/payments",
+      "scope_id": "scp_01j8m4v2n7q9x3k6c5t0b1d2ef",
       "artifact_ref": {
         "family": "company.example.decision",
         "artifact_id": "dec_01J...",
@@ -805,23 +803,17 @@ Artifact, while a different canonical request returns `409 idempotency_conflict`
   "operation_id": "get_artifact",
   "request": {
     "method": "GET",
-    "path": "/v1/artifacts/{artifact_id}",
+    "path": "/v1/scopes/{scope_id}/artifacts/{family}/{artifact_id}",
     "path_parameters": {
       "required": [
+        "scope_id",
+        "family",
         "artifact_id"
       ],
       "example": {
+        "scope_id": "scp_01j8m4v2n7q9x3k6c5t0b1d2ef",
+        "family": "company.example.decision",
         "artifact_id": "dec_01J..."
-      }
-    },
-    "query_parameters": {
-      "required": [
-        "scope_id",
-        "family"
-      ],
-      "example": {
-        "scope_id": "git:github.com/acme/payments",
-        "family": "company.example.decision"
       }
     }
   },
@@ -832,7 +824,7 @@ Artifact, while a different canonical request returns `409 idempotency_conflict`
       "ETag": "revision:1"
     },
     "body": {
-      "scope_id": "git:github.com/acme/payments",
+      "scope_id": "scp_01j8m4v2n7q9x3k6c5t0b1d2ef",
       "artifact_ref": {
         "family": "company.example.decision",
         "artifact_id": "dec_01J...",
@@ -872,25 +864,19 @@ Artifact, while a different canonical request returns `409 idempotency_conflict`
   "operation_id": "get_artifact_revision",
   "request": {
     "method": "GET",
-    "path": "/v1/artifacts/{artifact_id}/revisions/{revision}",
+    "path": "/v1/scopes/{scope_id}/artifacts/{family}/{artifact_id}/revisions/{revision}",
     "path_parameters": {
       "required": [
+        "scope_id",
+        "family",
         "artifact_id",
         "revision"
       ],
       "example": {
+        "scope_id": "scp_01j8m4v2n7q9x3k6c5t0b1d2ef",
+        "family": "company.example.decision",
         "artifact_id": "dec_01J...",
         "revision": 1
-      }
-    },
-    "query_parameters": {
-      "required": [
-        "scope_id",
-        "family"
-      ],
-      "example": {
-        "scope_id": "git:github.com/acme/payments",
-        "family": "company.example.decision"
       }
     }
   },
@@ -899,7 +885,7 @@ Artifact, while a different canonical request returns `409 idempotency_conflict`
     "schema": "ArtifactRevision",
     "headers": {},
     "body": {
-      "scope_id": "git:github.com/acme/payments",
+      "scope_id": "scp_01j8m4v2n7q9x3k6c5t0b1d2ef",
       "artifact_ref": {
         "family": "company.example.decision",
         "artifact_id": "dec_01J...",
@@ -942,12 +928,18 @@ later replacement or deletion.
   "operation_id": "list_artifacts",
   "request": {
     "method": "GET",
-    "path": "/v1/artifacts",
-    "query_parameters": {
+    "path": "/v1/scopes/{scope_id}/artifacts/{family}",
+    "path_parameters": {
       "required": [
         "scope_id",
         "family"
       ],
+      "example": {
+        "scope_id": "scp_01j8m4v2n7q9x3k6c5t0b1d2ef",
+        "family": "company.example.decision"
+      }
+    },
+    "query_parameters": {
       "optional": [
         "limit",
         "cursor",
@@ -955,8 +947,6 @@ later replacement or deletion.
         "created_before"
       ],
       "example": {
-        "scope_id": "git:github.com/acme/payments",
-        "family": "company.example.decision",
         "limit": 50
       }
     }
@@ -993,10 +983,17 @@ later replacement or deletion.
   "operation_id": "search_artifacts",
   "request": {
     "method": "GET",
-    "path": "/v1/artifact-search-results",
+    "path": "/v1/scopes/{scope_id}/artifact-search-results",
+    "path_parameters": {
+      "required": [
+        "scope_id"
+      ],
+      "example": {
+        "scope_id": "scp_01j8m4v2n7q9x3k6c5t0b1d2ef"
+      }
+    },
     "query_parameters": {
       "required": [
-        "scope_id",
         "family"
       ],
       "optional": [
@@ -1008,7 +1005,6 @@ later replacement or deletion.
         "created_before"
       ],
       "example": {
-        "scope_id": "git:github.com/acme/payments",
         "family": "company.example.decision",
         "q": "manual review",
         "mode": "auto",
@@ -1062,23 +1058,17 @@ later replacement or deletion.
   "operation_id": "replace_artifact",
   "request": {
     "method": "PUT",
-    "path": "/v1/artifacts/{artifact_id}",
+    "path": "/v1/scopes/{scope_id}/artifacts/{family}/{artifact_id}",
     "path_parameters": {
       "required": [
+        "scope_id",
+        "family",
         "artifact_id"
       ],
       "example": {
+        "scope_id": "scp_01j8m4v2n7q9x3k6c5t0b1d2ef",
+        "family": "company.example.decision",
         "artifact_id": "dec_01J..."
-      }
-    },
-    "query_parameters": {
-      "required": [
-        "scope_id",
-        "family"
-      ],
-      "example": {
-        "scope_id": "git:github.com/acme/payments",
-        "family": "company.example.decision"
       }
     },
     "headers": {
@@ -1130,7 +1120,7 @@ later replacement or deletion.
       "ETag": "revision:2"
     },
     "body": {
-      "scope_id": "git:github.com/acme/payments",
+      "scope_id": "scp_01j8m4v2n7q9x3k6c5t0b1d2ef",
       "artifact_ref": {
         "family": "company.example.decision",
         "artifact_id": "dec_01J...",
@@ -1191,23 +1181,17 @@ later replacement or deletion.
   "operation_id": "delete_artifact",
   "request": {
     "method": "DELETE",
-    "path": "/v1/artifacts/{artifact_id}",
+    "path": "/v1/scopes/{scope_id}/artifacts/{family}/{artifact_id}",
     "path_parameters": {
       "required": [
+        "scope_id",
+        "family",
         "artifact_id"
       ],
       "example": {
+        "scope_id": "scp_01j8m4v2n7q9x3k6c5t0b1d2ef",
+        "family": "company.example.decision",
         "artifact_id": "dec_01J..."
-      }
-    },
-    "query_parameters": {
-      "required": [
-        "scope_id",
-        "family"
-      ],
-      "example": {
-        "scope_id": "git:github.com/acme/payments",
-        "family": "company.example.decision"
       }
     },
     "headers": {
@@ -1355,8 +1339,9 @@ A fixed Artifact path does not imply that every family accepts direct writes:
 Candidate is not an Artifact. Pending and rejected Candidates never appear in Artifact list/search. Only an approved
 Candidate whose result was committed can be read as an Artifact.
 
-`/v1/capabilities` should report the actions supported by each Source type and Artifact family. Callers must not
-assume every assembled deployment supports every mutation.
+Supported base actions come from Source-type and Artifact-family registration in the assembled Runtime. An
+unsupported base action returns `405 operation_not_supported`. This RFC adds or extends no capability-discovery
+endpoint.
 
 ## Error model
 
@@ -1401,11 +1386,6 @@ The operations reuse the existing error envelope and stabilize these codes:
     "meaning": "an operation that supports idempotency keys bound the same key to a different canonical request; this includes the new Source Create operation"
   },
   {
-    "http_status": 409,
-    "code": "source_conflict",
-    "meaning": "the same caller-supplied identity for the compatibility Source capture operation was bound to a different canonical payload"
-  },
-  {
     "http_status": 412,
     "code": "revision_conflict",
     "meaning": "If-Match does not identify the current Artifact head"
@@ -1432,15 +1412,6 @@ The operations reuse the existing error envelope and stabilize these codes:
 
 ```json
 [
-  {
-    "new_api": "POST /v1/sources",
-    "existing_api": [
-      "POST /v1/sources/content",
-      "capture_content_source"
-    ],
-    "relationship": "reuse the durable Source write with different identity inputs and HTTP responses",
-    "compatibility_rule": "the new API requires Idempotency-Key, generates source_id, and returns 201 SourceRecord; the compatibility API still accepts source_id and returns 202 CaptureContentSourceResponse"
-  },
   {
     "new_api": "Source Get/List/Search",
     "existing_api": null,
@@ -1495,10 +1466,9 @@ The operations reuse the existing error envelope and stabilize these codes:
 ]
 ```
 
-No current domain endpoint is removed or deprecated by this RFC. The shared wire model is nevertheless a breaking
-field rename: every `SourceReference.name` becomes `SourceReference.source_type` in the same OpenAPI change. Parity
-tests ensure overlapping entries resolve to the same durable Source or Artifact revision, digest, lineage,
-authorization result, and error semantics.
+This RFC does not modify any existing API contract. The new base entry points must read the same authoritative
+Source/Artifact Revision, content digest, lineage, and authorization result instead of creating a second business
+record or an independent identity space.
 
 ## OpenAPI and implementation
 
@@ -1509,7 +1479,7 @@ and Client methods encode path segments, query values, and `If-Match` without ad
 {
   "contract_source": "openapi/powercontext.yaml",
   "schemas": [
-    "SourceReference",
+    "SourceRef",
     "SourceRecord",
     "CreateSourceRequest",
     "SourceSummary",
@@ -1538,6 +1508,11 @@ and Client methods encode path segments, query values, and `If-Match` without ad
 }
 ```
 
+OpenAPI must also declare the `Idempotency-Key` and `If-Match` request headers and the `ETag` response header. It
+must not add a Source/Artifact union schema, common selector, or common reference envelope. Family-specific
+`content` is validated against schemas registered in the assembled Runtime; generated Clients expose it as a JSON
+object while existing Family APIs retain their typed experience.
+
 The persistence implementation uses the existing Source journal, Artifact revision table, Artifact head table, and
 lineage tables. Timestamp, digest, schema metadata, and deletion state may use compatible side tables so existing
 databases do not require destructive column rewrites. Historical rows without optional projected metadata remain
@@ -1545,14 +1520,15 @@ readable. SQLite and OceanBase must pass the same behavioral contract.
 
 The implementation sequence is:
 
-1. rename the shared `SourceReference.name` field to `source_type` in OpenAPI and migrate Server mapping, generated
-   Clients, CLI, web UI, and contract tests together;
-2. add Source create/get/list and the Source search-result collection, with required `Idempotency-Key` and a
-   server-generated `source_id` for Create;
-3. add the Artifact paths and schemas to OpenAPI and regenerate Python and JavaScript operation bindings;
-4. add shared Source/Artifact application services and route overlapping reads/writes through them;
-5. add cursor, optimistic concurrency, tombstone, family-capability, and durable idempotency behavior;
-6. add Client methods and contract, persistence, server, and end-to-end tests.
+1. add a `{source_type, source_id}` `SourceRef` schema for the new base API without modifying an existing HTTP
+   schema;
+2. add `POST /v1/scopes/{scope_id}/sources/{source_type}`, requiring `Idempotency-Key` and generating `source_id`
+   server-side, plus Source Get/List paths that use the same composite-key prefix and a Scope-bound Search path;
+3. add Artifact create, head get, exact revision get, list, search-result, replace, and delete paths addressed by
+   `(scope_id, family, artifact_id[, revision])`;
+4. add shared Source/Artifact application services and route the new entry points to the authoritative repositories;
+5. regenerate checked-in Clients and add equivalent SQLite and OceanBase contract, cursor, CAS, authorization, and
+   idempotency tests.
 
 ## Acceptance criteria
 
@@ -1561,10 +1537,11 @@ The implementation sequence is:
 | No umbrella concept | no shared Source/Artifact selector, union request/response, or kind field |
 | No write-time generation | Source create carries and returns only durable Source state |
 | Source operations | only create/get/list/search are exposed |
-| Source list/search | `GET /v1/sources` uses `list_sources`; `GET /v1/source-search-results` uses `search_sources`; there is no `type` dispatcher and `q` is optional for Search |
+| Source list/search | `GET /v1/scopes/{scope_id}/sources/{source_type}` uses `list_sources`; `GET /v1/scopes/{scope_id}/source-search-results` uses `search_sources`; Search treats `source_type` as a query filter and `q` is optional |
 | Artifact operations | fixed create/get/list/search/replace/delete paths; replace commits an immutable next revision |
-| Exact identity | SourceReference is `{source_type, source_id}` with no revision; every Artifact response has an exact revision |
-| Server-generated Source identity | `POST /v1/sources` rejects `source_id`; the server returns an opaque ID in the body and `Location` |
+| Exact identity | the Source table key is `(scope_id, source_type, source_id)`; Artifact heads and revisions use `(scope_id, family, artifact_id)` and the same key plus `revision` respectively |
+| Canonical URI | identity or identity-prefix fields are in Create/Get/List/Replace/Delete paths; Search keeps only `scope_id` in the path and uses query parameters for search filters |
+| Server-generated Source identity | `POST /v1/scopes/{scope_id}/sources/{source_type}` rejects `source_id`; the server returns an opaque ID in the body and `Location` |
 | Source Create idempotency | `Idempotency-Key` is required; the same key/request returns the same Source and position, while a different request returns `409 idempotency_conflict` |
 | Scope required | every Source/Artifact operation names one `scope_id` |
 | Scope dependency | this RFC defines no Scope API; all operations use a `scope_id` supplied by the PR #1401 Scope API |
@@ -1572,20 +1549,19 @@ The implementation sequence is:
 | Concurrency | replace/delete require current ETag; missing is `428`, stale is `412` |
 | Review gate | Review families cannot be mutated through direct Artifact operations |
 | Memory boundary | Source create and Memory flush are separate; flush processes a bounded pending window |
-| Compatibility | existing paths, operations, and domain behavior remain; every shared SourceReference wire field migrates from `name` to `source_type` |
-| Source Create compatibility | the new operation generates the ID and returns `201`; `/v1/sources/content` keeps caller-supplied IDs and `202`, with `409 source_conflict` for a different payload |
+| Compatibility | this RFC changes no existing path, operation, request/response schema, status, idempotency rule, or domain behavior |
 | Extensibility | adding a direct Artifact family adds no base path or generated Client method |
 
 # Drawbacks
 
 - Base Artifact content is generic JSON in generated clients, so a typed family endpoint remains more ergonomic.
 - Old and new read paths coexist and require shared services plus parity tests to prevent drift.
-- Direct and reviewed families support different mutations, so clients must inspect capabilities.
+- Direct and reviewed families support different mutations, so clients must handle `405 operation_not_supported`.
 - Logical deletion must remain compatible with lineage validation and retention.
 - Source create and Memory flush are not one transaction; callers must handle a durable Source followed by a
   retryable flush failure.
-- Renaming `SourceReference.name` to `source_type` is a breaking field change that requires generated Clients and all
-  callers to migrate together.
+- Putting composite-key components in the path requires consistent path-segment encoding by the Server and gateway;
+  otherwise, legacy identifiers containing reserved characters may not be addressable.
 - Source and Artifact each add a dedicated search-result collection and response schema. This slightly enlarges the
   OpenAPI surface but keeps generated Client methods and return types explicit and symmetric.
 
