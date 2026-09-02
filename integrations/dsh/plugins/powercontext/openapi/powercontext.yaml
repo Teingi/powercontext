@@ -82,6 +82,8 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+        "503":
+          $ref: "#/components/responses/Unavailable"
   /v1/sources/content:
     post:
       tags: [sources]
@@ -1431,6 +1433,8 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "422":
           $ref: "#/components/responses/InvalidRequest"
+        "503":
+          $ref: "#/components/responses/Unavailable"
         "500":
           $ref: "#/components/responses/InternalError"
   /v1/handoff-reports/projects/list:
@@ -1461,6 +1465,8 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "422":
           $ref: "#/components/responses/InvalidRequest"
+        "503":
+          $ref: "#/components/responses/Unavailable"
         "500":
           $ref: "#/components/responses/InternalError"
   /v1/handoff-reports/scopes/list-known:
@@ -1491,6 +1497,8 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "422":
           $ref: "#/components/responses/InvalidRequest"
+        "503":
+          $ref: "#/components/responses/Unavailable"
         "500":
           $ref: "#/components/responses/InternalError"
   /v1/handoff-reports/projects/get:
@@ -1523,6 +1531,8 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "422":
           $ref: "#/components/responses/InvalidRequest"
+        "503":
+          $ref: "#/components/responses/Unavailable"
         "500":
           $ref: "#/components/responses/InternalError"
   /v1/handoff-reports/projects/update:
@@ -1557,6 +1567,8 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "422":
           $ref: "#/components/responses/InvalidRequest"
+        "503":
+          $ref: "#/components/responses/Unavailable"
         "500":
           $ref: "#/components/responses/InternalError"
   /v1/handoff-reports/workstreams/register:
@@ -1591,6 +1603,8 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "422":
           $ref: "#/components/responses/InvalidRequest"
+        "503":
+          $ref: "#/components/responses/Unavailable"
         "500":
           $ref: "#/components/responses/InternalError"
   /v1/handoff-reports/workstreams/list:
@@ -1623,6 +1637,8 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "422":
           $ref: "#/components/responses/InvalidRequest"
+        "503":
+          $ref: "#/components/responses/Unavailable"
         "500":
           $ref: "#/components/responses/InternalError"
   /v1/handoff-reports/workstreams/update:
@@ -1657,6 +1673,8 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "422":
           $ref: "#/components/responses/InvalidRequest"
+        "503":
+          $ref: "#/components/responses/Unavailable"
         "500":
           $ref: "#/components/responses/InternalError"
   /v1/handoff-reports/get:
@@ -1749,6 +1767,8 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "422":
           $ref: "#/components/responses/InvalidRequest"
+        "503":
+          $ref: "#/components/responses/Unavailable"
         "500":
           $ref: "#/components/responses/InternalError"
   /v1/handoff-reports/activities/list:
@@ -1781,6 +1801,8 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "422":
           $ref: "#/components/responses/InvalidRequest"
+        "503":
+          $ref: "#/components/responses/Unavailable"
         "500":
           $ref: "#/components/responses/InternalError"
   /v1/handoff-reports/activities/purge:
@@ -1813,6 +1835,8 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "422":
           $ref: "#/components/responses/InvalidRequest"
+        "503":
+          $ref: "#/components/responses/Unavailable"
         "500":
           $ref: "#/components/responses/InternalError"
   /v1/handoff-reports/workspace-bindings/get:
@@ -1845,6 +1869,8 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "422":
           $ref: "#/components/responses/InvalidRequest"
+        "503":
+          $ref: "#/components/responses/Unavailable"
         "500":
           $ref: "#/components/responses/InternalError"
   /v1/handoff-reports/workspace-bindings/attach:
@@ -1879,6 +1905,8 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "422":
           $ref: "#/components/responses/InvalidRequest"
+        "503":
+          $ref: "#/components/responses/Unavailable"
         "500":
           $ref: "#/components/responses/InternalError"
   /v1/handoff-reports/workspace-bindings/detach:
@@ -1913,6 +1941,8 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "422":
           $ref: "#/components/responses/InvalidRequest"
+        "503":
+          $ref: "#/components/responses/Unavailable"
         "500":
           $ref: "#/components/responses/InternalError"
   /v1/access/me:
@@ -2040,6 +2070,8 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "422":
           $ref: "#/components/responses/InvalidRequest"
+        "503":
+          $ref: "#/components/responses/Unavailable"
   /v1/access/bindings/list:
     post:
       tags: [access]

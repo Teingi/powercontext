@@ -22,6 +22,7 @@ from typing import Any, TypeGuard
 import httpx
 from pydantic import SecretStr
 
+from powercontext.limits import MAX_POLICY_REVISION_LENGTH
 from powercontext.server.authz.errors import AccessUnavailableError
 from powercontext.server.authz.models import AccessDecision, MemoryEntrySelector, ResourceRef
 from powercontext.server.authz.service import (
@@ -180,7 +181,7 @@ def _decision(value: object) -> AccessDecision:
 def _valid_policy_revision(value: object) -> TypeGuard[str]:
     return (
         isinstance(value, str)
-        and 0 < len(value) <= 128
+        and 0 < len(value) <= MAX_POLICY_REVISION_LENGTH
         and value[0].isalnum()
         and all(character.isascii() and (character.isalnum() or character in "._-") for character in value)
     )

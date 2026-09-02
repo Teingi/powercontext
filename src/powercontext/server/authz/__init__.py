@@ -52,6 +52,7 @@ from powercontext.server.authz.service import (
     CreateBinding,
     RelationshipWriter,
     ResourceSearchRequest,
+    access_control_for_mode,
 )
 
 __all__ = (
@@ -88,4 +89,5 @@ __all__ = (
     "RelationshipWriter",
     "ResourceRef",
     "ResourceSearchRequest",
+    "access_control_for_mode",
 )

@@ -42,7 +42,12 @@ from powercontext.builtin.review import CandidateStatus
 from powercontext.builtin.runtime import GetArtifactCandidateRequest, GetSkillRequest, ListExternalSkillsRequest
 from powercontext.http import ErrorDetail, ErrorResponse
 from powercontext.limits import MAX_ARTIFACT_ID_LENGTH
-from powercontext.server.authz import AccessAction, AccessAuditContext, AccessControlService, ResourceRef
+from powercontext.server.authz import (
+    AccessAction,
+    AccessAuditContext,
+    ResourceRef,
+    access_control_for_mode,
+)
 from powercontext.server.context import current_principal, current_request_id
 
 logger = logging.getLogger(__name__)
@@ -384,7 +389,10 @@ async def _visible_dashboard_scopes(
     request: Request,
     dashboard_scopes: tuple[DashboardScope, ...],
 ) -> tuple[DashboardScope, ...]:
-    access: AccessControlService | None = request.app.state.access_control
+    access = access_control_for_mode(
+        request.app.state.access_control,
+        mode=request.app.state.access_mode,
+    )
     if access is None or not dashboard_scopes:
         return dashboard_scopes
     checks = tuple((AccessAction.SCOPE_READ, ResourceRef.scope(item.scope_id)) for item in dashboard_scopes)
@@ -403,7 +411,10 @@ async def _authorize_dashboard_skill(
     operation: str,
     publish: bool = False,
 ) -> None:
-    access: AccessControlService | None = request.app.state.access_control
+    access = access_control_for_mode(
+        request.app.state.access_control,
+        mode=request.app.state.access_mode,
+    )
     if access is None:
         return
     resource = ResourceRef.artifact(

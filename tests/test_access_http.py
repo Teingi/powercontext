@@ -56,6 +56,20 @@ def test_enforced_mode_cannot_silently_start_without_authentication_or_provider(
         create_server_app(settings=ServerSettings(access=AccessControlConfig(mode="enforced")))
 
 
+def test_low_level_enforced_app_fails_closed_without_an_authorization_provider() -> None:
+    async def scenario() -> None:
+        async with _client(create_app(access_mode="enforced")) as client:
+            readiness = await client.get("/health/ready")
+            capabilities = await client.get("/v1/capabilities")
+
+        assert readiness.status_code == 503
+        assert readiness.json()["checks"]["access_provider"] == "not_ready"
+        assert capabilities.status_code == 503
+        assert capabilities.json()["error"]["code"] == "access_unavailable"
+
+    asyncio.run(scenario())
+
+
 class _HandoffShareability:
     def for_scope(self, scope_id: str) -> Self:
         del scope_id

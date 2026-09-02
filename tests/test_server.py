@@ -19,6 +19,7 @@ import re
 import shlex
 from datetime import datetime, timedelta
 from pathlib import Path
+from typing import cast
 
 import httpx
 import pytest
@@ -44,8 +45,16 @@ from powercontext.http import (
     ReadinessStatus,
 )
 from powercontext.server.app import create_app
+from powercontext.server.authz import AccessControlService
 from powercontext.server.factory import create_server_app
-from powercontext.server.settings import BearerAuthConfig, McpConfig, ServerSettings
+from powercontext.server.settings import (
+    AccessControlConfig,
+    BearerAuthConfig,
+    DashboardConfig,
+    DashboardScopeConfig,
+    McpConfig,
+    ServerSettings,
+)
 from powercontext.sources import Source
 
 _ACCESS_FAMILIES = "experience:enabled,handoff:enabled,memory:enabled,prompt:disabled,skill:enabled"
@@ -346,6 +355,43 @@ def test_server_factory_optionally_requires_bearer_authentication() -> None:
     assert accepted_metrics.status_code == 200
     assert liveness.status_code == 200
     assert scalar_reference.status_code == 200
+
+
+def test_enforced_mode_fails_closed_if_the_authorization_provider_disappears(tmp_path) -> None:
+    app = create_server_app(
+        settings=ServerSettings(
+            auth=BearerAuthConfig(enabled=True, token=SecretStr("server-secret")),
+            access=AccessControlConfig(mode="enforced"),
+            dashboard=DashboardConfig(scopes=[DashboardScopeConfig(scope_id="scope-a", display_name="Scope A")]),
+            database=SQLiteConfig(url=f"sqlite+aiosqlite:///{tmp_path / 'runtime.db'}"),
+            mcp=McpConfig(enabled=False),
+        ),
+        access_control=cast(AccessControlService, object()),
+    )
+    headers = {"Authorization": "Bearer server-secret"}
+
+    with TestClient(app) as client:
+        app.state.access_control = None
+        readiness = client.get("/health/ready")
+        protected = (
+            client.get("/v1/capabilities", headers=headers),
+            client.get("/metrics", headers=headers),
+            client.get("/dashboard/scopes", headers=headers),
+            client.post(
+                "/dashboard/skill-projections/status",
+                headers=headers,
+                json={
+                    "scope_id": "scope-a",
+                    "candidate_id": "candidate-a",
+                    "artifact": {"family": "skill", "artifact_id": "skill-a", "revision": 1},
+                },
+            ),
+        )
+
+    assert readiness.status_code == 503
+    assert readiness.json()["checks"]["access_provider"] == "not_ready"
+    assert all(response.status_code == 503 for response in protected)
+    assert all(response.json()["error"]["code"] == "access_unavailable" for response in protected)
 
 
 def test_server_factory_maps_static_token_to_bootstrap_principal() -> None:

@@ -41,7 +41,14 @@ from powercontext.http import Capabilities, MemorySearchMode, PreparedContextSch
 from powercontext.paths import default_scheduler_path
 from powercontext.server.access import HttpAccessLogMiddleware
 from powercontext.server.app import create_app
-from powercontext.server.authz import AccessAction, AccessAuditContext, AccessControlService, PrincipalRef, ResourceRef
+from powercontext.server.authz import (
+    AccessAction,
+    AccessAuditContext,
+    AccessControlService,
+    PrincipalRef,
+    ResourceRef,
+    access_control_for_mode,
+)
 from powercontext.server.authz.composition import open_builtin_access_control
 from powercontext.server.context import current_principal, current_request_id
 from powercontext.server.mcp import mount_mcp
@@ -59,7 +66,10 @@ class _MetricsEndpoint:
         self._metrics = metrics
 
     async def __call__(self, request: Request) -> Response:
-        access: AccessControlService | None = request.app.state.access_control
+        access = access_control_for_mode(
+            request.app.state.access_control,
+            mode=request.app.state.access_mode,
+        )
         if access is not None:
             await access.require(
                 current_principal(),

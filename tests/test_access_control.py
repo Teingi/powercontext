@@ -16,15 +16,23 @@ from __future__ import annotations
 
 import asyncio
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
+from typing import cast
+from unittest.mock import AsyncMock
 
 import pytest
+from sqlalchemy.dialects import mysql
+from sqlalchemy.ext.asyncio import AsyncConnection
+from sqlalchemy.schema import CreateTable
 
 from powercontext.builtin.persistence.sqlite import SQLiteConfig, SQLiteProfile
 from powercontext.server.authz import (
     AccessAction,
     AccessAuditContext,
+    AccessAuditStore,
     AccessConflictError,
     AccessControlService,
+    AccessDecision,
     AccessDeniedError,
     AccessInvalidRequestError,
     AccessProviderCapabilities,
@@ -32,13 +40,20 @@ from powercontext.server.authz import (
     AccessResourceType,
     AccessRole,
     AccessUnavailableError,
+    AuthorizationProvider,
     BuiltinAuthorizationProvider,
     CreateBinding,
     MemoryEntrySelector,
     PrincipalRef,
     ResourceRef,
 )
-from powercontext.server.authz.repository import ACCESS_TABLES, RelationalAccessRepository
+from powercontext.server.authz.repository import (
+    ACCESS_AUDIT_EVENTS_TABLE,
+    ACCESS_BINDINGS_TABLE,
+    ACCESS_TABLES,
+    RelationalAccessRepository,
+    ensure_access_policy_revision_columns,
+)
 
 NOW = datetime(2026, 8, 30, 10, tzinfo=UTC)
 ADMIN = PrincipalRef(type="user", issuer="https://identity.example", id="admin")
@@ -469,6 +484,66 @@ def test_access_self_is_not_exposed_as_a_public_audit_action() -> None:
             assert await repository.list_audit() == ()
 
     asyncio.run(scenario())
+
+
+def test_access_service_enforces_the_policy_revision_contract_boundary() -> None:
+    provider = SimpleNamespace(
+        check=AsyncMock(return_value=AccessDecision(True, "provider-allow", "r" * 64)),
+    )
+    audit = SimpleNamespace(append_audit=AsyncMock())
+    service = AccessControlService(
+        cast(AuthorizationProvider, provider),
+        relationships=None,
+        audit=cast(AccessAuditStore, audit),
+    )
+
+    accepted = asyncio.run(
+        service.check(
+            BOB,
+            AccessAction.SERVER_OBSERVE,
+            ResourceRef.server(),
+            context=AUDIT,
+        )
+    )
+    assert accepted.policy_revision == "r" * 64
+
+    provider.check.return_value = AccessDecision(True, "provider-allow", "r" * 65)
+    with pytest.raises(AccessUnavailableError):
+        asyncio.run(
+            service.check(
+                BOB,
+                AccessAction.SERVER_OBSERVE,
+                ResourceRef.server(),
+                context=AUDIT,
+            )
+        )
+
+
+def test_access_schema_and_mysql_migration_use_the_policy_revision_contract_limit() -> None:
+    bindings = str(CreateTable(ACCESS_BINDINGS_TABLE).compile(dialect=mysql.dialect()))
+    audit = str(CreateTable(ACCESS_AUDIT_EVENTS_TABLE).compile(dialect=mysql.dialect()))
+    assert "policy_revision VARCHAR(64)" in bindings
+    assert "policy_revision VARCHAR(64)" in audit
+
+    connection = SimpleNamespace(
+        dialect=SimpleNamespace(name="mysql"),
+        scalar=AsyncMock(side_effect=(32, 32)),
+        exec_driver_sql=AsyncMock(),
+    )
+    asyncio.run(ensure_access_policy_revision_columns(cast(AsyncConnection, connection)))
+
+    migrations = [call.args[0] for call in connection.exec_driver_sql.await_args_list]
+    assert migrations == [
+        "ALTER TABLE pc_access_bindings MODIFY COLUMN policy_revision "
+        "VARCHAR(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL",
+        "ALTER TABLE pc_access_audit_events MODIFY COLUMN policy_revision "
+        "VARCHAR(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NULL",
+    ]
+
+    connection.scalar.side_effect = (64, 128)
+    connection.exec_driver_sql.reset_mock()
+    asyncio.run(ensure_access_policy_revision_columns(cast(AsyncConnection, connection)))
+    connection.exec_driver_sql.assert_not_awaited()
 
 
 def _service(database) -> tuple[AccessControlService, RelationalAccessRepository]:

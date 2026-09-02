@@ -299,6 +299,31 @@ def test_authzen_adapter_uses_standard_point_and_boxcar_shapes_and_fails_closed(
     asyncio.run(scenario())
 
 
+def test_authzen_adapter_enforces_the_policy_revision_contract_boundary() -> None:
+    request = AccessRequest(
+        subject=BOB,
+        action=AccessAction.SERVER_OBSERVE,
+        resource=ResourceRef.server(),
+        context=AUDIT,
+    )
+
+    async def evaluate(revision: str):
+        transport = httpx.MockTransport(
+            lambda _request: httpx.Response(
+                200,
+                json={"decision": True, "context": {"policy_revision": revision}},
+            )
+        )
+        async with httpx.AsyncClient(transport=transport) as client:
+            provider = AuthZenAuthorizationProvider("http://127.0.0.1:9876", http_client=client)
+            return await provider.check(request)
+
+    accepted = asyncio.run(evaluate("r" * 64))
+    assert accepted.policy_revision == "r" * 64
+    with pytest.raises(AccessUnavailableError):
+        asyncio.run(evaluate("r" * 65))
+
+
 def test_authzen_adapter_rejects_credential_urls_and_relationship_claims() -> None:
     with pytest.raises(ValueError, match="credential-free"):
         AuthZenAuthorizationProvider("https://user:secret@pdp.example")

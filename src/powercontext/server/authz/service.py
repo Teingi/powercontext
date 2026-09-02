@@ -23,6 +23,7 @@ from datetime import UTC, datetime
 from typing import Literal, Protocol, TypeVar
 from uuid import uuid4
 
+from powercontext.limits import MAX_POLICY_REVISION_LENGTH
 from powercontext.server.authz.errors import (
     AccessControlError,
     AccessDeniedError,
@@ -554,6 +555,18 @@ class AccessControlService:
         )
 
 
+def access_control_for_mode(
+    access_control: AccessControlService | None,
+    *,
+    mode: str,
+) -> AccessControlService | None:
+    """Return the active PDP, failing closed when enforcement requires one."""
+
+    if access_control is None and mode == "enforced":
+        raise AccessUnavailableError
+    return access_control
+
+
 def _validate_resource_list_query(
     *,
     action: AccessAction,
@@ -665,7 +678,9 @@ def _validate_provider_decision(value: object) -> None:
         or any(not character.isascii() or not (character.isalnum() or character in "._-") for character in reason)
     ):
         raise AccessUnavailableError
-    if value.policy_revision is not None and (not value.policy_revision or len(value.policy_revision) > 128):
+    if value.policy_revision is not None and (
+        not value.policy_revision or len(value.policy_revision) > MAX_POLICY_REVISION_LENGTH
+    ):
         raise AccessUnavailableError
 
 
@@ -711,4 +726,5 @@ __all__ = (
     "CreateBinding",
     "RelationshipWriter",
     "ResourceSearchRequest",
+    "access_control_for_mode",
 )

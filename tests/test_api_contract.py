@@ -138,6 +138,15 @@ def test_contract_declares_optional_bearer_authentication() -> None:
             assert "x-powercontext-access" in operation
 
 
+def test_every_access_protected_operation_declares_the_unavailable_response() -> None:
+    contract = yaml.safe_load(CONTRACT_PATH.read_text())
+
+    for path_item in contract["paths"].values():
+        operation = next(iter(path_item.values()))
+        if "x-powercontext-access" in operation:
+            assert operation["responses"]["503"] == {"$ref": "#/components/responses/Unavailable"}
+
+
 def test_capabilities_report_semantics_without_runtime_tuning_values() -> None:
     contract = yaml.safe_load(CONTRACT_PATH.read_text())
     schemas = contract["components"]["schemas"]
@@ -236,6 +245,9 @@ def test_access_contract_uses_stable_resource_kinds_family_profiles_and_skill_pu
     assert set(artifact["properties"]) == {"type", "scope_id", "reference", "selector"}
     selector = schemas["MemoryEntryAccessSelector"]
     assert selector["required"] == ["type", "entry_id", "entry_version_id"]
+    assert schemas["AccessDecision"]["properties"]["policy_revision"]["maxLength"] == 64
+    assert schemas["AccessBinding"]["properties"]["policy_revision"]["maxLength"] == 64
+    assert schemas["AccessAuditEvent"]["properties"]["policy_revision"]["maxLength"] == 64
 
     assert GET_MEMORY_ENTRY.access is not None
     assert GET_MEMORY_ENTRY.access.resolver == "exact_memory_access"

@@ -33,13 +33,20 @@ from sqlalchemy import (
     UniqueConstraint,
     insert,
     select,
+    text,
     update,
 )
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy.ext.asyncio import AsyncConnection
 
 from powercontext.builtin.persistence.database import AsyncDatabase
 from powercontext.builtin.persistence.tables import identity_string
-from powercontext.limits import MAX_ARTIFACT_FAMILY_LENGTH, MAX_ARTIFACT_ID_LENGTH, MAX_SCOPE_ID_LENGTH
+from powercontext.limits import (
+    MAX_ARTIFACT_FAMILY_LENGTH,
+    MAX_ARTIFACT_ID_LENGTH,
+    MAX_POLICY_REVISION_LENGTH,
+    MAX_SCOPE_ID_LENGTH,
+)
 from powercontext.server.authz.errors import AccessConflictError, AccessInvalidRequestError
 from powercontext.server.authz.models import (
     AccessAction,
@@ -89,7 +96,7 @@ ACCESS_BINDINGS_TABLE = Table(
     Column("expires_at", identity_string(32)),
     Column("state", identity_string(16), nullable=False),
     Column("version", Integer, nullable=False),
-    Column("policy_revision", identity_string(32), nullable=False),
+    Column("policy_revision", identity_string(MAX_POLICY_REVISION_LENGTH), nullable=False),
     Column("idempotency_key", identity_string(255), nullable=False),
     Column("idempotency_key_hash", identity_string(64), nullable=False),
     Column("revoked_at", identity_string(32)),
@@ -128,7 +135,7 @@ ACCESS_AUDIT_EVENTS_TABLE = Table(
     Column("selector_entry_version_id", identity_string(MAX_ARTIFACT_ID_LENGTH)),
     Column("allowed", Boolean, nullable=False),
     Column("reason_code", identity_string(64), nullable=False),
-    Column("policy_revision", identity_string(32)),
+    Column("policy_revision", identity_string(MAX_POLICY_REVISION_LENGTH)),
     Column("binding_id", identity_string(64)),
     Column("target_type", identity_string(64)),
     Column("target_issuer", identity_string(255)),
@@ -138,6 +145,43 @@ ACCESS_AUDIT_EVENTS_TABLE = Table(
 
 ACCESS_TABLES = (ACCESS_POLICY_HEADS_TABLE, ACCESS_BINDINGS_TABLE, ACCESS_AUDIT_EVENTS_TABLE)
 _POLICY_HEAD = "authorization"
+_MYSQL_POLICY_REVISION_LENGTH_SQL = text(
+    """
+    SELECT character_maximum_length
+    FROM information_schema.columns
+    WHERE table_schema = DATABASE()
+      AND table_name = :table_name
+      AND column_name = 'policy_revision'
+    """
+)
+_MYSQL_POLICY_REVISION_MIGRATIONS = {
+    "pc_access_bindings": (
+        "ALTER TABLE pc_access_bindings MODIFY COLUMN policy_revision "
+        f"VARCHAR({MAX_POLICY_REVISION_LENGTH}) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL"
+    ),
+    "pc_access_audit_events": (
+        "ALTER TABLE pc_access_audit_events MODIFY COLUMN policy_revision "
+        f"VARCHAR({MAX_POLICY_REVISION_LENGTH}) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NULL"
+    ),
+}
+
+
+async def ensure_access_policy_revision_columns(connection: AsyncConnection, /) -> None:
+    """Widen legacy MySQL-compatible Access revision columns without shrinking newer schemas."""
+
+    if connection.dialect.name == "sqlite":
+        # SQLite's VARCHAR length is descriptive and does not constrain stored text.
+        return
+    if connection.dialect.name != "mysql":
+        raise ValueError(f"unsupported Access schema migration dialect: {connection.dialect.name}")  # noqa: TRY003
+
+    for table_name, migration_sql in _MYSQL_POLICY_REVISION_MIGRATIONS.items():
+        current_length = await connection.scalar(
+            _MYSQL_POLICY_REVISION_LENGTH_SQL,
+            {"table_name": table_name},
+        )
+        if current_length is not None and int(current_length) < MAX_POLICY_REVISION_LENGTH:
+            await connection.exec_driver_sql(migration_sql)
 
 
 class RelationalAccessRepository:
@@ -556,4 +600,5 @@ def _idempotency_digest(resource: ResourceRef, idempotency_key: str) -> str:
 __all__ = (
     "ACCESS_TABLES",
     "RelationalAccessRepository",
+    "ensure_access_policy_revision_columns",
 )

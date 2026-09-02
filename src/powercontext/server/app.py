@@ -502,6 +502,7 @@ from powercontext.server.authz import (
     MemoryEntrySelector,
     PrincipalRef,
     ResourceRef,
+    access_control_for_mode,
 )
 from powercontext.server.authz.models import ROLE_ACTIONS, ROLE_RESOURCE_TYPES
 from powercontext.server.authz.profiles import ARTIFACT_FAMILY_PROFILES, artifact_family_profile
@@ -1829,7 +1830,10 @@ def _require_handoff_report_application(request: Request) -> HandoffReportApplic
 
 
 def _require_access_control(request: Request) -> AccessControlService:
-    access: AccessControlService | None = request.app.state.access_control
+    access = access_control_for_mode(
+        request.app.state.access_control,
+        mode=request.app.state.access_mode,
+    )
     if access is None:
         raise _RuntimeNotReadyError
     return access
@@ -2020,7 +2024,10 @@ def _authorization_dependency(
         raise AccessInvalidRequestError("resource")
 
     async def authorize(request: Request) -> None:
-        access: AccessControlService | None = request.app.state.access_control
+        access = access_control_for_mode(
+            request.app.state.access_control,
+            mode=request.app.state.access_mode,
+        )
         if access is not None:
             payload = await _authorization_payload(request, operation)
             checks = _resolve_access_requirements(requirement, payload, deployment_id=access.deployment_id)
