@@ -4,15 +4,18 @@
 
 # Summary
 
-This RFC adds independent, stable HTTP APIs for three existing PowerContext concepts:
+This RFC adds independent, stable HTTP APIs for two existing PowerContext concepts:
 
 - Source: create, get, list, and search;
-- Artifact: create, get, list, search, replace, and delete;
-- Scope: list every Scope observable by the caller.
+- Artifact: create, get, list, search, replace, and delete.
 
 The API reuses the existing Source, Artifact, immutable Artifact Revision, and Scope semantics. It does not add an
 umbrella object, a union reference, a shared selector, a type-registration endpoint, or a cross-kind list/search.
 Adding an Artifact family does not add another set of base paths or generated Client methods.
+
+Scope creation, retrieval, listing, organization, and bindings are defined by
+[PR #1401](https://github.com/oceanbase/powercontext/pull/1401). This RFC only consumes an already resolved
+`scope_id` as the boundary of Source and Artifact operations; it defines no Scope endpoint or schema.
 
 Writing and generation remain separate commit boundaries. `POST /v1/sources` durably creates a Source and returns
 that Source. A caller that needs immediate Memory extraction composes it with the existing
@@ -37,7 +40,6 @@ The required outcomes are:
 - list and search Sources by Scope and Source type;
 - create, read, list, search, revise, and delete Artifacts by Scope and family where the family permits it;
 - add future Artifact families without adding family-specific base endpoints;
-- discover observable `scope_id` values before querying Sources and Artifacts;
 - let clients explicitly compose Source creation with generation commands instead of making writes invoke models.
 
 # Goals
@@ -60,7 +62,7 @@ The required outcomes are:
 
 # Guide-level explanation
 
-## Source, Artifact, and Scope
+## Source and Artifact
 
 A Source is durable evidence with a stable `SourceReference`:
 
@@ -90,9 +92,9 @@ Create commits revision 1. Replace validates the current head and commits the ne
 revision URIs remain immutable.
 
 `scope_id` is the ownership, isolation, and query boundary for both concepts. It is neither a Source nor an
-Artifact. `GET /v1/scopes` reads the authoritative Scope application layer and returns only Scopes observable by
-the caller. Scope creation, metadata, organization parents, context references, and bindings remain governed by
-the Scope organization design.
+Artifact. Scope operations, metadata, organization parents, context references, bindings, pagination, and
+authorization remain owned by PR #1401. Callers resolve a `scope_id` through that API before using the operations
+defined here.
 
 ## Immediate Memory extraction
 
@@ -119,8 +121,8 @@ path suffixes. The mapping is:
 | --- | --- | --- | --- |
 | Create | submit to a collection | `POST` | `create_source`, `create_artifact` |
 | Get | read a named object or exact revision | `GET` | `get_source`, `get_artifact`, `get_artifact_revision` |
-| List | read a collection | `GET` | `search_sources` in list mode, `list_artifacts`, `list_scopes` |
-| Search | read a result collection | `GET` | `search_sources`, `search_artifacts` |
+| List | read a resource collection | `GET` | `list_sources`, `list_artifacts` |
+| Search | read a search-hit collection | `GET` | `search_sources`, `search_artifacts` |
 | Replace | fully replace the Artifact head | `PUT` | `replace_artifact` |
 | Delete | delete the current visible Artifact head | `DELETE` | `delete_artifact` |
 
@@ -128,6 +130,8 @@ The API additionally requires:
 
 - `scope_id` is a query or body field rather than a path segment because it may contain `:` and `/`;
 - `source_type` and `family` are query or body fields, so a new type or family does not add a path;
+- resource collection paths are reserved for List, while `/v1/source-search-results` and
+  `/v1/artifact-search-results` are read-only virtual collections for Search hits;
 - fields use the existing snake_case convention;
 - all path segments are RFC 3986 encoded and decoded exactly once;
 - `PUT` accepts only a complete replacement; partial updates require a future `PATCH` contract;
@@ -210,17 +214,13 @@ Each request addresses one `scope_id` and one `source_type`.
 | --- | --- | --- | --- | --- | --- |
 | Create Source | `POST /v1/sources` | `create_source` | Body: required `scope_id`, `source_type`, `source_id`, `content`; optional `metadata`. `source_id` is the caller-stable idempotent identity | `201 SourceRecord`; `Location` identifies the Source | `POST /v1/sources` with `{"scope_id":"git:github.com/acme/payments","source_type":"content","source_id":"refund-rule-001","content":"Refunds require manual review","metadata":{"media_type":"text/plain"}}` |
 | Get Source | `GET /v1/sources/{source_id}` | `get_source` | Query: required `scope_id`, `source_type` | `200 SourceRecord`; absent or invisible is `404` | `GET /v1/sources/refund-rule-001?scope_id=git%3Agithub.com%2Facme%2Fpayments&source_type=content` |
-| List Sources | `GET /v1/sources` | `search_sources` | Query: required `scope_id`, `source_type`; omitted `type` or `type=list`; optional `limit`, `cursor`; no `q` or `mode` | `200 SourcePage`; `query` and `mode` are null | `GET /v1/sources?scope_id=...&source_type=content&type=list&limit=50` |
-| Search Sources | `GET /v1/sources` | `search_sources` | Query: required `scope_id`, `source_type`, `type=search`, nonblank `q`; optional `mode`, `limit`, `cursor` | `200 SourcePage`; reports actual mode and optional score/snippets | `GET /v1/sources?scope_id=...&source_type=content&type=search&q=manual%20review&mode=auto` |
+| List Sources | `GET /v1/sources` | `list_sources` | Query: required `scope_id`, `source_type`; optional `limit`, `cursor`, and structured time filters | `200 SourcePage{items,next_cursor}` without ranking fields | `GET /v1/sources?scope_id=...&source_type=content&limit=50` |
+| Search Sources | `GET /v1/source-search-results` | `search_sources` | Query: required `scope_id`, `source_type`; optional `q`, filters, `limit`, `cursor`; optional `mode` when `q` is nonblank. Blank `q` is treated as omitted | `200 SourceSearchResultPage{query,mode,hits,next_cursor}` | `GET /v1/source-search-results?scope_id=...&source_type=content&q=manual%20review&mode=auto` |
 
-OpenAPI can define only one operation for one method and path. `GET /v1/sources` therefore has the single
-operationId `search_sources`:
-
-- omitted `type` or `type=list` performs deterministic listing;
-- `type=search` requires nonblank `q` and performs search;
-- `type` selects behavior while `source_type` identifies the Source type;
-- an unknown `type`, list request with `q`/`mode`, or search request without `q` returns `422 invalid_request`;
-- a cursor is bound to the caller, Scope, Source type, operation type, query, mode, filters, and ordering.
+List and Search have different paths, operationIds, and response schemas. `GET /v1/sources` is always
+`list_sources` and does not accept `type`, `q`, or `mode`. `GET /v1/source-search-results` is always
+`search_sources`; no query parameter switches it into List. Generated Clients therefore expose the symmetric
+methods `list_sources()` / `search_sources()` and `list_artifacts()` / `search_artifacts()`.
 
 ### Source create compatibility
 
@@ -246,9 +246,87 @@ HTTP/1.1 201 Created
 Location: /v1/sources/refund-rule-001?scope_id=git%3Agithub.com%2Facme%2Fpayments&source_type=content
 ```
 
+```json
+{
+  "scope_id": "git:github.com/acme/payments",
+  "source_ref": {"name": "content", "source_id": "refund-rule-001"},
+  "content": "Refunds require manual review.",
+  "metadata": {"media_type": "text/plain"},
+  "created_at": "2026-09-01T04:00:00Z",
+  "position": 42,
+  "content_digest": "sha256:..."
+}
+```
+
 Existing `POST /v1/sources/content` remains a strongly typed compatibility facade and keeps its `202 Accepted`
 response. Both operations delegate to the same durable write. Replaying the same identity and canonical payload is
 an idempotent success; reusing the identity for different content returns `409 idempotency_conflict`.
+
+### Source get example
+
+```http
+GET /v1/sources/refund-rule-001?scope_id=git%3Agithub.com%2Facme%2Fpayments&source_type=content
+```
+
+```json
+{
+  "scope_id": "git:github.com/acme/payments",
+  "source_ref": {"name": "content", "source_id": "refund-rule-001"},
+  "content": "Refunds require manual review.",
+  "metadata": {"title": "Refund constraint", "media_type": "text/plain"},
+  "created_at": "2026-09-01T04:00:00Z",
+  "position": 42,
+  "content_digest": "sha256:..."
+}
+```
+
+### Source list example
+
+```http
+GET /v1/sources?scope_id=git%3Agithub.com%2Facme%2Fpayments&source_type=content&limit=50
+```
+
+```json
+{
+  "items": [
+    {
+      "scope_id": "git:github.com/acme/payments",
+      "source_ref": {"name": "content", "source_id": "refund-rule-001"},
+      "metadata": {"title": "Refund constraint"},
+      "created_at": "2026-09-01T04:00:00Z",
+      "position": 42,
+      "content_digest": "sha256:..."
+    }
+  ],
+  "next_cursor": null
+}
+```
+
+### Source search example
+
+```http
+GET /v1/source-search-results?scope_id=git%3Agithub.com%2Facme%2Fpayments&source_type=content&q=manual%20review&mode=auto&limit=20
+```
+
+```json
+{
+  "query": "manual review",
+  "mode": "keyword",
+  "hits": [
+    {
+      "source_ref": {"name": "content", "source_id": "refund-rule-001"},
+      "metadata": {"title": "Refund constraint"},
+      "created_at": "2026-09-01T04:00:00Z",
+      "score": 0.91,
+      "snippets": ["Refunds require manual review."]
+    }
+  ],
+  "next_cursor": null
+}
+```
+
+When `q` is omitted, empty, or whitespace-only, Search returns the same result-page schema with `query: null`,
+`mode: null`, deterministic ordering, `score: null`, and empty snippets. The caller omits `mode` in that case.
 
 ## Artifact API
 
@@ -261,11 +339,11 @@ assembled Runtime instead of adding another set of endpoints.
 | Get current Artifact | `GET /v1/artifacts/{artifact_id}` | `get_artifact` | Query: required `scope_id`, `family` | `200 ArtifactRevision` plus `ETag` | `GET /v1/artifacts/dec_01J...?scope_id=...&family=company.example.decision` |
 | Get exact revision | `GET /v1/artifacts/{artifact_id}/revisions/{revision}` | `get_artifact_revision` | Query: required `scope_id`, `family`; path carries exact revision | `200 ArtifactRevision` | `GET /v1/artifacts/dec_01J.../revisions/2?scope_id=...&family=company.example.decision` |
 | List Artifacts | `GET /v1/artifacts` | `list_artifacts` | Query: required `scope_id`, `family`; optional `limit`, `cursor`; only current visible heads | `200 ArtifactPage` | `GET /v1/artifacts?scope_id=...&family=experience&limit=50` |
-| Search Artifacts | `GET /v1/artifact-search-results` | `search_artifacts` | Query: required `scope_id`, `family`, nonblank `q`; optional `mode`, `limit`, `cursor`; searches visible heads | `200 ArtifactSearchResultPage` | `GET /v1/artifact-search-results?scope_id=...&family=experience&q=manual%20review` |
+| Search Artifacts | `GET /v1/artifact-search-results` | `search_artifacts` | Query: required `scope_id`, `family`; optional `q`, filters, `limit`, `cursor`; optional `mode` when `q` is nonblank. Blank `q` is treated as omitted; searches visible heads | `200 ArtifactSearchResultPage` | `GET /v1/artifact-search-results?scope_id=...&family=experience&q=manual%20review` |
 | Replace Artifact | `PUT /v1/artifacts/{artifact_id}` | `replace_artifact` | Query/body identify `scope_id` and `family`; required `If-Match`; body is a complete replacement | `200 ArtifactRevision` plus new `ETag`; stale ETag is `412` | `PUT /v1/artifacts/dec_01J...?scope_id=...&family=company.example.decision` |
 | Delete Artifact | `DELETE /v1/artifacts/{artifact_id}` | `delete_artifact` | Query: required `scope_id`, `family`; required `If-Match` | `200 ArtifactDeletionStatus`; unsupported family is `405` | `DELETE /v1/artifacts/dec_01J...?scope_id=...&family=company.example.decision` |
 
-### Create and replace examples
+### Artifact create example
 
 ```http
 POST /v1/artifacts
@@ -291,6 +369,136 @@ Location: /v1/artifacts/dec_01J...?scope_id=git%3Agithub.com%2Facme%2Fpayments&f
 ETag: "revision:1"
 ```
 
+```json
+{
+  "scope_id": "git:github.com/acme/payments",
+  "artifact_ref": {
+    "family": "company.example.decision",
+    "artifact_id": "dec_01J...",
+    "revision": 1
+  },
+  "schema_version": 1,
+  "metadata": {"title": "Refund manual-review constraint"},
+  "content": {"decision": "Refunds require manual review"},
+  "source_refs": [{"name": "content", "source_id": "refund-rule-001"}],
+  "artifact_refs": [],
+  "created_at": "2026-09-01T04:30:00Z",
+  "content_digest": "sha256:..."
+}
+```
+
+### Artifact get-current example
+
+```http
+GET /v1/artifacts/dec_01J...?scope_id=git%3Agithub.com%2Facme%2Fpayments&family=company.example.decision
+```
+
+```http
+HTTP/1.1 200 OK
+ETag: "revision:1"
+```
+
+```json
+{
+  "scope_id": "git:github.com/acme/payments",
+  "artifact_ref": {
+    "family": "company.example.decision",
+    "artifact_id": "dec_01J...",
+    "revision": 1
+  },
+  "schema_version": 1,
+  "metadata": {"title": "Refund manual-review constraint"},
+  "content": {"decision": "Refunds require manual review"},
+  "source_refs": [{"name": "content", "source_id": "refund-rule-001"}],
+  "artifact_refs": [],
+  "created_at": "2026-09-01T04:30:00Z",
+  "content_digest": "sha256:..."
+}
+```
+
+### Artifact exact-revision example
+
+```http
+GET /v1/artifacts/dec_01J.../revisions/1?scope_id=git%3Agithub.com%2Facme%2Fpayments&family=company.example.decision
+```
+
+```json
+{
+  "scope_id": "git:github.com/acme/payments",
+  "artifact_ref": {
+    "family": "company.example.decision",
+    "artifact_id": "dec_01J...",
+    "revision": 1
+  },
+  "schema_version": 1,
+  "metadata": {"title": "Refund manual-review constraint"},
+  "content": {"decision": "Refunds require manual review"},
+  "source_refs": [{"name": "content", "source_id": "refund-rule-001"}],
+  "artifact_refs": [],
+  "created_at": "2026-09-01T04:30:00Z",
+  "content_digest": "sha256:..."
+}
+```
+
+Exact-revision responses do not carry the current-head ETag. Their committed content remains immutable after a
+later replacement or deletion.
+
+### Artifact list example
+
+```http
+GET /v1/artifacts?scope_id=git%3Agithub.com%2Facme%2Fpayments&family=company.example.decision&limit=50
+```
+
+```json
+{
+  "items": [
+    {
+      "artifact_ref": {
+        "family": "company.example.decision",
+        "artifact_id": "dec_01J...",
+        "revision": 1
+      },
+      "schema_version": 1,
+      "metadata": {"title": "Refund manual-review constraint"},
+      "created_at": "2026-09-01T04:30:00Z",
+      "content_digest": "sha256:..."
+    }
+  ],
+  "next_cursor": null
+}
+```
+
+### Artifact search example
+
+```http
+GET /v1/artifact-search-results?scope_id=git%3Agithub.com%2Facme%2Fpayments&family=company.example.decision&q=manual%20review&mode=auto&limit=20
+```
+
+```json
+{
+  "query": "manual review",
+  "mode": "keyword",
+  "hits": [
+    {
+      "artifact_ref": {
+        "family": "company.example.decision",
+        "artifact_id": "dec_01J...",
+        "revision": 1
+      },
+      "metadata": {"title": "Refund manual-review constraint"},
+      "score": 0.94,
+      "snippets": ["Refunds require manual review"]
+    }
+  ],
+  "next_cursor": null
+}
+```
+
+Omitting or blanking `q` preserves the result-page schema but returns `query: null`, `mode: null`, deterministic
+ordering, no score, and empty snippets.
+
+### Artifact replace example
+
 Replace sends a complete representation and the current ETag:
 
 ```http
@@ -314,9 +522,34 @@ If-Match: "revision:1"
 }
 ```
 
-Success returns revision 2, `200 OK`, and `ETag: "revision:2"`. If revision 1 is no longer the head, the operation
-returns `412 revision_conflict` with both the provided and current ETags. The Runtime does not merge, retain omitted
-fields, or overwrite revision 1.
+```http
+HTTP/1.1 200 OK
+ETag: "revision:2"
+```
+
+```json
+{
+  "scope_id": "git:github.com/acme/payments",
+  "artifact_ref": {
+    "family": "company.example.decision",
+    "artifact_id": "dec_01J...",
+    "revision": 2
+  },
+  "schema_version": 1,
+  "metadata": {"title": "Refund manual-review constraint"},
+  "content": {
+    "decision": "Refunds require manual review",
+    "rationale": "Satisfy funds-safety requirements"
+  },
+  "source_refs": [{"name": "content", "source_id": "refund-rule-001"}],
+  "artifact_refs": [],
+  "created_at": "2026-09-01T04:45:00Z",
+  "content_digest": "sha256:..."
+}
+```
+
+If revision 1 is no longer the head, the operation returns `412 revision_conflict` with both the provided and
+current ETags. The Runtime does not merge, retain omitted fields, or overwrite revision 1.
 
 ### Delete semantics
 
@@ -346,56 +579,24 @@ If-Match: "revision:2"
 }
 ```
 
-## Scope API
-
-| Function | HTTP API | operationId | Request and metadata | Response | Example |
-| --- | --- | --- | --- | --- | --- |
-| List observable Scopes | `GET /v1/scopes` | `list_scopes` | Optional query `limit`, `cursor`; authorization comes from the request identity | `200 ScopePage{items,next_cursor}` | `GET /v1/scopes?limit=50` |
-
-A Scope summary can include identity metadata and activity summaries:
-
-```json
-{
-  "items": [
-    {
-      "scope_id": "scp_01K...",
-      "title": "Payments",
-      "summary": "Payment and refund rules",
-      "parent_scope_id": null,
-      "version": 3,
-      "source_types": ["content"],
-      "artifact_families": ["memory", "experience", "company.example.decision"],
-      "source_count": 120,
-      "artifact_count": 8
-    }
-  ],
-  "next_cursor": null
-}
-```
-
-“All” means every durable Scope observable by the caller, never an authorization bypass. Authorization filtering
-happens before pagination and counts. Source and Artifact activity may be a projection, but it does not establish
-Scope identity. An empty Scope remains visible when it exists in the authoritative Scope directory. Reading a
-specific invisible Scope should generally return `404` to avoid enumeration.
-
 ## Pagination and search
 
 Collection responses use a stable `next_cursor`. A cursor is bound to the caller identity, authorization context,
-Scope, Source type or Artifact family, query type, query text, filters, ordering, and actual search mode. A cursor
-cannot be reused after any of those values changes.
+request endpoint, Scope, Source type or Artifact family, normalized query text, filters, ordering, and actual search
+mode. A cursor cannot be reused after any of those values changes.
 
-Source list and search share `SourcePage`:
+List returns typed resource collections without ranking metadata:
 
 ```json
 {
-  "query": null,
-  "mode": null,
   "items": [],
   "next_cursor": null
 }
 ```
 
-Artifact search has an explicit result collection:
+Source and Artifact Search each use a separate, virtual, read-only result collection. A search hit is not a
+persisted resource and cannot be fetched or mutated independently; it points to the exact underlying Source or
+Artifact and may add score and snippet metadata:
 
 ```json
 {
@@ -405,6 +606,10 @@ Artifact search has an explicit result collection:
   "next_cursor": null
 }
 ```
+
+For both Search endpoints, `q` is optional. An omitted, empty, or whitespace-only query is normalized to
+`query: null`; the caller omits `mode`, the response reports `mode: null`, hits use deterministic fallback ordering,
+scores are null, and snippets are empty. A nonblank query reports the normalized query and actual search mode.
 
 ## Family capability and lifecycle boundaries
 
@@ -450,7 +655,6 @@ The operations reuse the existing error envelope and stabilize these codes:
 | Artifact list/search | Memory entry list/search | different identity level | Artifact endpoints operate on heads; Memory endpoints retain entry identity, citation, and ranking |
 | Artifact replace | Candidate revise and Memory entry revise | different lifecycle | generic replace never bypasses review or pretends an entry update is a whole Artifact replacement |
 | Artifact delete | Memory retire and other family lifecycles | different lifecycle | only a family that explicitly opts in accepts generic delete |
-| `GET /v1/scopes` | `/v1/handoff-reports/scopes/list-known` | the report route is a Handoff subset | retain the old route and filter the authorized Scope set to committed Handoffs |
 | Source create followed by Memory flush | `/v1/memory/flush` | reuses the existing command | no combined server parameter or response is added |
 
 No current domain endpoint is removed or deprecated by this RFC. Parity tests ensure overlapping entries resolve to
@@ -461,6 +665,11 @@ the same durable Source or Artifact revision, digest, lineage, authorization res
 `openapi/powercontext.yaml` remains the sole HTTP contract. Generated models and operation metadata are checked in,
 and Client methods encode path segments, query values, and `If-Match` without adding family-specific methods.
 
+The contract adds or reuses these schemas: `SourceRecord`, `CreateSourceRequest`, `SourceSummary`, `SourcePage`,
+`SourceSearchHit`, `SourceSearchResultPage`, `ArtifactRevision`, `ArtifactSummary`, `ArtifactPage`,
+`CreateArtifactRequest`, `ReplaceArtifactRequest`, `ArtifactSearchHit`, `ArtifactSearchResultPage`, and
+`ArtifactDeletionStatus`. It adds no Scope schema; those contracts remain owned by PR #1401.
+
 The persistence implementation uses the existing Source journal, Artifact revision table, Artifact head table, and
 lineage tables. Timestamp, digest, schema metadata, and deletion state may use compatible side tables so existing
 databases do not require destructive column rewrites. Historical rows without optional projected metadata remain
@@ -468,7 +677,7 @@ readable. SQLite and OceanBase must pass the same behavioral contract.
 
 The implementation sequence is:
 
-1. add the Source, Artifact, and Scope paths and schemas to OpenAPI;
+1. add Source create/get/list, the Source search-result collection, and the Artifact paths and schemas to OpenAPI;
 2. generate Python and JavaScript operation bindings;
 3. add shared Source/Artifact application services and route overlapping reads/writes through them;
 4. add cursor, optimistic concurrency, tombstone, and family-capability behavior;
@@ -481,12 +690,12 @@ The implementation sequence is:
 | No umbrella concept | no shared Source/Artifact selector, union request/response, or kind field |
 | No write-time generation | Source create carries and returns only durable Source state |
 | Source operations | only create/get/list/search are exposed |
-| Source list/search | one `GET /v1/sources` operationId, `search_sources`; omitted `type` or `list` lists, `search` requires `q` |
+| Source list/search | `GET /v1/sources` uses `list_sources`; `GET /v1/source-search-results` uses `search_sources`; there is no `type` dispatcher and `q` is optional for Search |
 | Artifact operations | fixed create/get/list/search/replace/delete paths; replace commits an immutable next revision |
 | Exact identity | Source reference has no revision; every Artifact response has an exact revision |
 | Scope required | every Source/Artifact operation names one `scope_id` |
-| Scope discovery | `GET /v1/scopes` lists authorized durable Scopes, including empty Scopes known to the Scope layer |
-| Pagination | cursors are stable and bound to the complete query and authorization context |
+| Scope dependency | this RFC defines no Scope API; all operations use a `scope_id` supplied by the PR #1401 Scope API |
+| Pagination | cursors are stable and bound to the endpoint, complete query, and authorization context |
 | Concurrency | replace/delete require current ETag; missing is `428`, stale is `412` |
 | Review gate | Review families cannot be mutated through direct Artifact operations |
 | Memory boundary | Source create and Memory flush are separate; flush processes a bounded pending window |
@@ -497,12 +706,12 @@ The implementation sequence is:
 
 - Base Artifact content is generic JSON in generated clients, so a typed family endpoint remains more ergonomic.
 - Old and new read paths coexist and require shared services plus parity tests to prevent drift.
-- Scope activity summaries add projection and consistency work.
 - Direct and reviewed families support different mutations, so clients must inspect capabilities.
 - Logical deletion must remain compatible with lineage validation and retention.
 - Source create and Memory flush are not one transaction; callers must handle a durable Source followed by a
   retryable flush failure.
-- Source list and search share one operationId and response, so clients must handle `type` and optional hit fields.
+- Source and Artifact each add a dedicated search-result collection and response schema. This slightly enlarges the
+  OpenAPI surface but keeps generated Client methods and return types explicit and symmetric.
 
 # Rationale and alternatives
 
@@ -515,15 +724,12 @@ makes callers construct revision transitions directly. `PUT` on the current head
 replacement while the Runtime retains revision allocation and CAS.
 
 Putting `scope_id` in paths was rejected because valid Scope identifiers may contain `/`. A combined Source and
-Artifact search was rejected because identity, ranking, projection, and lifecycle differ. Deriving Scope identity
-from Source or Artifact rows was rejected because it loses empty Scopes and conflicts with the authoritative Scope
-application layer.
+Artifact search was rejected because identity, ranking, projection, and lifecycle differ.
 
 # Unresolved questions
 
-There are no unresolved wire-level decisions required to accept this RFC. Authorization vocabulary, Scope mutation,
-cross-Scope sharing, family schema registration details, and partial Artifact updates are intentionally separate
-designs.
+There are no unresolved wire-level decisions required to accept this RFC. Authorization vocabulary, cross-Scope
+sharing, family schema registration details, and partial Artifact updates are intentionally separate designs.
 
 # Future possibilities
 
