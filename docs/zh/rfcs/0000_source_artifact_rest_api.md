@@ -1,128 +1,59 @@
 - Proposal Name: `source_artifact_rest_api`
 - Start Date: 2026-09-01
 - RFC PR: [oceanbase/powercontext#0000](https://github.com/oceanbase/powercontext/pull/0000)
+- Related RFCs: [RFC 0019](0019_local_source_memory_runtime.md)、
+  [RFC 0048](0048_handoff_artifact.md)、[RFC 0050](0050_artifact_candidate_review_inbox.md)、
+  [RFC 0051](0051_experience_skill_artifact_families.md) 和
+  [RFC 1345](1345_scope_organization_and_agent_integration.md)
 
 # Summary
 
-本 RFC 为 PowerContext 增加两组彼此独立的基础 HTTP API：
+本 RFC 为 PowerContext 增加 Source 与 Artifact 两组基础 REST API。Source 支持 Create、Get、List 和 Search；
+Artifact 支持 Create、Get head、Get Revision、List、Search、Replace 和 Delete。List 与 Search 共用各自的集合
+GET：省略或传入空白 `query` 时执行 List，传入非空 `query` 时执行 Search，因此共新增 9 个 HTTP operation。
 
-- Source：`create`、`get`、`list`、`search`；
-- Artifact：`create`、`get`、`list`、`search`、`replace`、`delete`。
-
-API 直接复用 PowerContext 已有的 Source、Artifact、Artifact Revision 和 Scope 语义，不增加二者之上的统一对象概念，不增加统一 selector、联合引用、统一 envelope、类型注册接口或跨类型 List/Search。Scope 的创建、查询、组织与 binding 由 [PR #1401](https://github.com/oceanbase/powercontext/pull/1401) 定义，本 RFC 只把调用方已经取得的 `scope_id` 作为 Source/Artifact 请求边界。
-
-写入和生成仍是两个独立提交边界。Source Create 只返回 Source 的耐久写入结果，不携带生成参数或联合生成结果。需要“写入 Source 后立即生成 Memory 并等待结果”的调用方，顺序调用
-`POST /v1/scopes/{scope_id}/sources/{source_type}` 与现有 `POST /v1/memory/flush` 即可。
-
-接口遵守以下约定：
-
-- Source 资源位于 `/v1/scopes/{scope_id}/sources/{source_type}`，Artifact 资源位于
-  `/v1/scopes/{scope_id}/artifacts/{family}`；具名对象 URI 继续追加 `source_id` 或 `artifact_id`；
-- Search 使用 Scope 下独立的 `/v1/scopes/{scope_id}/source-search-results` 与
-  `/v1/scopes/{scope_id}/artifact-search-results` 结果集合；
-- `GET` 用于读取、列举和搜索，`POST` 用于创建，`PUT` 用于完整替换 Artifact head，`DELETE` 用于删除；
-- Artifact 历史 Revision 不可变；`PUT` 替换当前 head 时，Runtime 在内部创建下一 Revision，而不是覆盖历史 Revision；
-- List 使用 `items + next_cursor`，继续遵守 PowerContext 当前的 snake_case 与 cursor 约定。
-- 本 RFC 新增的基础 Source API 使用 `source_type` 表达 Source 类型；既有 API contract 不在本 RFC 中修改。
+新增 API 以 Scope 为父资源。Source 的公开身份是 `(scope_id, source_type, source_id)`；Artifact head 的公开身份
+是 `(scope_id, family, artifact_id)`，精确 Revision 再增加 `revision`。具名资源的完整身份都进入 URI Path。
+Create 在 Scope 下的父集合执行，由服务端生成 `source_id` 或 `artifact_id`。本 RFC 不增加统一 Resource 抽象，
+不改变既有接口，也不把 Source 写入与 Memory、Experience、Skill 或 Handoff 生成合并为一次操作。
 
 # Motivation
 
-PowerContext 当前主要按领域动作暴露接口，例如 Source capture、Memory flush、Experience/Skill generate、Candidate review 和 Handoff workflow。这些接口准确表达了领域不变量，但仍缺少一致、可预测的 Source 与 Artifact 基础访问方式。
+PowerContext 已有接口主要表达 Source capture、Memory flush、Candidate review 和 Handoff workflow 等领域动作。
+这些接口保留了正确的领域边界，但调用方仍缺少一致、可预测的基础访问方式：
 
-目标用户需要的基础能力是：
+- 在指定 Scope 中创建和读取 Source；
+- 按 Source type 稳定列举或检索 Source；
+- 创建、读取、修订、列举、检索和逻辑删除正式 Artifact；
+- 新增 Source type 或 Artifact Family 时复用固定的 HTTP surface，而不是新增一套 CRUD path；
+- 需要写入后生成时，由客户端明确编排 Source Create 和既有领域命令。
 
-- 按 Scope 创建和读取 Source；
-- 按 Scope 列举、搜索 Source；
-- 按 Scope 创建、读取、列举、搜索、修订和删除 Artifact；
-- 新增 Artifact Family 时继续复用同一组 HTTP path 和 generated Client method；
-- 需要写入后立即生成时，由客户端编排 Source Create 与 Family command，而不是让基础写接口隐式调用模型。
+该设计还需要把公开 API 字段与当前持久化模型对齐，明确哪些字段直接落库、哪些包含在 canonical payload 中、
+哪些由 lineage 表表达、哪些只在请求期间生成，以及为了稳定时间和逻辑删除语义必须增加哪些持久化字段。
 
-# Goals
+# Guide-level explanation
 
-- 直接以 Source 与 Artifact 建模，不增加统一上层概念。
-- 保持 Source 无 Revision、Artifact 的精确引用必须包含 Revision。
-- 让新增基础 Source API 直接使用扁平的 `scope_id`、`source_type`、`source_id` 身份字段，同时不修改任何既有 API schema。
-- 为未来 Artifact Family 提供固定的基础 API surface。
-- 使用 REST 风格的名词路径和 HTTP 方法。
-- 保留现有领域命令及 Candidate Review 边界。
-- 为 Source 与 Artifact 定义清晰的请求元数据、返回格式、分页、并发与错误语义。
-- 保持 `openapi/powercontext.yaml` 为 HTTP 契约唯一真相。
+## 两类基础资源
 
-# Non-goals
+Source 是没有 Revision 的耐久证据。创建成功后不可原地修改或删除；需要纠正时写入一个新的 Source，并由后续
+Artifact lineage 表达所使用的精确证据。
 
-- 不增加写入时同步生成参数、服务端组合接口或生成任务模型。
-- 不提供跨 Source type、跨 Artifact Family 或 Source/Artifact 混合 List/Search。
-- 不把 Candidate、Memory Entry、Handoff Draft 重新定义为 Artifact。
-- 不替代 Memory、Experience、Skill、Handoff 和 Candidate 的领域命令。
-- 不修改或重新描述任何既有 API 的 request、response、状态码或幂等语义。
-- 不在本 RFC 中设计跨 Scope 共享、RBAC/ACL、恢复、物理清除或批量操作。
-- 不要求所有 Artifact Family 绕过其既有 Review 或生命周期约束。
-
-# Domain model
-
-## Source
-
-Source 是耐久证据。新增基础 API 中，完整身份直接由 `(scope_id, source_type, source_id)` 联合构成：
+Artifact 是可提交、可演进的正式制品。Create 提交 Revision 1；Replace 不覆盖旧内容，而是提交下一条不可变
+Revision 并移动 head。调用方既可以读取当前 head，也可以读取一个精确的历史 Revision。
 
 ```json
 {
-  "scope_id": "scp_01j8m4v2n7q9x3k6c5t0b1d2ef",
-  "source_type": "content",
-  "source_id": "src_01J..."
-}
-```
-
-`source_type` 是稳定的 Source 类型，`source_id` 是该类型下的稳定 Source 标识。Source 表必须以
-`(scope_id, source_type, source_id)` 建立联合唯一约束；不能假设 `source_id` 跨 Scope 或跨 Source type 全局唯一：
-
-```json
-{
-  "table": "sources",
-  "unique_key": [
+  "source_key": [
     "scope_id",
     "source_type",
     "source_id"
-  ]
-}
-```
-
-Source 基础 API 的 path parameter、`SourceRecord`、`SourceSummary` 和 `SourceSearchHit` 均直接使用扁平的
-`scope_id`、`source_type`、`source_id`，不定义额外的引用 envelope。该约定只适用于本 RFC 新增的 schema，
-不修改既有 HTTP reference schema。
-
-新的 `POST /v1/scopes/{scope_id}/sources/{source_type}` 不接受调用方指定 `source_id`，而由服务端生成 opaque
-`source_id`，并在 `SourceRecord.source_id` 与 `Location` 中返回。
-
-Source 没有 Revision。本 RFC 不提供 Source Replace/Delete：
-
-- 元数据或正文修正应写入一个新的 Source，并通过既有 provenance/关系能力表达替代关系；
-- 已被 Artifact lineage 引用的证据不能被普通 CRUD 原地覆盖或删除。
-
-## Artifact
-
-Artifact 是可提交、可演进的正式制品。精确身份复用现有 `ArtifactReference`：
-
-```json
-{
-  "family": "experience",
-  "artifact_id": "exp_01J...",
-  "revision": 3
-}
-```
-
-Revision 是 Artifact 身份的一部分，也是并发前置条件。Create 生成 Revision 1；Replace 校验当前 head 后创建下一 Revision；任何操作都不得原地覆盖历史 Revision。
-
-Artifact lifecycle head 的联合唯一键是 `(scope_id, family, artifact_id)`；不可变 Revision 表的联合唯一键是
-`(scope_id, family, artifact_id, revision)`：
-
-```json
-{
-  "artifact_head_unique_key": [
+  ],
+  "artifact_head_key": [
     "scope_id",
     "family",
     "artifact_id"
   ],
-  "artifact_revision_unique_key": [
+  "artifact_revision_key": [
     "scope_id",
     "family",
     "artifact_id",
@@ -131,1465 +62,707 @@ Artifact lifecycle head 的联合唯一键是 `(scope_id, family, artifact_id)`�
 }
 ```
 
-## Scope dependency
+`source_id` 只要求在同一个 `(scope_id, source_type)` 集合内唯一；`artifact_id` 只要求在同一个
+`(scope_id, family)` 集合内唯一。调用方不得脱离 Scope 和分类字段，把两者当作全局唯一 ID。
 
-`scope_id` 是 Source 与 Artifact 的隔离和查询边界，不是 Source，也不是 Artifact。Scope 的创建、读取、列举、metadata、Organization Parent、Context References 与 binding 均由 [PR #1401](https://github.com/oceanbase/powercontext/pull/1401) 的 Scope API 负责。本 RFC 不重复声明任何 Scope path、operationId、schema、分页或授权规则；调用方先通过该 API 获得 `scope_id`，再调用本文定义的 Source/Artifact API。
+## 常见调用流程
 
-# REST API conventions
+创建一条文本 Source：
 
-## 基础操作、HTTP 方法与 URL
+```http
+POST /v1/scopes/scp_01J/sources
+Content-Type: application/json
+```
 
-本 RFC 共新增 11 个 HTTP API：Source 4 个，Artifact 7 个。下表只统计本文新增的基础 API，不包含 Scope API、
-既有 Family 强类型 API，也不把客户端编排所复用的 `/v1/memory/flush` 计入新增接口。
+```json
+{
+  "source_type": "content",
+  "content": "退款流程必须保留人工复核。",
+  "metadata": {
+    "title": "退款流程约束"
+  }
+}
+```
 
-| 对象 | 功能 | operationId | HTTP 方法与 URL | 资源定位或查询条件 | 成功返回 |
-| --- | --- | --- | --- | --- | --- |
-| Source | Create | `create_source` | `POST /v1/scopes/{scope_id}/sources/{source_type}` | path 为联合键前缀；`source_id` 由服务端生成 | `201 SourceRecord` |
-| Source | Get | `get_source` | `GET /v1/scopes/{scope_id}/sources/{source_type}/{source_id}` | path 包含完整 Source 联合键 | `200 SourceRecord` |
-| Source | List | `list_sources` | `GET /v1/scopes/{scope_id}/sources/{source_type}` | path 确定 Scope 与 Source type；query 仅用于分页和时间过滤 | `200 SourcePage` |
-| Source | Search | `search_sources` | `GET /v1/scopes/{scope_id}/source-search-results` | path 确定 Scope；query 使用必填 `source_type` 及可选 `q`、`mode`、分页和时间过滤 | `200 SourceSearchResultPage` |
-| Artifact | Create | `create_artifact` | `POST /v1/scopes/{scope_id}/artifacts/{family}` | path 为 Artifact head 联合键前缀；`artifact_id` 可由调用方提供或服务端生成 | `201 ArtifactRevision` + `ETag` |
-| Artifact | Get head | `get_artifact` | `GET /v1/scopes/{scope_id}/artifacts/{family}/{artifact_id}` | path 包含完整 Artifact head 联合键 | `200 ArtifactRevision` + `ETag` |
-| Artifact | Get Revision | `get_artifact_revision` | `GET /v1/scopes/{scope_id}/artifacts/{family}/{artifact_id}/revisions/{revision}` | path 包含完整 Artifact Revision 联合键 | `200 ArtifactRevision` |
-| Artifact | List | `list_artifacts` | `GET /v1/scopes/{scope_id}/artifacts/{family}` | path 确定 Scope 与 Family；query 仅用于分页和时间过滤 | `200 ArtifactPage` |
-| Artifact | Search | `search_artifacts` | `GET /v1/scopes/{scope_id}/artifact-search-results` | path 确定 Scope；query 使用必填 `family` 及可选 `q`、`mode`、分页和时间过滤 | `200 ArtifactSearchResultPage` |
-| Artifact | Replace | `replace_artifact` | `PUT /v1/scopes/{scope_id}/artifacts/{family}/{artifact_id}` | path 包含完整 head 联合键；`If-Match` 指定当前 Revision | `200 ArtifactRevision` + 新 `ETag` |
-| Artifact | Delete | `delete_artifact` | `DELETE /v1/scopes/{scope_id}/artifacts/{family}/{artifact_id}` | path 包含完整 head 联合键；`If-Match` 指定当前 Revision | `200 ArtifactDeletionStatus` |
+成功响应返回完整身份和 canonical URI：
 
-基础操作的 wire-level 契约固定如下：
+```http
+HTTP/1.1 201 Created
+Location: /v1/scopes/scp_01J/sources/content/src_01J
+```
+
+```json
+{
+  "scope_id": "scp_01J",
+  "source_type": "content",
+  "source_id": "src_01J",
+  "content": "退款流程必须保留人工复核。",
+  "metadata": {
+    "title": "退款流程约束"
+  },
+  "created_at": "2026-09-02T12:00:00Z",
+  "position": 42,
+  "content_digest": "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+}
+```
+
+Source Create 只完成耐久写入，不触发模型生成。需要立即生成 Memory 的调用方随后调用既有 Memory flush：
 
 ```json
 [
   {
-    "function": "Source Create",
-    "operation_id": "create_source",
-    "method": "POST",
-    "path": "/v1/scopes/{scope_id}/sources/{source_type}"
+    "step": 1,
+    "request": "POST /v1/scopes/scp_01J/sources",
+    "capture": "response.position"
   },
   {
-    "function": "Source Get",
-    "operation_id": "get_source",
-    "method": "GET",
-    "path": "/v1/scopes/{scope_id}/sources/{source_type}/{source_id}"
-  },
-  {
-    "function": "Source List",
-    "operation_id": "list_sources",
-    "method": "GET",
-    "path": "/v1/scopes/{scope_id}/sources/{source_type}"
-  },
-  {
-    "function": "Source Search",
-    "operation_id": "search_sources",
-    "method": "GET",
-    "path": "/v1/scopes/{scope_id}/source-search-results"
-  },
-  {
-    "function": "Artifact Create",
-    "operation_id": "create_artifact",
-    "method": "POST",
-    "path": "/v1/scopes/{scope_id}/artifacts/{family}"
-  },
-  {
-    "function": "Artifact Head Get",
-    "operation_id": "get_artifact",
-    "method": "GET",
-    "path": "/v1/scopes/{scope_id}/artifacts/{family}/{artifact_id}"
-  },
-  {
-    "function": "Artifact Revision Get",
-    "operation_id": "get_artifact_revision",
-    "method": "GET",
-    "path": "/v1/scopes/{scope_id}/artifacts/{family}/{artifact_id}/revisions/{revision}"
-  },
-  {
-    "function": "Artifact List",
-    "operation_id": "list_artifacts",
-    "method": "GET",
-    "path": "/v1/scopes/{scope_id}/artifacts/{family}"
-  },
-  {
-    "function": "Artifact Search",
-    "operation_id": "search_artifacts",
-    "method": "GET",
-    "path": "/v1/scopes/{scope_id}/artifact-search-results"
-  },
-  {
-    "function": "Artifact Replace",
-    "operation_id": "replace_artifact",
-    "method": "PUT",
-    "path": "/v1/scopes/{scope_id}/artifacts/{family}/{artifact_id}"
-  },
-  {
-    "function": "Artifact Delete",
-    "operation_id": "delete_artifact",
-    "method": "DELETE",
-    "path": "/v1/scopes/{scope_id}/artifacts/{family}/{artifact_id}"
+    "step": 2,
+    "request": "POST /v1/memory/flush",
+    "body": {
+      "scope_id": "scp_01J"
+    },
+    "repeat_until": "response.current_cursor >= source.position"
   }
 ]
 ```
 
-`operation_id`、HTTP 方法和 URL 格式以 JSON 定义为准，共同构成基础 API 的 wire contract。
+Memory flush 处理一个有界的待处理 Source window，不保证只处理刚创建的 Source，也不是全历史刷新。Source 已经
+提交后，即使后续生成失败也不会回滚。
 
-## PowerContext HTTP 接口约束
+创建正式 Artifact 时，`family` 放在 request body 中，服务端生成 `artifact_id` 并提交 Revision 1：
 
-- 集合路径与具名对象路径分离；
-- `GET` 资源 collection 表示 List，`GET` search-result collection 表示 Search，`POST` 资源 collection 表示 Create；
-- `GET` named object 表示 Read，`DELETE` named object 表示 Delete；
-- 子对象使用子集合表达；
-- List 返回 typed items 和分页元数据；
-- `PUT` 只接受完整 replacement；Artifact Replace/Delete 必须通过 `If-Match` 携带当前 head 的 ETag，不能静默覆盖并发写入；
-- 新增 Source 基础 API 的 response 直接返回扁平身份字段；Artifact response 继续复用 `ArtifactReference`、
-  Artifact Revision 和 Source journal position 的语义，但不修改既有 HTTP schema；
-- Create 与 List 的 path 包含联合唯一键前缀：Source 使用 `scope_id + source_type`，Artifact 使用
-  `scope_id + family`；
-- 具名 Source path 包含 `scope_id + source_type + source_id`；Artifact head path 包含
-  `scope_id + family + artifact_id`，精确 Revision path 再追加 `revision`；
-- PUT request body 只承载完整 replacement；联合唯一键分量不在 body 或 query 中重复；
-- Search 不是具名资源定位：`scope_id` 作为授权与隔离边界放在 path，`source_type` / `family`、`q`、`mode`、
-  cursor 和时间范围作为 query filter；
-- 字段名继续使用现有 snake_case；
-- Scope identity 与可见性由 PR #1401 的 Scope API 负责；本文不从 Source/Artifact 数据反向推导或列举 Scope。
-
-所有 path parameter 必须分别按 RFC 3986 path segment 编码并由服务端只解码一次。PR #1401 新生成的
-`scp_...` Scope ID 是 path-segment-safe；实现仍必须为既有 `scope_id` 以及允许的 `source_type`、`family`、
-`source_id`、`artifact_id` 覆盖保留字符和 encoded slash 的网关/路由一致性测试，不能把两个不同联合键错误映射到同一 URI。
-通用 Source Create 返回的 `source_id` 是服务端生成的 opaque path identity，调用方不得解析或依赖其格式。
-
-# Common response conventions
-
-## Source 返回对象
-
-```json
-{
-  "scope_id": "scp_01j8m4v2n7q9x3k6c5t0b1d2ef",
-  "source_type": "content",
-  "source_id": "src_01J...",
-  "content": "退款流程必须保留人工复核。",
-  "metadata": {
-    "title": "退款流程约束",
-    "media_type": "text/plain"
-  },
-  "created_at": "2026-09-01T04:00:00Z",
-  "position": 42,
-  "content_digest": "sha256:..."
-}
+```http
+POST /v1/scopes/scp_01J/artifacts
+Content-Type: application/json
 ```
 
 ```json
 {
-  "schema": "SourceRecord",
-  "field_semantics": {
-    "scope_id": "Source 所属 Scope；所有 Get、List、Search 必须显式关联",
-    "source_type": "稳定 Source 类型，也是联合身份的一部分",
-    "source_id": "Source type 内的稳定 opaque ID，也是联合身份的一部分；没有 Revision",
-    "content": "Source type 对应的权威内容；content type 首期为 string",
-    "metadata": "来源、标题、媒体类型等 Source-specific 元数据；保持可扩展对象",
-    "created_at": "服务端耐久接收时间",
-    "position": "Source journal position；可用于判断 Memory flush 是否已经越过该 Source",
-    "content_digest": "canonical content 的摘要，用于审计与完整性比对；不作为通用 Source Create 的幂等身份"
-  }
-}
-```
-
-## Artifact Revision 返回对象
-
-```json
-{
-  "scope_id": "scp_01j8m4v2n7q9x3k6c5t0b1d2ef",
-  "artifact_ref": {
-    "family": "company.example.decision",
-    "artifact_id": "dec_01J...",
-    "revision": 2
-  },
-  "schema_version": 1,
-  "metadata": {
-    "title": "退款人工复核约束"
-  },
+  "family": "company.example.decision",
   "content": {
+    "title": "退款人工复核约束",
     "decision": "退款必须经过人工复核"
   },
   "source_refs": [
     {
       "source_type": "content",
-      "source_id": "src_01J..."
+      "source_id": "src_01J"
+    }
+  ],
+  "artifact_refs": []
+}
+```
+
+```http
+HTTP/1.1 201 Created
+Location: /v1/scopes/scp_01J/artifacts/company.example.decision/dec_01J
+ETag: "revision:1"
+```
+
+Artifact 首期不定义顶层 `metadata` 或 `schema_version`。标题、标签和其他 Family-specific 属性属于
+`content`，由对应 Family 的模型负责验证。
+
+## List 与 Search
+
+List 和 Search 使用同一个类型集合 URI：
+
+```http
+GET /v1/scopes/scp_01J/sources/content?limit=50
+GET /v1/scopes/scp_01J/sources/content?query=退款&mode=auto&limit=20
+
+GET /v1/scopes/scp_01J/artifacts/company.example.decision?limit=50
+GET /v1/scopes/scp_01J/artifacts/company.example.decision?query=退款&mode=auto&limit=20
+```
+
+省略、空字符串或仅空白的 `query` 表示 List；非空 `query` 表示 Search。两种行为统一返回
+`query + mode + items + next_cursor`。List 的 `query`、`mode` 和 `score` 为 `null`，`snippets` 为 `[]`。
+
+# Reference-level explanation
+
+## Scope、层级与 canonical URI
+
+`scope_id` 是资源 owner、授权边界和公开身份的一部分。Scope 的创建、读取、列举、组织关系和 binding 由
+[RFC 1345](1345_scope_organization_and_agent_integration.md) 及其实现负责；本 RFC 不定义 Scope API，只定义
+已有 Scope 下的 Source 和 Artifact 子资源。
+
+所有新增业务 API 遵循：
+
+```text
+{scheme}://{endpoint}/{resource-path}?{query-string}
+```
+
+- 生产环境使用 `https`；endpoint 只表示部署地址，不承载业务语义；
+- path 使用小写复数名词，多单词静态 segment 使用 `kebab-case`；
+- JSON 与 query 参数使用 `snake_case`，URI 末尾不加 `/`；
+- path 不出现 `/add`、`/get`、`/update` 或 `/delete` 等 CRUD 动词；
+- query string 只承载查询、搜索模式和分页，不承载具名资源的公开唯一键；
+- `source_type` 和 `family` 必须编码为单个 path segment，不能包含未转义的 `/`。
+
+本文允许的 resource path 为：
+
+```text
+/v1/scopes/{scope_id}/sources
+/v1/scopes/{scope_id}/sources/{source_type}
+/v1/scopes/{scope_id}/sources/{source_type}/{source_id}
+
+/v1/scopes/{scope_id}/artifacts
+/v1/scopes/{scope_id}/artifacts/{family}
+/v1/scopes/{scope_id}/artifacts/{family}/{artifact_id}
+/v1/scopes/{scope_id}/artifacts/{family}/{artifact_id}/revisions/{revision}
+```
+
+Create 在父集合 `/sources` 或 `/artifacts` 上执行，分类由 body 中的 `source_type` 或 `family` 指定。类型集合
+GET 位于 `/sources/{source_type}` 或 `/artifacts/{family}`。具名 Source、Artifact head 和 Artifact Revision
+的完整复合身份都进入 Path。
+
+如果未来一个资源可共享给其他 Scope，canonical URI 仍使用 owner Scope。授权不能为同一资源生成第二个 Scope
+路径。改变 owner Scope、`source_type` 或 `family` 会改变公开身份，应视为创建新资源或执行显式迁移。
+
+## 新增 operation
+
+本文提供 9 个 HTTP operation，覆盖 11 项基础能力：
+
+| 对象 | 能力 | operationId | HTTP 方法与 URI | 输入 | 成功返回 |
+| --- | --- | --- | --- | --- | --- |
+| Source | Create | `create_source` | `POST /v1/scopes/{scope_id}/sources` | body：`source_type?`、`content`、`metadata?` | `201 SourceRecord` + `Location` |
+| Source | Get | `get_source` | `GET /v1/scopes/{scope_id}/sources/{source_type}/{source_id}` | 完整复合身份位于 Path | `200 SourceRecord` |
+| Source | List/Search | `list_sources` | `GET /v1/scopes/{scope_id}/sources/{source_type}` | query：`query?`、`mode?`、`limit?`、`cursor?` | `200 SourcePage` |
+| Artifact | Create | `create_artifact` | `POST /v1/scopes/{scope_id}/artifacts` | body：`family`、`content`、引用 | `201 ArtifactRevision` + `Location` + `ETag` |
+| Artifact | Get head | `get_artifact` | `GET /v1/scopes/{scope_id}/artifacts/{family}/{artifact_id}` | `If-None-Match?` | `200 ArtifactRevision` + `ETag` 或 `304` |
+| Artifact | Get Revision | `get_artifact_revision` | `GET /v1/scopes/{scope_id}/artifacts/{family}/{artifact_id}/revisions/{revision}` | 完整 Revision 身份位于 Path | `200 ArtifactRevision` |
+| Artifact | List/Search | `list_artifacts` | `GET /v1/scopes/{scope_id}/artifacts/{family}` | query：`query?`、`mode?`、`limit?`、`cursor?` | `200 ArtifactPage` |
+| Artifact | Replace | `replace_artifact` | `PUT /v1/scopes/{scope_id}/artifacts/{family}/{artifact_id}` | `If-Match`；完整 replacement body | `200 ArtifactRevision` + 新 `ETag` |
+| Artifact | Delete | `delete_artifact` | `DELETE /v1/scopes/{scope_id}/artifacts/{family}/{artifact_id}` | `If-Match` | `204 No Content` |
+
+OpenAPI 同一个 method/path 只定义一个 operation。集合 GET 的 operationId 分别固定为 `list_sources` 和
+`list_artifacts`；非空 `query` 改变查询语义，但不创建第二个 method/path，也不引入 `type=list|search`。
+
+## Wire schemas
+
+### Source schemas
+
+`CreateSourceRequest`：
+
+```json
+{
+  "source_type": "可选 string；缺省为 content",
+  "content": "必填 JSON value；由 source_type 对应 adapter 校验",
+  "metadata": "可选 object；缺省为 {}，只保存并返回"
+}
+```
+
+请求不接受 `scope_id` 或 `source_id`。`scope_id` 来自 Path，`source_id` 由服务端生成。所有通过该通用 API
+开放的 Source adapter 必须无损保存并返回 `metadata`，不能静默丢弃。
+
+`SourceRecord`：
+
+```json
+{
+  "scope_id": "string；owner Scope",
+  "source_type": "string；Source adapter 名称和类型集合",
+  "source_id": "string；集合内稳定 ID",
+  "content": "JSON value；持久化后的 canonical content",
+  "metadata": "object；缺省为 {}",
+  "created_at": "RFC 3339 UTC date-time；服务端持久化时间",
+  "position": "integer；Scope Source journal 位置",
+  "content_digest": "sha256:<64 lowercase hexadecimal characters>"
+}
+```
+
+`SourceCollectionItem` 不返回完整 `content`：
+
+```json
+{
+  "scope_id": "scp_01J",
+  "source_type": "content",
+  "source_id": "src_01J",
+  "metadata": {},
+  "created_at": "2026-09-02T12:00:00Z",
+  "position": 42,
+  "content_digest": "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+  "score": null,
+  "snippets": []
+}
+```
+
+### Artifact schemas
+
+`CreateArtifactRequest`：
+
+```json
+{
+  "family": "必填 string；Artifact Family",
+  "content": "必填 object；Revision 1 的完整 Family content",
+  "source_refs": "可选 SourceReference[]；缺省为 []",
+  "artifact_refs": "可选 ArtifactReference[]；缺省为 []"
+}
+```
+
+`ReplaceArtifactRequest` 不重复 Path 身份：
+
+```json
+{
+  "content": "必填 object；下一 Revision 的完整 Family content",
+  "source_refs": "可选 SourceReference[]；省略时恢复为 []",
+  "artifact_refs": "可选 ArtifactReference[]；省略时恢复为 []"
+}
+```
+
+`ArtifactRevision`：
+
+```json
+{
+  "scope_id": "scp_01J",
+  "artifact_ref": {
+    "family": "company.example.decision",
+    "artifact_id": "dec_01J",
+    "revision": 2
+  },
+  "content": {
+    "title": "退款人工复核约束",
+    "decision": "退款必须经过人工复核"
+  },
+  "source_refs": [
+    {
+      "source_type": "content",
+      "source_id": "src_01J"
     }
   ],
   "artifact_refs": [],
-  "created_at": "2026-09-01T04:30:00Z",
-  "content_digest": "sha256:..."
+  "created_at": "2026-09-02T12:10:00Z",
+  "content_digest": "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 }
 ```
 
-```json
-{
-  "schema": "ArtifactRevision",
-  "field_semantics": {
-    "scope_id": "Artifact 所属 Scope",
-    "artifact_ref": "现有精确 ArtifactReference，必须包含 Revision",
-    "schema_version": "Family content schema 版本",
-    "metadata": "标题、标签等非内容字段；具体约束由 Family 定义",
-    "content": "Family-specific JSON content",
-    "source_refs": "直接 Source evidence；每项包含 source_type 与 source_id，并在当前 scope_id 内定位 Source",
-    "artifact_refs": "直接 Artifact evidence，必须是精确 ArtifactReference",
-    "created_at": "当前 Revision 的提交时间",
-    "content_digest": "当前 Revision canonical content 的摘要"
-  }
-}
-```
+`artifact_ref` 本身不包含 `scope_id`；只有与顶层 `scope_id` 组合后才构成完整公开身份。`source_refs` 和
+`artifact_refs` 同样继承当前 Artifact 的 Scope，本 RFC 不表达跨 Scope lineage。
 
-Artifact Revision 已经承担并发前置条件的用途，因此不再增加第二个通用版本字段。
-
-请求省略可选集合或对象字段时，服务端持久化并返回稳定缺省值；List 使用摘要对象而不是伪装成完整记录：
+`ArtifactCollectionItem` 只表示未删除 Artifact 的当前 head，不返回完整 `content` 或历史 Revision：
 
 ```json
 {
-  "defaults": {
-    "metadata": {},
-    "source_refs": [],
-    "artifact_refs": [],
-    "snippets": []
+  "scope_id": "scp_01J",
+  "artifact_ref": {
+    "family": "company.example.decision",
+    "artifact_id": "dec_01J",
+    "revision": 2
   },
-  "search_score_without_ranking": null,
-  "list_item_schemas": {
-    "SourcePage.items": "SourceSummary[]",
-    "ArtifactPage.items": "ArtifactSummary[]"
-  }
+  "created_at": "2026-09-02T12:10:00Z",
+  "content_digest": "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+  "score": null,
+  "snippets": []
 }
 ```
 
-Artifact head response 使用标准 `ETag` header 暴露当前 Revision；`PUT` 与 `DELETE` 通过 `If-Match` 回传该值：
+## Operation examples
+
+### Source Get 和集合 GET
 
 ```json
-{
-  "response_headers": {
-    "ETag": "revision:2"
+[
+  {
+    "operation_id": "get_source",
+    "request": "GET /v1/scopes/scp_01J/sources/content/src_01J",
+    "success": "200 SourceRecord"
   },
-  "conditional_request_headers": {
-    "If-Match": "revision:2"
+  {
+    "operation_id": "list_sources",
+    "request": "GET /v1/scopes/scp_01J/sources/content?limit=50&cursor=...",
+    "success": "200 SourcePage<SourceCollectionItem>"
+  },
+  {
+    "operation_id": "list_sources",
+    "request": "GET /v1/scopes/scp_01J/sources/content?query=退款&mode=auto&limit=20",
+    "success": "200 SourcePage<SourceCollectionItem>"
   }
-}
+]
 ```
 
-缺少 `If-Match` 返回 `428 Precondition Required`；ETag 已过期返回 `412 Precondition Failed`。成功创建或替换 head 后，response 返回新 ETag。
+### Artifact Get 和集合 GET
 
-## 分页与搜索结果集合
+```json
+[
+  {
+    "operation_id": "get_artifact",
+    "request": "GET /v1/scopes/scp_01J/artifacts/company.example.decision/dec_01J",
+    "success": "200 ArtifactRevision + ETag"
+  },
+  {
+    "operation_id": "get_artifact_revision",
+    "request": "GET /v1/scopes/scp_01J/artifacts/company.example.decision/dec_01J/revisions/1",
+    "success": "200 ArtifactRevision"
+  },
+  {
+    "operation_id": "list_artifacts",
+    "request": "GET /v1/scopes/scp_01J/artifacts/company.example.decision?limit=50&cursor=...",
+    "success": "200 ArtifactPage<ArtifactCollectionItem>"
+  },
+  {
+    "operation_id": "list_artifacts",
+    "request": "GET /v1/scopes/scp_01J/artifacts/company.example.decision?query=退款&mode=auto&limit=20",
+    "success": "200 ArtifactPage<ArtifactCollectionItem>"
+  }
+]
+```
 
-List 读取资源集合，返回不带排名语义的 `SourcePage{items,next_cursor}` 或 `ArtifactPage{items,next_cursor}`。Search 读取独立的虚拟、只读搜索结果集合：
+### Artifact Replace
 
-- `GET /v1/scopes/{scope_id}/source-search-results` 返回
-  `SourceSearchResultPage{query,mode,hits,next_cursor}`；
-- `GET /v1/scopes/{scope_id}/artifact-search-results` 返回
-  `ArtifactSearchResultPage{query,mode,hits,next_cursor}`。
-
-“搜索结果集合”不是另一份持久化 Source/Artifact，也没有可单独 Get、Create、Update 或 Delete 的搜索结果对象。它只是一次查询产生的命中视图；每个 hit 都携带原始资源的精确引用以及可选的 `score`、`snippets`。
-
-两个 Search API 的 `q` 都是可选参数。`q` 缺省、空字符串或仅含空白时统一归一化为 `query=null`，仅应用结构化过滤条件并按稳定默认顺序返回命中；此时调用方应省略 `mode`，response 中 `mode=null`，hit 的 `score=null`、`snippets=[]`。提供非空 `q` 时，response 返回归一化 query、实际执行 mode，并可返回排名与摘要：
+```http
+PUT /v1/scopes/scp_01J/artifacts/company.example.decision/dec_01J
+Content-Type: application/json
+If-Match: "revision:1"
+```
 
 ```json
 {
-  "query": "退款 人工复核",
-  "mode": "keyword",
-  "hits": [],
+  "content": {
+    "title": "退款人工复核约束",
+    "decision": "退款必须经过人工复核",
+    "rationale": "满足资金安全要求"
+  },
+  "source_refs": [],
+  "artifact_refs": []
+}
+```
+
+PUT 是完整替换。成功时创建 Revision 2，返回 `200 ArtifactRevision` 和新的 ETag。省略可选引用数组表示恢复为
+`[]`，不表示保留上一 Revision；接口不支持 merge patch 或自动合并。
+
+### Artifact Delete
+
+```http
+DELETE /v1/scopes/scp_01J/artifacts/company.example.decision/dec_01J
+If-Match: "revision:2"
+```
+
+成功逻辑删除返回 `204 No Content`。历史 Revision 保留，本 RFC 不提供 restore 或 purge。
+
+## 集合查询和 Cursor
+
+集合 GET 接受：
+
+| 参数 | 必填性 | 含义 |
+| --- | --- | --- |
+| `query` | 可选 | 规范化后为空时 List，非空时 Search。 |
+| `mode` | 可选 | 期望的检索模式；`auto` 允许服务端选择实际模式。仅在 `query` 非空时有效。 |
+| `limit` | 可选 | 本页最多返回的 item 数量。 |
+| `cursor` | 可选 | 上一页返回的不透明游标，必须与当前调用方、集合路径和查询条件一致。 |
+
+统一 response envelope：
+
+```json
+{
+  "query": null,
+  "mode": null,
+  "items": [],
   "next_cursor": null
 }
 ```
 
-Cursor 必须绑定调用方身份与授权上下文、请求 endpoint、`scope_id`、`source_type/family`、归一化 `q`、过滤器、排序和实际搜索模式。任一条件变化后不能复用旧 cursor。
+Search 返回规范化后的 `query`、实际 `mode`、每个 item 的 `score` 和 `snippets`。普通 List 的 `query`、
+`mode` 和 `score` 为 `null`，`snippets` 为 `[]`。Response 不返回 `total`。
 
-# Source API
+Cursor 绑定调用方、endpoint、完整集合路径、规范化查询、过滤条件、排序和实际搜索模式。List 与 Search 的 cursor
+不能交叉使用。v0.1 只支持向后翻页；非法或参数不匹配返回 `400 invalid_cursor`，过期返回
+`410 cursor_expired`。HTTP pagination cursor 与内部 `pc_source_cursors.cursor` 没有映射关系；后者保存领域
+binding 对 Source journal 的消费进度。
 
-Source 首期公开 Create、Get、List、Search。每次查询只处理一个 `scope_id` 与一个 `source_type`。
+## 请求、响应和错误
 
-List 与 Search 使用不同 path、operationId 和 response schema。`GET
-/v1/scopes/{scope_id}/sources/{source_type}` 永远是 `list_sources`，不接受 `type`、`q` 或 `mode`；`GET
-/v1/scopes/{scope_id}/source-search-results` 永远是 `search_sources`，不通过参数切换成 List。Search 的
-`source_type` 是必填 filter，不是具名 Source 的资源身份。
+- “请求组成”中的 Path、Query、Header 和 Body 是参数位置，不是一个整体 JSON payload；
+- GET 和 DELETE 没有 request body；
+- Request schema 默认 `additionalProperties: false`，明确的 Source `metadata` 对象除外；
+- Response 允许未来增加可选字段，客户端必须忽略未知响应字段；
+- Source `metadata` 缺省 `{}`，引用数组和 `snippets` 缺省 `[]`，无排名时 `score` 为 `null`；
+- 时间使用 RFC 3339 UTC，枚举使用 `lower_snake_case`；
+- 所有响应都返回 `X-PowerContext-Request-ID`。
 
-## Source Create 定义与示例
-
-```json
-{
-  "operation_id": "create_source",
-  "request": {
-    "method": "POST",
-    "path": "/v1/scopes/{scope_id}/sources/{source_type}",
-    "path_parameters": {
-      "required": [
-        "scope_id",
-        "source_type"
-      ],
-      "example": {
-        "scope_id": "scp_01j8m4v2n7q9x3k6c5t0b1d2ef",
-        "source_type": "content"
-      }
-    },
-    "headers": {
-      "Content-Type": "application/json",
-      "Idempotency-Key": "idem_01J..."
-    },
-    "body": {
-      "required_fields": [
-        "content"
-      ],
-      "optional_fields": [
-        "metadata"
-      ],
-      "example": {
-        "content": "退款流程必须保留人工复核。",
-        "metadata": {
-          "title": "退款流程约束",
-          "media_type": "text/plain"
-        }
-      }
-    }
-  },
-  "success": {
-    "status": 201,
-    "schema": "SourceRecord",
-    "headers": {
-      "Location": "/v1/scopes/scp_01j8m4v2n7q9x3k6c5t0b1d2ef/sources/content/src_01J..."
-    },
-    "body": {
-      "scope_id": "scp_01j8m4v2n7q9x3k6c5t0b1d2ef",
-      "source_type": "content",
-      "source_id": "src_01J...",
-      "content": "退款流程必须保留人工复核。",
-      "metadata": {
-        "title": "退款流程约束",
-        "media_type": "text/plain"
-      },
-      "created_at": "2026-09-01T04:00:00Z",
-      "position": 42,
-      "content_digest": "sha256:..."
-    }
-  },
-  "errors": [
-    {
-      "status": 422,
-      "code": "invalid_request",
-      "condition": "缺少 Idempotency-Key，或请求体包含禁止由调用方指定的 source_id"
-    },
-    {
-      "status": 409,
-      "code": "idempotency_conflict",
-      "condition": "相同 Idempotency-Key 对应不同 canonical request"
-    }
-  ]
-}
-```
-
-`source_id` 由服务端生成，是调用方不可解析的 opaque identity。Source Create 的耐久幂等身份为
-`(create_source, scope_id, source_type, Idempotency-Key)`：首次请求原子地保存 canonical request digest、生成的
-`source_id`、journal position 与成功结果；相同 key 和相同 canonical request 重放时返回同一个 `201 SourceRecord`、
-`Location` 与 `position`，不追加 journal；相同 key 对应不同 canonical request 时返回
-`409 idempotency_conflict`。该绑定与 Source 一样耐久，不允许在同一 Scope 和 Source type 下复用 key 创建另一条 Source。
-
-`Idempotency-Key` 只控制 Create 重试，不作为 Source 返回字段，也不参与后续 Get/List/Search。服务端不得按
-`content_digest` 自动合并 Source，因为内容相同的两次写入可能代表两条不同证据。
-
-## Source Get 定义与示例
-
-```json
-{
-  "operation_id": "get_source",
-  "request": {
-    "method": "GET",
-    "path": "/v1/scopes/{scope_id}/sources/{source_type}/{source_id}",
-    "path_parameters": {
-      "required": [
-        "scope_id",
-        "source_type",
-        "source_id"
-      ],
-      "example": {
-        "scope_id": "scp_01j8m4v2n7q9x3k6c5t0b1d2ef",
-        "source_type": "content",
-        "source_id": "src_01J..."
-      }
-    }
-  },
-  "success": {
-    "status": 200,
-    "schema": "SourceRecord",
-    "body": {
-      "scope_id": "scp_01j8m4v2n7q9x3k6c5t0b1d2ef",
-      "source_type": "content",
-      "source_id": "src_01J...",
-      "content": "退款流程必须保留人工复核。",
-      "metadata": {
-        "title": "退款流程约束",
-        "media_type": "text/plain"
-      },
-      "created_at": "2026-09-01T04:00:00Z",
-      "position": 42,
-      "content_digest": "sha256:..."
-    }
-  },
-  "errors": [
-    {
-      "status": 404,
-      "code": "source_not_found"
-    }
-  ]
-}
-```
-
-## Source List 定义与示例
-
-```json
-{
-  "operation_id": "list_sources",
-  "request": {
-    "method": "GET",
-    "path": "/v1/scopes/{scope_id}/sources/{source_type}",
-    "path_parameters": {
-      "required": [
-        "scope_id",
-        "source_type"
-      ],
-      "example": {
-        "scope_id": "scp_01j8m4v2n7q9x3k6c5t0b1d2ef",
-        "source_type": "content"
-      }
-    },
-    "query_parameters": {
-      "optional": [
-        "limit",
-        "cursor",
-        "created_after",
-        "created_before"
-      ],
-      "example": {
-        "limit": 50
-      }
-    }
-  },
-  "success": {
-    "status": 200,
-    "schema": "SourcePage",
-    "body": {
-      "items": [
-        {
-          "scope_id": "scp_01j8m4v2n7q9x3k6c5t0b1d2ef",
-          "source_type": "content",
-          "source_id": "src_01J...",
-          "metadata": {
-            "title": "退款流程约束"
-          },
-          "created_at": "2026-09-01T04:00:00Z",
-          "position": 42,
-          "content_digest": "sha256:..."
-        }
-      ],
-      "next_cursor": null
-    }
-  }
-}
-```
-
-## Source Search 定义与示例
-
-```json
-{
-  "operation_id": "search_sources",
-  "request": {
-    "method": "GET",
-    "path": "/v1/scopes/{scope_id}/source-search-results",
-    "path_parameters": {
-      "required": [
-        "scope_id"
-      ],
-      "example": {
-        "scope_id": "scp_01j8m4v2n7q9x3k6c5t0b1d2ef"
-      }
-    },
-    "query_parameters": {
-      "required": [
-        "source_type"
-      ],
-      "optional": [
-        "q",
-        "mode",
-        "limit",
-        "cursor",
-        "created_after",
-        "created_before"
-      ],
-      "examples": {
-        "ranked": {
-          "source_type": "content",
-          "q": "refund manual review",
-          "mode": "auto",
-          "limit": 20
-        },
-        "without_query": {
-          "source_type": "content",
-          "created_after": "2026-09-01T00:00:00Z",
-          "limit": 20
-        }
-      },
-      "rules": {
-        "blank_q": "normalize_to_null",
-        "mode_without_q": "omit"
-      }
-    }
-  },
-  "success": {
-    "status": 200,
-    "schema": "SourceSearchResultPage",
-    "examples": {
-      "ranked": {
-        "query": "refund manual review",
-        "mode": "keyword",
-        "hits": [
-          {
-            "scope_id": "scp_01j8m4v2n7q9x3k6c5t0b1d2ef",
-            "source_type": "content",
-            "source_id": "src_01J...",
-            "metadata": {
-              "title": "退款流程约束"
-            },
-            "created_at": "2026-09-01T04:00:00Z",
-            "score": 0.91,
-            "snippets": [
-              "退款流程必须保留人工复核。"
-            ]
-          }
-        ],
-        "next_cursor": null
-      },
-      "without_query": {
-        "query": null,
-        "mode": null,
-        "hits": [
-          {
-            "scope_id": "scp_01j8m4v2n7q9x3k6c5t0b1d2ef",
-            "source_type": "content",
-            "source_id": "src_01J...",
-            "metadata": {
-              "title": "退款流程约束"
-            },
-            "created_at": "2026-09-01T04:00:00Z",
-            "score": null,
-            "snippets": []
-          }
-        ],
-        "next_cursor": null
-      }
-    }
-  }
-}
-```
-
-# Artifact API
-
-Artifact 基础接口对未来 Family 使用固定 path。新增 Family 只需在 assembled Runtime 注册 Family implementation、content schema 与能力，不增加新的基础 HTTP path 或 generated Client method。
-
-## Artifact Create 定义与示例
-
-```json
-{
-  "operation_id": "create_artifact",
-  "request": {
-    "method": "POST",
-    "path": "/v1/scopes/{scope_id}/artifacts/{family}",
-    "path_parameters": {
-      "required": [
-        "scope_id",
-        "family"
-      ],
-      "example": {
-        "scope_id": "scp_01j8m4v2n7q9x3k6c5t0b1d2ef",
-        "family": "company.example.decision"
-      }
-    },
-    "headers": {
-      "Content-Type": "application/json"
-    },
-    "body": {
-      "required_fields": [
-        "schema_version",
-        "content"
-      ],
-      "optional_fields": [
-        "artifact_id",
-        "metadata",
-        "source_refs",
-        "artifact_refs",
-        "idempotency_key"
-      ],
-      "example": {
-        "artifact_id": "dec_01J...",
-        "schema_version": 1,
-        "metadata": {
-          "title": "退款人工复核约束"
-        },
-        "content": {
-          "decision": "退款必须经过人工复核"
-        },
-        "source_refs": [
-          {
-            "source_type": "content",
-            "source_id": "src_01J..."
-          }
-        ],
-        "artifact_refs": [],
-        "idempotency_key": "idem_01J..."
-      }
-    }
-  },
-  "success": {
-    "status": 201,
-    "schema": "ArtifactRevision",
-    "headers": {
-      "Location": "/v1/scopes/scp_01j8m4v2n7q9x3k6c5t0b1d2ef/artifacts/company.example.decision/dec_01J...",
-      "ETag": "revision:1"
-    },
-    "body": {
-      "scope_id": "scp_01j8m4v2n7q9x3k6c5t0b1d2ef",
-      "artifact_ref": {
-        "family": "company.example.decision",
-        "artifact_id": "dec_01J...",
-        "revision": 1
-      },
-      "schema_version": 1,
-      "metadata": {
-        "title": "退款人工复核约束"
-      },
-      "content": {
-        "decision": "退款必须经过人工复核"
-      },
-      "source_refs": [
-        {
-          "source_type": "content",
-          "source_id": "src_01J..."
-        }
-      ],
-      "artifact_refs": [],
-      "created_at": "2026-09-01T04:30:00Z",
-      "content_digest": "sha256:..."
-    }
-  }
-}
-```
-
-`artifact_id` 可选；省略时由服务端生成，并通过 `artifact_ref.artifact_id` 和 `Location` 返回。希望安全重试
-“服务端生成 ID”的 Create 时，调用方应提供 `idempotency_key`：相同 key 与相同 canonical request 返回同一
-Revision 1，不再创建另一个 Artifact；相同 key 对应不同 canonical request 返回 `409 idempotency_conflict`。
-未提供 `idempotency_key` 的每次 Create 都是独立创建尝试，网络超时后的盲重试可能创建另一条 Artifact。
-
-## Artifact Get current 定义与示例
-
-```json
-{
-  "operation_id": "get_artifact",
-  "request": {
-    "method": "GET",
-    "path": "/v1/scopes/{scope_id}/artifacts/{family}/{artifact_id}",
-    "path_parameters": {
-      "required": [
-        "scope_id",
-        "family",
-        "artifact_id"
-      ],
-      "example": {
-        "scope_id": "scp_01j8m4v2n7q9x3k6c5t0b1d2ef",
-        "family": "company.example.decision",
-        "artifact_id": "dec_01J..."
-      }
-    }
-  },
-  "success": {
-    "status": 200,
-    "schema": "ArtifactRevision",
-    "headers": {
-      "ETag": "revision:1"
-    },
-    "body": {
-      "scope_id": "scp_01j8m4v2n7q9x3k6c5t0b1d2ef",
-      "artifact_ref": {
-        "family": "company.example.decision",
-        "artifact_id": "dec_01J...",
-        "revision": 1
-      },
-      "schema_version": 1,
-      "metadata": {
-        "title": "退款人工复核约束"
-      },
-      "content": {
-        "decision": "退款必须经过人工复核"
-      },
-      "source_refs": [
-        {
-          "source_type": "content",
-          "source_id": "src_01J..."
-        }
-      ],
-      "artifact_refs": [],
-      "created_at": "2026-09-01T04:30:00Z",
-      "content_digest": "sha256:..."
-    }
-  },
-  "errors": [
-    {
-      "status": 404,
-      "code": "artifact_not_found"
-    }
-  ]
-}
-```
-
-## Artifact Get exact Revision 定义与示例
-
-```json
-{
-  "operation_id": "get_artifact_revision",
-  "request": {
-    "method": "GET",
-    "path": "/v1/scopes/{scope_id}/artifacts/{family}/{artifact_id}/revisions/{revision}",
-    "path_parameters": {
-      "required": [
-        "scope_id",
-        "family",
-        "artifact_id",
-        "revision"
-      ],
-      "example": {
-        "scope_id": "scp_01j8m4v2n7q9x3k6c5t0b1d2ef",
-        "family": "company.example.decision",
-        "artifact_id": "dec_01J...",
-        "revision": 1
-      }
-    }
-  },
-  "success": {
-    "status": 200,
-    "schema": "ArtifactRevision",
-    "headers": {},
-    "body": {
-      "scope_id": "scp_01j8m4v2n7q9x3k6c5t0b1d2ef",
-      "artifact_ref": {
-        "family": "company.example.decision",
-        "artifact_id": "dec_01J...",
-        "revision": 1
-      },
-      "schema_version": 1,
-      "metadata": {
-        "title": "退款人工复核约束"
-      },
-      "content": {
-        "decision": "退款必须经过人工复核"
-      },
-      "source_refs": [
-        {
-          "source_type": "content",
-          "source_id": "src_01J..."
-        }
-      ],
-      "artifact_refs": [],
-      "created_at": "2026-09-01T04:30:00Z",
-      "content_digest": "sha256:..."
-    }
-  },
-  "errors": [
-    {
-      "status": 404,
-      "code": "artifact_not_found"
-    }
-  ]
-}
-```
-
-精确 Revision response 不携带 head ETag；即使该 Artifact 后续被替换或删除，已提交 Revision 的内容仍不可变。
-
-## Artifact List 定义与示例
-
-```json
-{
-  "operation_id": "list_artifacts",
-  "request": {
-    "method": "GET",
-    "path": "/v1/scopes/{scope_id}/artifacts/{family}",
-    "path_parameters": {
-      "required": [
-        "scope_id",
-        "family"
-      ],
-      "example": {
-        "scope_id": "scp_01j8m4v2n7q9x3k6c5t0b1d2ef",
-        "family": "company.example.decision"
-      }
-    },
-    "query_parameters": {
-      "optional": [
-        "limit",
-        "cursor",
-        "created_after",
-        "created_before"
-      ],
-      "example": {
-        "limit": 50
-      }
-    }
-  },
-  "success": {
-    "status": 200,
-    "schema": "ArtifactPage",
-    "body": {
-      "items": [
-        {
-          "artifact_ref": {
-            "family": "company.example.decision",
-            "artifact_id": "dec_01J...",
-            "revision": 1
-          },
-          "schema_version": 1,
-          "metadata": {
-            "title": "退款人工复核约束"
-          },
-          "created_at": "2026-09-01T04:30:00Z",
-          "content_digest": "sha256:..."
-        }
-      ],
-      "next_cursor": null
-    }
-  }
-}
-```
-
-## Artifact Search 定义与示例
-
-```json
-{
-  "operation_id": "search_artifacts",
-  "request": {
-    "method": "GET",
-    "path": "/v1/scopes/{scope_id}/artifact-search-results",
-    "path_parameters": {
-      "required": [
-        "scope_id"
-      ],
-      "example": {
-        "scope_id": "scp_01j8m4v2n7q9x3k6c5t0b1d2ef"
-      }
-    },
-    "query_parameters": {
-      "required": [
-        "family"
-      ],
-      "optional": [
-        "q",
-        "mode",
-        "limit",
-        "cursor",
-        "created_after",
-        "created_before"
-      ],
-      "example": {
-        "family": "company.example.decision",
-        "q": "refund manual review",
-        "mode": "auto",
-        "limit": 20
-      },
-      "rules": {
-        "blank_q": "normalize_to_null",
-        "mode_without_q": "omit",
-        "revision_selection": "current_visible_head"
-      }
-    }
-  },
-  "success": {
-    "status": 200,
-    "schema": "ArtifactSearchResultPage",
-    "body": {
-      "query": "refund manual review",
-      "mode": "keyword",
-      "hits": [
-        {
-          "artifact_ref": {
-            "family": "company.example.decision",
-            "artifact_id": "dec_01J...",
-            "revision": 1
-          },
-          "metadata": {
-            "title": "退款人工复核约束"
-          },
-          "score": 0.94,
-          "snippets": [
-            "退款必须经过人工复核"
-          ]
-        }
-      ],
-      "next_cursor": null
-    },
-    "without_query": {
-      "query": null,
-      "mode": null,
-      "score": null,
-      "snippets": []
-    }
-  }
-}
-```
-
-## Artifact Replace 定义与示例
-
-```json
-{
-  "operation_id": "replace_artifact",
-  "request": {
-    "method": "PUT",
-    "path": "/v1/scopes/{scope_id}/artifacts/{family}/{artifact_id}",
-    "path_parameters": {
-      "required": [
-        "scope_id",
-        "family",
-        "artifact_id"
-      ],
-      "example": {
-        "scope_id": "scp_01j8m4v2n7q9x3k6c5t0b1d2ef",
-        "family": "company.example.decision",
-        "artifact_id": "dec_01J..."
-      }
-    },
-    "headers": {
-      "required": [
-        "Content-Type",
-        "If-Match"
-      ],
-      "example": {
-        "Content-Type": "application/json",
-        "If-Match": "revision:1"
-      }
-    },
-    "body": {
-      "semantics": "complete_replacement",
-      "required_fields": [
-        "schema_version",
-        "content"
-      ],
-      "optional_fields": [
-        "metadata",
-        "source_refs",
-        "artifact_refs",
-        "idempotency_key"
-      ],
-      "example": {
-        "schema_version": 1,
-        "metadata": {
-          "title": "退款人工复核约束"
-        },
-        "content": {
-          "decision": "退款必须经过人工复核",
-          "rationale": "满足资金安全要求"
-        },
-        "source_refs": [
-          {
-            "source_type": "content",
-            "source_id": "src_01J..."
-          }
-        ],
-        "artifact_refs": [],
-        "idempotency_key": "idem_01K..."
-      }
-    }
-  },
-  "success": {
-    "status": 200,
-    "schema": "ArtifactRevision",
-    "headers": {
-      "ETag": "revision:2"
-    },
-    "body": {
-      "scope_id": "scp_01j8m4v2n7q9x3k6c5t0b1d2ef",
-      "artifact_ref": {
-        "family": "company.example.decision",
-        "artifact_id": "dec_01J...",
-        "revision": 2
-      },
-      "schema_version": 1,
-      "metadata": {
-        "title": "退款人工复核约束"
-      },
-      "content": {
-        "decision": "退款必须经过人工复核",
-        "rationale": "满足资金安全要求"
-      },
-      "source_refs": [
-        {
-          "source_type": "content",
-          "source_id": "src_01J..."
-        }
-      ],
-      "artifact_refs": [],
-      "created_at": "2026-09-01T04:45:00Z",
-      "content_digest": "sha256:..."
-    }
-  },
-  "errors": [
-    {
-      "status": 428,
-      "code": "precondition_required"
-    },
-    {
-      "status": 412,
-      "code": "revision_conflict",
-      "body": {
-        "error": {
-          "code": "revision_conflict",
-          "message": "Artifact ETag does not match the current head",
-          "details": {
-            "provided_etag": "revision:1",
-            "current_etag": "revision:2"
-          }
-        }
-      }
-    }
-  ],
-  "rules": {
-    "creates_next_revision": true,
-    "historical_revisions_immutable": true,
-    "merge_patch_supported": false,
-    "automatic_merge": false
-  }
-}
-```
-
-## Artifact Delete 定义与示例
-
-```json
-{
-  "operation_id": "delete_artifact",
-  "request": {
-    "method": "DELETE",
-    "path": "/v1/scopes/{scope_id}/artifacts/{family}/{artifact_id}",
-    "path_parameters": {
-      "required": [
-        "scope_id",
-        "family",
-        "artifact_id"
-      ],
-      "example": {
-        "scope_id": "scp_01j8m4v2n7q9x3k6c5t0b1d2ef",
-        "family": "company.example.decision",
-        "artifact_id": "dec_01J..."
-      }
-    },
-    "headers": {
-      "required": [
-        "If-Match"
-      ],
-      "example": {
-        "If-Match": "revision:2"
-      }
-    }
-  },
-  "success": {
-    "status": 200,
-    "schema": "ArtifactDeletionStatus",
-    "body": {
-      "artifact_ref": {
-        "family": "company.example.decision",
-        "artifact_id": "dec_01J...",
-        "revision": 2
-      },
-      "status": "deleted",
-      "deleted_at": "2026-09-01T05:00:00Z"
-    }
-  },
-  "errors": [
-    {
-      "status": 428,
-      "code": "precondition_required"
-    },
-    {
-      "status": 412,
-      "code": "revision_conflict"
-    },
-    {
-      "status": 405,
-      "code": "operation_not_supported"
-    }
-  ],
-  "rules": {
-    "deletion_mode": "lifecycle_tombstone",
-    "physical_revision_erasure": false,
-    "hidden_from_head_get_list_search_context": true,
-    "historical_lineage_verifiable": true,
-    "idempotent_for_same_revision": true,
-    "same_if_match_replay": "命中该 lifecycle 的 deletion receipt 时返回首次删除的同一 200 结果，不再写 tombstone",
-    "different_if_match_after_delete": "412 revision_conflict",
-    "restore_supported": false,
-    "purge_supported": false,
-    "family_must_enable_delete": true
-  }
-}
-```
-
-# Source Create + Memory Flush
-
-```json
-{
-  "workflow": "create_source_then_flush_memory",
-  "steps": [
-    {
-      "step": 1,
-      "operation_id": "create_source",
-      "request": {
-        "method": "POST",
-        "path": "/v1/scopes/{scope_id}/sources/{source_type}",
-        "path_parameters": {
-          "scope_id": "scp_01j8m4v2n7q9x3k6c5t0b1d2ef",
-          "source_type": "content"
-        },
-        "headers": {
-          "Idempotency-Key": "idem_01J..."
-        }
-      },
-      "capture": {
-        "source_position": "success.body.position"
-      }
-    },
-    {
-      "step": 2,
-      "operation_id": "flush_memory",
-      "request": {
-        "method": "POST",
-        "path": "/v1/memory/flush",
-        "headers": {
-          "Content-Type": "application/json"
-        },
-        "body": {
-          "scope_id": "scp_01j8m4v2n7q9x3k6c5t0b1d2ef"
-        }
-      },
-      "success": {
-        "status": 200,
-        "body": {
-          "status": "processed",
-          "previous_cursor": 38,
-          "current_cursor": 42,
-          "high_watermark": 42,
-          "processed_source_count": 4,
-          "memory": {
-            "family": "memory",
-            "artifact_id": "memory",
-            "revision": 7
-          },
-          "changes": []
-        }
-      },
-      "repeat_while": "success.body.current_cursor < source_position"
-    }
-  ],
-  "completion_condition": "flush_memory.success.body.current_cursor >= source_position",
-  "flush_semantics": {
-    "processing_unit": "bounded_pending_source_window",
-    "single_source_only": false,
-    "full_history_refresh": false,
-    "may_include_earlier_pending_sources": true,
-    "source_rolled_back_on_flush_failure": false,
-    "flush_retryable": true,
-    "combined_result_owner": "caller_or_sdk_convenience_method",
-    "changes_create_source_response": false
-  },
-  "other_generation_commands": [
-    "experience_generate",
-    "skill_generate",
-    "handoff_prepare"
-  ]
-}
-```
-
-# Family capability and lifecycle boundaries
-
-固定 Artifact path 不意味着每个 Family 都允许直接写入：
-
-```json
-[
-  {
-    "family_kind": "direct",
-    "capabilities": {
-      "create": "commit_revision_1",
-      "get_list_search": "committed_revision_and_head",
-      "replace": "commit_next_revision",
-      "delete": "available_when_declared"
-    }
-  },
-  {
-    "family_kind": "review",
-    "examples": [
-      "experience",
-      "managed_skill"
-    ],
-    "capabilities": {
-      "create": {
-        "supported": false,
-        "status": 405,
-        "code": "operation_not_supported",
-        "required_workflow": "propose_review"
-      },
-      "get_list_search": "approved_or_committed_artifact_only",
-      "replace": {
-        "supported": false,
-        "status": 405,
-        "code": "operation_not_supported",
-        "required_workflow": "candidate_revision_and_review"
-      },
-      "delete": "disabled_by_default"
-    }
-  },
-  {
-    "family_kind": "memory",
-    "capabilities": {
-      "create": "use_memory_commands",
-      "get_list_search": "artifact_reads_do_not_replace_memory_entry_apis",
-      "replace": "disabled; entry_revision_retains_two_level_revision_and_cas",
-      "delete": "disabled"
-    }
-  },
-  {
-    "family_kind": "handoff",
-    "capabilities": {
-      "create": "use_prepare_finalize_commit",
-      "get_list_search": "committed_handoff_only",
-      "replace": "disabled",
-      "delete": "disabled"
-    }
-  }
-]
-```
-
-支持的基础动作由 assembled Runtime 中的 Source type / Artifact Family 注册信息决定；不支持的基础动作返回
-`405 operation_not_supported`。本 RFC 不新增或扩展能力发现接口。
-
-Candidate 不是 Artifact。pending/rejected Candidate 不进入 Artifact List/Search；只有审批并成功提交后产生的 `result_artifact` 才能通过 Artifact API 读取。
-
-# Error model
-
-基础 API 复用现有统一错误 envelope，并至少稳定以下 code：
-
-```json
-[
-  {
-    "http_status": [
-      400,
-      422
-    ],
-    "code": "invalid_request",
-    "meaning": "缺少 scope_id 或必需的 Idempotency-Key、字段非法、Create body 包含 source_id、Search mode 与请求不兼容，或 cursor 与查询条件不匹配"
-  },
-  {
-    "http_status": 401,
-    "code": "unauthorized",
-    "meaning": "未认证"
-  },
-  {
-    "http_status": 403,
-    "code": "forbidden",
-    "meaning": "已认证但无权执行 mutation；具体对象读取优先用 404 防枚举"
-  },
-  {
-    "http_status": 404,
-    "code": [
-      "source_not_found",
-      "artifact_not_found"
-    ],
-    "meaning": "对象不存在或对调用方不可见"
-  },
-  {
-    "http_status": 405,
-    "code": "operation_not_supported",
-    "meaning": "Source 或 Artifact Family 不支持该基础动作，或动作会绕过 Review"
-  },
-  {
-    "http_status": 409,
-    "code": "idempotency_conflict",
-    "meaning": "支持幂等键的操作将相同 key 绑定到了不同 canonical request；包括新 Source Create"
-  },
-  {
-    "http_status": 412,
-    "code": "revision_conflict",
-    "meaning": "If-Match 与当前 Artifact head 的 ETag 不一致"
-  },
-  {
-    "http_status": 428,
-    "code": "precondition_required",
-    "meaning": "Artifact Replace 或 Delete 缺少 If-Match"
-  },
-  {
-    "http_status": 422,
-    "code": "schema_validation_failed",
-    "meaning": "Source 或 Artifact Family content 不符合已注册 schema"
-  },
-  {
-    "http_status": 503,
-    "code": "capability_unavailable",
-    "meaning": "部署声明了能力，但当前 backend 暂不可用"
-  }
-]
-```
-
-# Existing API overlap and compatibility
-
-```json
-[
-  {
-    "new_api": "Source Get/List/Search",
-    "existing_api": null,
-    "relationship": "新增通用读取接口",
-    "compatibility_rule": "读取同一 Source journal 和 projection"
-  },
-  {
-    "new_api": "Artifact Head/Revision Get",
-    "existing_api": [
-      "/v1/experience/get",
-      "/v1/skill/get",
-      "其他强类型读取接口"
-    ],
-    "relationship": "读取语义重叠",
-    "compatibility_rule": "委托同一 application service；基础接口返回精确 Revision，强类型 response 继续可用"
-  },
-  {
-    "new_api": "Artifact List/Search",
-    "existing_api": [
-      "Memory Entry List",
-      "Memory Entry Search"
-    ],
-    "relationship": "身份层级不同",
-    "compatibility_rule": "Artifact API 处理 Artifact head；Memory Entry API 保留 entry identity、citation 与 ranking"
-  },
-  {
-    "new_api": "Artifact Replace",
-    "existing_api": [
-      "Candidate revise",
-      "Memory Entry revise"
-    ],
-    "relationship": "生命周期不同",
-    "compatibility_rule": "不能绕过 Review，也不能把 Entry mutation 表达为整个 Artifact Replace"
-  },
-  {
-    "new_api": "Artifact Delete",
-    "existing_api": [
-      "Memory retire",
-      "其他 Family lifecycle command"
-    ],
-    "relationship": "生命周期不同",
-    "compatibility_rule": "只有显式启用 Delete 的 Family 才接受通用 Delete"
-  },
-  {
-    "new_api": "Source Create + Memory Flush 客户端编排",
-    "existing_api": [
-      "/v1/memory/flush"
-    ],
-    "relationship": "复用现有命令",
-    "compatibility_rule": "不增加服务端组合参数或组合 response"
-  }
-]
-```
-
-本 RFC 不修改既有 API contract。新增基础入口必须直接读取同一权威 Source/Artifact Revision、content digest、
-lineage 和授权结果，不能建立第二份业务数据或独立身份空间。
-
-# OpenAPI contract
-
-`openapi/powercontext.yaml` 仍是唯一 HTTP 契约真相。实现时新增或复用以下 schema：
-
-```json
-{
-  "contract_source": "openapi/powercontext.yaml",
-  "schemas": [
-    "SourceRecord",
-    "CreateSourceRequest",
-    "SourceSummary",
-    "SourcePage",
-    "SourceSearchHit",
-    "SourceSearchResultPage",
-    "ArtifactRevision",
-    "ArtifactSummary",
-    "ArtifactPage",
-    "CreateArtifactRequest",
-    "ReplaceArtifactRequest",
-    "ArtifactSearchHit",
-    "ArtifactSearchResultPage",
-    "ArtifactDeletionStatus"
-  ],
-  "headers": {
-    "response": [
-      "ETag"
-    ],
-    "request": [
-      "Idempotency-Key",
-      "If-Match"
-    ]
-  }
-}
-```
-
-OpenAPI 还必须声明 `Idempotency-Key` 和 `If-Match` request header 以及 `ETag` response header。不得增加统一
-Source/Artifact union schema、统一 selector 或统一引用 envelope。Family-specific `content` 通过 assembled
-Runtime 中已注册的 schema 校验；generated Client 将其暴露为 JSON object，强类型体验继续由现有 Family API 提供。
-
-# Implementation plan
-
-1. 在 OpenAPI 中让 `SourceRecord`、`SourceSummary` 与 `SourceSearchHit` 直接包含 `scope_id`、`source_type`、
-   `source_id`，不增加 Source 引用 envelope，也不修改既有 HTTP schema。
-2. 增加要求 `Idempotency-Key` 且由服务端生成 `source_id` 的
-   `POST /v1/scopes/{scope_id}/sources/{source_type}`，以及使用同一联合键前缀的 Source Get/List 和 Scope-bound Search。
-3. 增加按 `(scope_id, family, artifact_id[, revision])` 定位的 Artifact create、head get、exact revision get、list、
-   search-result、replace 和 delete paths。
-4. 建立 Source/Artifact 公共 application services，让新增入口读写现有权威 repository。
-5. 运行 `make api-generate` 与 `make contract-test`，更新 checked-in generated Client。
-6. 为 SQLite 与 OceanBase 增加相同的 API behavior、cursor、CAS、授权和幂等测试。
-7. 增加 Source Create 后循环 Memory Flush 至 cursor 越过 position 的 SDK convenience example；不改变服务端契约。
-
-# Acceptance criteria
-
-| 场景 | 通过条件 |
+| 状态码 | 语义 |
 | --- | --- |
-| No umbrella concept | OpenAPI 中没有跨 Source/Artifact 的统一 selector、联合 request/response 或统一资源类型字段 |
-| No write-time generation | Source Create request/response 只表达 Source 耐久写入，不包含任何生成参数或生成结果 |
-| Source operations | Source 只公开 Create/Get/List/Search，不公开 Replace/Delete |
-| Source list/search | `GET /v1/scopes/{scope_id}/sources/{source_type}` 使用 `list_sources`；`GET /v1/scopes/{scope_id}/source-search-results` 使用 `search_sources`；Search 的 `source_type` 是 query filter，`q` 可选 |
-| Artifact operations | 固定 path 提供 Create/Get/List/Search/Replace/Delete；Replace 创建下一不可变 Revision |
-| REST paths | URL 使用名词；Create 使用 POST，Get/List/Search 使用 GET，完整 Replace 使用 PUT，Delete 使用 DELETE |
-| Exact identity | Source 表联合唯一键为 `(scope_id, source_type, source_id)`；Artifact head 与 Revision 分别按 `(scope_id, family, artifact_id)` 和追加 `revision` 的键定位 |
-| Canonical URI | Source/Artifact Create、Get、List、Replace、Delete 的 identity 或 identity prefix 位于 path；Search 仅把 `scope_id` 放 path，其余检索条件放 query |
-| Source-generated identity | `POST /v1/scopes/{scope_id}/sources/{source_type}` 不接受 `source_id`，服务端生成 opaque `source_id` 并通过 body 与 `Location` 返回 |
-| Source create idempotency | `Idempotency-Key` 必填；相同 key/request 返回同一个 Source 与 position，不同 request 返回 `409 idempotency_conflict` |
-| Scope required | 所有 Source/Artifact Get/List/Search/Mutation 都显式携带 `scope_id` |
-| Scope dependency | 本 RFC 不定义 Scope API；所有 Source/Artifact 操作使用由 PR #1401 Scope API 提供的 `scope_id` |
-| Pagination | Source 与 Artifact 的 List/Search 使用稳定 cursor，cursor 绑定 endpoint、完整查询和授权上下文 |
-| Concurrency | Artifact Replace/Delete 必须携带 current head ETag；缺失返回 `428`，冲突返回 `412 revision_conflict` |
-| Review gate | Experience/Skill 等 Review Family 不能通过基础 Create/Replace 绕过 Candidate approval |
-| Memory boundary | Source Create + Memory Flush 是两个调用；flush 是 bounded pending window，不宣称 exact single-Source 或 full refresh |
-| Compatibility | 本 RFC 不修改任何既有 path、operation、request/response schema 或领域行为 |
-| Extensibility | 新增 Direct Artifact Family 不增加基础 HTTP path 或 generated Client method |
-| Conformance | SQLite 与 OceanBase 通过相同 contract 与行为测试 |
+| `200` | Get、List、Search 或 Replace 成功。 |
+| `201` | Source 或 Artifact 已同步创建；必须返回 `Location`。 |
+| `204` | Delete 成功且无 response body。 |
+| `304` | `If-None-Match` 命中。 |
+| `400` | Query、格式或 cursor 非法。 |
+| `401` | 未认证；返回 `WWW-Authenticate`。 |
+| `403` | 无权访问显式指定的 Scope。 |
+| `404` | 资源不存在或对调用方隐藏。 |
+| `405` | Family 不支持该操作；返回 `Allow`。 |
+| `409` | 资源身份或生命周期状态冲突。 |
+| `410` | Cursor 已过期。 |
+| `412` | `If-Match` 与当前 ETag 不一致。 |
+| `413` | Request body 过大；不用于表示 response 过大。 |
+| `422` | 字段或 Family content 校验失败。 |
+| `428` | 缺少必须的 `If-Match`。 |
+| `429` | 请求限流；返回 `Retry-After`。 |
+| `503` | 声明的能力暂时不可用。 |
+
+错误统一返回：
+
+```json
+{
+  "error": {
+    "code": "invalid_request",
+    "message": "The request is invalid.",
+    "details": {}
+  }
+}
+```
+
+错误不得放在 `200` 成功 envelope 中。
+
+## 创建重试、缓存和并发
+
+Source Create 和 Artifact Create 都不接受 `Idempotency-Key`。每次成功调用都创建一个新资源；请求结果未知时直接
+重试可能产生重复资源。ID 由服务端生成，并通过 response body 和 `Location` 返回。
+
+Artifact Create、Get head 和 Replace 返回 ETag。Get head 可携带 `If-None-Match`，命中时返回无 body 的
+`304`。Replace 和 Delete 必须携带 `If-Match`；缺失返回 `428`，与当前 head 不匹配返回 `412`。
+
+Delete 第一次成功返回 `204`；服务端能够确认是同一次删除的重试时仍返回 `204`。资源从未存在、已无法确认重试
+身份或对调用方不可见时返回 `404`。
+
+## Family capability boundaries
+
+固定 Artifact URI 不表示每个 Family 都允许直接写入：
+
+| Family 类型 | Read | Create/Replace/Delete |
+| --- | --- | --- |
+| Direct | 读取已提交 Artifact | 按 Family capability 开放。 |
+| Review | 只读取审批后的 Artifact | 返回 `405 operation_not_supported`，继续使用 Candidate Review。 |
+| Memory | 读取 Artifact head，不替代 Entry API | 继续使用 Memory 领域命令。 |
+| Handoff | 读取已提交 Handoff | 继续使用 prepare/finalize/commit workflow。 |
+
+Candidate 不是 Artifact；pending 或 rejected Candidate 不进入 Artifact List/Search。
+
+## API 字段与持久化映射
+
+以下表名和列名描述当前 `SHARED_METADATA` 的实现映射，不是客户端契约。实现可以重构内部表，但必须保持 OpenAPI
+字段语义。
+
+映射状态：
+
+```json
+{
+  "direct": "直接读写现有关系表列",
+  "encoded": "包含在现有 canonical payload/content 二进制列中",
+  "relation": "API 数组拆分为有序关系表记录",
+  "derived": "根据持久化数据确定性生成，无需独立列",
+  "runtime": "只在 HTTP、搜索或分页过程中使用",
+  "new_column": "当前 master 缺失，保留 API 语义时必须增加"
+}
+```
+
+### Source 字段映射
+
+| API 字段 | 持久化字段 | 映射 | 含义 |
+| --- | --- | --- | --- |
+| `scope_id` | `pc_sources.scope_id` | `direct` | owner Scope、授权边界和复合身份分量；最长 256 字符，按字节精确比较。 |
+| `source_type` | `pc_sources.source_type` | `direct` | adapter 稳定名称和类型集合；最长 128 字符，Create 缺省 `content`。 |
+| `source_id` | `pc_sources.source_id`；类型化 Source 的 `name` 与其一致 | `direct` | 集合内稳定 ID；服务端生成，最长 256 字符。 |
+| `content` | `pc_sources.payload` | `encoded` | 完整类型化 Source 模型中的证据内容；`content` adapter 对应 `ContentSource.content`。 |
+| `metadata` | `pc_sources.payload` 中的 Source metadata | `encoded` | 只保存并返回的扩展属性；不建立独立列，当前 API 不按 metadata 查询、排序或索引。 |
+| `created_at` | 目标 `pc_sources.created_at` | `new_column` | Source 首次成功持久化的服务端 UTC 时间。 |
+| `position` | `pc_sources.journal_position` | `direct` | Scope journal 中单调递增且唯一的位置。 |
+| `content_digest` | 无独立列 | `derived` | canonical API `content` 的 SHA-256 摘要。 |
+
+`pc_source_journal_heads.position` 是 Scope journal 高水位和位置分配依据，不是单条 Source 的 response 字段。
+
+### Artifact 字段映射
+
+| API 字段 | 持久化字段 | 映射 | 含义 |
+| --- | --- | --- | --- |
+| `scope_id` | Artifact、head 和 lineage 表的 `scope_id` | `direct` | owner Scope、授权边界和复合身份分量；最长 256 字符。 |
+| `artifact_ref.family` | `pc_artifacts.family`、`pc_artifact_heads.family` | `direct` | Family 和 adapter 路由；最长 128 字符。Create 的 `family` 来自 body。 |
+| `artifact_ref.artifact_id` | `pc_artifacts.artifact_id`、`pc_artifact_heads.artifact_id` | `direct` | 生命周期稳定 ID；服务端生成，最长 128 字符。 |
+| `artifact_ref.revision` | `pc_artifacts.revision`；head 由 `pc_artifact_heads.revision` 指向 | `direct` | 从 1 开始递增的不可变 Revision。 |
+| `artifact_ref` | 无单独 JSON 列 | `derived` | 由 family、artifact ID 和 Revision 组装，并与顶层 Scope 共同定位。 |
+| `content` | `pc_artifacts.content` | `encoded` | 通过 Family content model 校验后的 canonical JSON bytes。 |
+| `source_refs` | `pc_artifact_lineage_sources` | `relation` | 按数组顺序保存的同 Scope Source 引用。 |
+| `artifact_refs` | `pc_artifact_lineage_artifacts` | `relation` | 按数组顺序保存的同 Scope 上游 Artifact Revision 引用。 |
+| `created_at` | 目标 `pc_artifacts.created_at` | `new_column` | 当前 Revision 成功提交的服务端 UTC 时间。 |
+| `content_digest` | 无独立列 | `derived` | canonical Artifact content 的 SHA-256 摘要。 |
+
+Artifact 不定义顶层 `metadata`，因此不新增 `pc_artifacts.metadata`，也不改变 `pc_artifacts.content` 的现有
+Family content 序列化格式。
+
+`source_refs` 按以下关系列保存：
+
+```json
+{
+  "child_identity": [
+    "scope_id",
+    "family",
+    "artifact_id",
+    "revision"
+  ],
+  "ordinal": "服务端根据数组顺序生成",
+  "source_refs[].source_type": "source_type",
+  "source_refs[].source_id": "source_id"
+}
+```
+
+`artifact_refs` 按以下关系列保存：
+
+```json
+{
+  "child_identity": [
+    "scope_id",
+    "family",
+    "artifact_id",
+    "revision"
+  ],
+  "ordinal": "服务端根据数组顺序生成",
+  "artifact_refs[].family": "upstream_family",
+  "artifact_refs[].artifact_id": "upstream_artifact_id",
+  "artifact_refs[].revision": "upstream_revision"
+}
+```
+
+### 运行时和内部字段
+
+| 字段 | 持久化关系 | 含义 |
+| --- | --- | --- |
+| `query`、`mode`、`limit` | `runtime` | 只控制本次集合查询。 |
+| `cursor`、`next_cursor` | `runtime` | HTTP 分页令牌，不写入业务资源。 |
+| `score`、`snippets` | `runtime` | Search 排名和命中展示信息，不写回资源。 |
+| `Location` | `derived` | 根据完整公开身份组装 canonical URI。 |
+| `ETag` | `derived` | 根据当前 `pc_artifact_heads.revision` 生成。 |
+| `If-Match`、`If-None-Match` | `runtime` | 与当前 ETag 比较，不单独保存。 |
+| `X-PowerContext-Request-ID` | `runtime` | 单次请求追踪 ID。 |
+| `pc_artifact_heads.searchable_text` | Artifact Search 内部投影 | 当前 head 的检索文本；每个可搜索 Family 提供确定性 projector。 |
+| Source 搜索投影 | Source Search 内部投影 | master 当前无通用列；v0.1 可读取 payload 检索，扩展时可增加内部投影/索引。 |
+| 目标 `pc_artifact_heads.deleted_at` | Artifact 生命周期 | `null` 表示有效，非 `null` 表示逻辑删除时间；保留 head Revision。 |
+
+说明性文档中的 `status`、`notes`、`precondition_errors`、`retry` 和 `not_found` 不是实际 response body 字段，
+不映射数据库列。
+
+### 必要的表结构适配
+
+| 表 | 新字段 | 必要性 | 迁移规则 |
+| --- | --- | --- | --- |
+| `pc_sources` | `created_at` | 必须 | 新写入记录 UTC 时间；历史行无法可靠恢复时允许 `null`。 |
+| `pc_artifacts` | `created_at` | 必须 | 每个新 Revision 记录 UTC 提交时间；历史行无法可靠恢复时允许 `null`。 |
+| `pc_artifact_heads` | `deleted_at` | 必须 | 未删除 head 为 `null`；Delete 写入 UTC 时间并保留当前 Revision。 |
+
+`content_digest`、ETag、Location、搜索信息和 pagination cursor 都可派生或只在请求期间存在，不增加数据库列。
+
+Digest 计算规则：
+
+```json
+{
+  "algorithm": "sha256",
+  "input": "API content 的 UTF-8 canonical JSON bytes",
+  "object_key_order": "lexicographic",
+  "insignificant_whitespace": "removed",
+  "included_fields": [
+    "content"
+  ],
+  "output": "sha256:<64 lowercase hexadecimal characters>"
+}
+```
+
+## 既有接口兼容性
+
+本 RFC 只定义新增接口。既有接口的 path、request、response、状态码、引用 schema 和领域行为均不修改。新增入口
+必须读写相同的权威 Source journal、Artifact Revision、lineage 和授权结果，不能创建第二套数据或身份空间。
+
+新增 API 采用服务端生成 ID，而现有领域入口是否由调用方提供稳定 ID 不属于本 RFC。两类入口可以在应用服务层
+适配，但必须最终遵守同一组持久化唯一键和读写不变量。
+
+## 实现与验收
+
+实现顺序：
+
+1. 在 `openapi/powercontext.yaml` 增加本文 9 个 operation 和独立 request/response schema；
+2. 生成 checked-in HTTP 模型和 operation；
+3. 复用现有 Source repository、Artifact repository、lineage 和授权服务；
+4. 增加 `created_at` 和 `deleted_at` 持久化字段及 SQLite/OceanBase 迁移检查；
+5. 实现稳定 List/Search cursor、ETag 和条件请求；
+6. 运行 `make api-generate`、`make contract-test`、`make test` 和 `make docs-test`。
+
+验收条件：
+
+- 仅在本文列出的两棵 Scope 子资源树新增 operation，不重复定义 Scope API；
+- Source 只提供 Create、Get、List/Search，Create 不接收 `source_id`；
+- Artifact 提供 Create、Get head、Get Revision、List/Search、Replace 和 Delete，Create 不接收 `artifact_id`；
+- Create 不接受 `Idempotency-Key`，并返回服务端生成 ID 和 `Location`；
+- 具名 GET 的完整复合身份位于 Path；
+- 非空 `query` 执行 Search，否则执行 List；不出现 `type=list|search`；
+- Replace 创建下一不可变 Revision，并通过 ETag/If-Match 防止并发覆盖；
+- Artifact 不出现顶层 `metadata` 或 `schema_version`；
+- Source `metadata` 无损写入和返回，并复用 `pc_sources.payload`；
+- Review Family 不能通过基础 API 绕过 Candidate approval；
+- SQLite 与 OceanBase 通过相同 contract 和行为测试。
 
 # Drawbacks
 
-- Family-specific Artifact `content` 在基础 generated Client 中只能是 JSON object，静态类型弱于强类型 Family API。
-- 新旧读取入口会并存一段时间，需要共享 application service 与 parity tests 防止行为漂移。
-- Direct Family 与 Review Family 的 mutation capability 不完全一致，调用方必须处理 `405 operation_not_supported`。
-- Artifact logical delete、历史 lineage 可验证与 retention 之间仍需 Family 实现正确衔接。
-- Source Create + Memory Flush 不是一个事务；客户端必须处理“Source 成功、flush 失败”的可重试状态。
-- 把联合键分量放入 path 后，Server 与网关必须对保留字符执行一致的 path-segment 编解码，否则旧格式 ID 可能无法寻址。
-- Source 与 Artifact 各增加一个独立 search-result collection 和 response schema，OpenAPI surface 略有增加，但 generated Client 方法与返回类型保持明确对称。
+- 复合身份使 URI 较长；owner Scope、Source type 或 Artifact Family 变化时 canonical URI 也会变化。
+- Family-specific `content` 在通用 generated Client 中只能表现为 JSON object，静态类型弱于专用 Family API。
+- Source List 为返回 metadata 需要解码类型化 payload；通用 Source Search 在增加投影前可能需要扫描 payload。
+- Create 不提供幂等键；网络结果未知时客户端重试可能创建重复资源。
+- Source Create 与后续生成不是事务，客户端必须处理生成失败和重试。
+- 逻辑删除及稳定时间字段需要持久化迁移，历史记录无法可靠补回原始时间。
 
-# Related PowerContext RFCs
+# Rationale and alternatives
 
-- PowerContext RFC 0002：Source、Artifact、不可变 Revision、精确引用与 Core Protocol；
-- PowerContext RFC 0011：OpenAPI-first、generated Client 与薄 Server mapping；
-- PowerContext RFC 0014：Memory Artifact Revision、Entry lifecycle 与搜索投影；
-- PowerContext RFC 0050：Candidate 不是 Artifact，Review Family 不能绕过 approval；
-- PowerContext RFC 0051：Experience 与 managed Skill 的 Family identity、Revision、生成与发布边界；
-- PowerContext RFC 1345：Scope identity、metadata、Organization Parent、Context References、binding 与 observation selection。
+## 不增加统一 Resource API
+
+Source 是不可变证据，Artifact 是带 Revision 和生命周期的正式制品；二者的更新、删除和 lineage 语义不同。统一
+`/resources` 会迫使客户端使用 selector 或 union schema，并把 Family 能力边界推迟到运行时错误，因此保留两组
+固定资源 API。
+
+## 使用 Scope 子资源和完整 Path 身份
+
+把 `scope_id`、`source_type`/`family` 和 ID 放入具名资源 Path，使 canonical URI、权限审计、缓存键和日志都包含
+完整公开身份。将身份分量放在必填 query 中虽然可以路由，但会让 path 只表示“半个资源”，不采用该方案。
+
+Create 在 `/sources` 和 `/artifacts` 父集合执行，因为服务端生成 ID，且 `source_type`/`family` 在创建时来自 body。
+创建后分类成为资源身份，因此出现在类型集合和 item URI 中。
+
+## 合并 List 与 Search
+
+独立 `/search-results` 可以提供不同 response schema，但会增加额外集合路径和 generated Client operation。本 RFC
+选择统一 `SourcePage`/`ArtifactPage`，让 `query`、`mode`、`score` 和 `snippets` 在 List 时使用明确的空值，
+从而允许同一个集合 GET 同时提供稳定 List 和相关性 Search。GET request body 和 `type=list|search` 都不采用。
+
+## 服务端生成 ID，但不提供创建幂等键
+
+服务端生成 ID 简化调用方并避免要求外部系统构造内部 identity。首期不提供 `Idempotency-Key`，代价是结果未知的
+重试可能重复创建；这是显式接受的 v0.1 限制，而不是隐式幂等保证。
+
+## Source metadata 复用 payload
+
+当前 API 只保存并返回 Source metadata，不按其过滤、排序或索引。`ContentSource` 已把 metadata 包含在
+`pc_sources.payload` 中，因此不增加独立列。Artifact 没有等价的通用 metadata 语义，首期直接删除该字段，
+而不是改变 `pc_artifacts.content` 的 Family-specific 存储格式。
+
+# Prior art
+
+本设计直接建立在 PowerContext 已有的 Scope、Source journal、Artifact Repository、ArtifactRef、SourceRef、
+lineage、Candidate Review 和领域命令之上。Source journal position 已提供稳定处理边界；Artifact head 与不可变
+Revision 已提供修订和并发基础；本 RFC 只为这些现有领域对象增加一致的基础 HTTP surface。
+
+HTTP 方法、名词资源路径、`Location`、ETag 条件请求、RFC 3339 时间和标准错误状态码沿用通用 HTTP/REST 约定，
+但本文的复合身份、Family capability 和生成边界由 PowerContext 领域模型决定。
+
+# Unresolved questions
+
+本 RFC 没有阻塞合并的未决问题。以下实现选择不影响公开契约，可以在实现 PR 中确定：
+
+- 服务端生成 ID 的具体算法，只要值是不透明、path-safe 且满足长度限制；
+- Cursor 的签名和编码格式，只要保持不透明、绑定查询上下文并具有规定的错误语义；
+- Source Search 在 v0.1 使用 payload 扫描还是内部投影，只要结果契约保持一致；
+- 历史 `created_at` 无法恢复时在迁移和 response 中采用 nullable 兼容的具体落地方式。
+
+跨 Scope 共享与授权、跨 type/family Search、复杂 POST Search、Artifact restore、retention、管理员 purge 和批量
+mutation 明确不属于本 RFC，需要独立设计。
 
 # Future possibilities
 
-- 在 RFC 1345 的 Context Reference 与 exact publication 关系上，另行设计主体/用户组、read/write grant、审计和跨租户共享；
-- 在有明确需求后设计跨 type/family Search、统一 ranking 与全局 cursor；
-- 为 Artifact 增加 restore、retention、管理员 purge 与批量 mutation；
-- 为常用客户端提供 `create_source_and_flush_memory` convenience method，仅做顺序编排，不增加服务端组合接口。
+- 为 Source 和更多 Artifact Family 增加独立全文或向量检索投影；
+- 当复杂条件无法由 query string 稳定表达时，单独设计无创建副作用的 POST Search；
+- 增加跨 type、跨 Family 的统一 ranking，但不改变具名资源 URI；
+- 增加 Artifact restore、retention 和管理员 purge；
+- 在独立 RFC 中定义 owner Scope 之外的 read/write grant 和跨租户授权；
+- 在有明确重试需求后，为 Create 增加有 TTL 和原始响应重放语义的幂等键。
