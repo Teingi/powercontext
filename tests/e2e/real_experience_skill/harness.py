@@ -283,12 +283,14 @@ class RunningServer:
 def main(argv: Sequence[str] | None = None) -> int:  # noqa: C901 - one exception-safe harness lifecycle
     arguments = _arguments(argv)
     configured_settings: ServerSettings | None = None
+    configured_access_token: str | None = None
     configured_scopes: ConfiguredScopes | None = None
     external_skill: Path | None = None
     if arguments.configured:
         load_dotenv(arguments.env_file, override=False)
         configured_settings = ServerSettings()
         _validate_configured_settings(configured_settings)
+        configured_access_token = _configured_access_token(configured_settings)
         configured_scopes = _new_configured_scopes()
     run_id = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
     mode = "configured-experience-skill" if arguments.configured else "experience-skill"
@@ -308,6 +310,8 @@ def main(argv: Sequence[str] | None = None) -> int:  # noqa: C901 - one exceptio
     shutil.copyfile(auth_file, isolated_auth)
     isolated_auth.chmod(0o600)
     codex_environment = {**os.environ, "CODEX_HOME": str(isolated_home), "NO_COLOR": "1"}
+    if configured_access_token is not None:
+        codex_environment["POWERCONTEXT_CLIENT_API_TOKEN"] = configured_access_token
     server: RunningServer | None = None
     configured_server_settings: ServerSettings | None = None
 
@@ -394,6 +398,7 @@ def main(argv: Sequence[str] | None = None) -> int:  # noqa: C901 - one exceptio
                     server_url=server.base_url,
                     timeout=arguments.codex_timeout,
                     generation_timeout=configured_settings.inference.generation_timeout_seconds,
+                    access_token=configured_access_token,
                 )
             )
             server.stop()
@@ -409,6 +414,7 @@ def main(argv: Sequence[str] | None = None) -> int:  # noqa: C901 - one exceptio
                     state=journey,
                     server_url=server.base_url,
                     generation_timeout=configured_settings.inference.generation_timeout_seconds,
+                    access_token=configured_access_token,
                 )
             )
     finally:
@@ -755,6 +761,7 @@ async def _run_configured_journey(
     server_url: str,
     timeout: int,  # noqa: ASYNC109 - external Codex process budget, not an asyncio timeout scope
     generation_timeout: float,
+    access_token: str | None,
 ) -> ConfiguredJourneyState:
     memory_scope = scopes.memory
     artifact_scope = scopes.artifacts
@@ -767,7 +774,7 @@ async def _run_configured_journey(
         generation_timeout + CONFIGURED_EXPERIENCE_SCHEDULE_SECONDS + 30.0,
     )
 
-    async with PowerContextClient(server_url, timeout=max(30.0, generation_wait)) as client:
+    async with PowerContextClient(server_url, token=access_token, timeout=max(30.0, generation_wait)) as client:
         with recorder.scenario(
             "configured embedding model and database support vector and hybrid Memory retrieval",
             "api/capabilities.json",
@@ -1092,6 +1099,7 @@ async def _run_configured_journey(
                 skill=skill_v1,
                 destination=projection,
                 recorder=recorder,
+                access_token=access_token,
             )
             recorder.write_text("projection/SKILL.md", (projection / "SKILL.md").read_text(encoding="utf-8"))
             recorder.write_text(
@@ -1551,13 +1559,14 @@ async def _verify_configured_restart(
     state: ConfiguredJourneyState,
     server_url: str,
     generation_timeout: float,
+    access_token: str | None,
 ) -> None:
     with recorder.scenario(
         "configured state remains exact and searchable after a clean Server restart",
         "api/restart-persistence.json",
     ):
         timeout = max(30.0, generation_timeout + 30.0)
-        async with PowerContextClient(server_url, timeout=timeout) as client:
+        async with PowerContextClient(server_url, token=access_token, timeout=timeout) as client:
             persisted_experience_values: list[ExperienceArtifact] = []
             for expected in state.experience_revisions:
                 persisted_experience_values.append(
@@ -1787,6 +1796,7 @@ def _project_via_cli(
     skill: SkillArtifact,
     destination: Path,
     recorder: Recorder,
+    access_token: str | None = None,
 ) -> None:
     uv = _required_executable("uv")
     completed = _run(
@@ -1809,6 +1819,7 @@ def _project_via_cli(
             skill.artifact.artifact_id,
         ],
         cwd=PROJECT_ROOT,
+        env=(None if access_token is None else {**os.environ, "POWERCONTEXT_CLIENT_API_TOKEN": access_token}),
     )
     recorder.write_text("projection/cli.stdout", completed.stdout)
 
@@ -2014,6 +2025,14 @@ def _validate_configured_settings(settings: ServerSettings) -> None:
         _fail("configured E2E requires POWERCONTEXT_SERVER_INFERENCE_GENERATION_MODEL")
     if inference.embedding_model is None:
         _fail("configured E2E requires POWERCONTEXT_SERVER_INFERENCE_EMBEDDING_MODEL")
+
+
+def _configured_access_token(settings: ServerSettings) -> str | None:
+    if settings.access.mode == "disabled":
+        return None
+    if settings.auth.provider != "static-bearer" or settings.auth.token is None:
+        _fail("configured E2E supports enforced Access Control only with static-bearer authentication")
+    return settings.auth.token.get_secret_value()
 
 
 def _new_configured_scopes() -> ConfiguredScopes:
