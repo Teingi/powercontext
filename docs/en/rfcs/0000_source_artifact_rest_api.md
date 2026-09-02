@@ -98,17 +98,66 @@ defined here.
 
 ## Immediate Memory extraction
 
-Source creation does not contain a generation option. A caller that wants to wait for Memory extraction performs
-two explicit operations:
-
-```text
-POST /v1/sources       -> Source.position
-POST /v1/memory/flush  -> Memory Revision and Changes
+```json
+{
+  "workflow": "create_source_then_flush_memory",
+  "steps": [
+    {
+      "step": 1,
+      "operation_id": "create_source",
+      "request": {
+        "method": "POST",
+        "path": "/v1/sources"
+      },
+      "capture": {
+        "source_position": "success.body.position"
+      }
+    },
+    {
+      "step": 2,
+      "operation_id": "flush_memory",
+      "request": {
+        "method": "POST",
+        "path": "/v1/memory/flush",
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": {
+          "scope_id": "git:github.com/acme/payments"
+        }
+      },
+      "success": {
+        "status": 200,
+        "body": {
+          "status": "processed",
+          "previous_cursor": 38,
+          "current_cursor": 42,
+          "high_watermark": 42,
+          "processed_source_count": 4,
+          "memory": {
+            "family": "memory",
+            "artifact_id": "memory",
+            "revision": 7
+          },
+          "changes": []
+        }
+      },
+      "repeat_while": "success.body.current_cursor < source_position"
+    }
+  ],
+  "completion_condition": "flush_memory.success.body.current_cursor >= source_position",
+  "flush_semantics": {
+    "processing_unit": "bounded_pending_source_window",
+    "single_source_only": false,
+    "full_history_refresh": false,
+    "may_include_earlier_pending_sources": true,
+    "source_rolled_back_on_flush_failure": false,
+    "flush_retryable": true,
+    "combined_result_owner": "caller_or_sdk_convenience_method",
+    "changes_create_source_response": false
+  }
+}
 ```
-
-Memory flush processes one bounded pending Source window. It is neither a single-Source operation nor a full
-historical rebuild. The caller knows the newly created Source has been crossed when `current_cursor` is greater
-than or equal to the Source `position`. A flush failure does not roll back the durable Source and can be retried.
 
 # Reference-level explanation
 
@@ -116,21 +165,78 @@ than or equal to the Source `position`. A flush failure does not roll back the d
 
 The wire contract for each base operation is fixed as follows:
 
-| Operation | REST semantics | HTTP method | operationId | URL pattern |
-| --- | --- | --- | --- | --- |
-| Source Create | create an object in the Source collection | `POST` | `create_source` | `/v1/sources` |
-| Source Get | read one named Source | `GET` | `get_source` | `/v1/sources/{source_id}` |
-| Source List | read the Source collection | `GET` | `list_sources` | `/v1/sources` |
-| Source Search | read the Source search-hit collection | `GET` | `search_sources` | `/v1/source-search-results` |
-| Artifact Create | create an object in the Artifact collection | `POST` | `create_artifact` | `/v1/artifacts` |
-| Artifact Head Get | read the current Artifact head | `GET` | `get_artifact` | `/v1/artifacts/{artifact_id}` |
-| Artifact Revision Get | read one exact Artifact revision | `GET` | `get_artifact_revision` | `/v1/artifacts/{artifact_id}/revisions/{revision}` |
-| Artifact List | read the Artifact collection | `GET` | `list_artifacts` | `/v1/artifacts` |
-| Artifact Search | read the Artifact search-hit collection | `GET` | `search_artifacts` | `/v1/artifact-search-results` |
-| Artifact Replace | fully replace the Artifact head | `PUT` | `replace_artifact` | `/v1/artifacts/{artifact_id}` |
-| Artifact Delete | delete the current visible Artifact state | `DELETE` | `delete_artifact` | `/v1/artifacts/{artifact_id}` |
+```json
+[
+  {
+    "function": "Source Create",
+    "operation_id": "create_source",
+    "method": "POST",
+    "path": "/v1/sources"
+  },
+  {
+    "function": "Source Get",
+    "operation_id": "get_source",
+    "method": "GET",
+    "path": "/v1/sources/{source_id}"
+  },
+  {
+    "function": "Source List",
+    "operation_id": "list_sources",
+    "method": "GET",
+    "path": "/v1/sources"
+  },
+  {
+    "function": "Source Search",
+    "operation_id": "search_sources",
+    "method": "GET",
+    "path": "/v1/source-search-results"
+  },
+  {
+    "function": "Artifact Create",
+    "operation_id": "create_artifact",
+    "method": "POST",
+    "path": "/v1/artifacts"
+  },
+  {
+    "function": "Artifact Head Get",
+    "operation_id": "get_artifact",
+    "method": "GET",
+    "path": "/v1/artifacts/{artifact_id}"
+  },
+  {
+    "function": "Artifact Revision Get",
+    "operation_id": "get_artifact_revision",
+    "method": "GET",
+    "path": "/v1/artifacts/{artifact_id}/revisions/{revision}"
+  },
+  {
+    "function": "Artifact List",
+    "operation_id": "list_artifacts",
+    "method": "GET",
+    "path": "/v1/artifacts"
+  },
+  {
+    "function": "Artifact Search",
+    "operation_id": "search_artifacts",
+    "method": "GET",
+    "path": "/v1/artifact-search-results"
+  },
+  {
+    "function": "Artifact Replace",
+    "operation_id": "replace_artifact",
+    "method": "PUT",
+    "path": "/v1/artifacts/{artifact_id}"
+  },
+  {
+    "function": "Artifact Delete",
+    "operation_id": "delete_artifact",
+    "method": "DELETE",
+    "path": "/v1/artifacts/{artifact_id}"
+  }
+]
+```
 
-The `operationId`, HTTP method, and URL pattern in this table together define the base API wire contract.
+The `operation_id`, HTTP method, and URL pattern in this JSON definition together form the base API wire contract.
 
 The API additionally requires:
 
@@ -197,16 +303,18 @@ Sources created before the timestamp projection exists may return `created_at: n
 }
 ```
 
-The head response includes the current revision as a strong ETag:
+The head response includes the current revision as a strong ETag. Replace and delete send that value back through
+`If-Match`:
 
-```http
-ETag: "revision:2"
-```
-
-Replace and delete send that value back:
-
-```http
-If-Match: "revision:2"
+```json
+{
+  "response_headers": {
+    "ETag": "revision:2"
+  },
+  "conditional_request_headers": {
+    "If-Match": "revision:2"
+  }
+}
 ```
 
 Missing `If-Match` returns `428 Precondition Required`; a stale ETag returns `412 Precondition Failed`. No second
@@ -216,372 +324,864 @@ generic version field is added because the Artifact revision is already the conc
 
 Each request addresses one `scope_id` and one `source_type`.
 
-| Function | HTTP API | operationId | Request and metadata | Response | Example |
-| --- | --- | --- | --- | --- | --- |
-| Create Source | `POST /v1/sources` | `create_source` | Body: required `scope_id`, `source_type`, `source_id`, `content`; optional `metadata`. `source_id` is the caller-stable idempotent identity | `201 SourceRecord`; `Location` identifies the Source | `POST /v1/sources` with `{"scope_id":"git:github.com/acme/payments","source_type":"content","source_id":"refund-rule-001","content":"Refunds require manual review","metadata":{"media_type":"text/plain"}}` |
-| Get Source | `GET /v1/sources/{source_id}` | `get_source` | Query: required `scope_id`, `source_type` | `200 SourceRecord`; absent or invisible is `404` | `GET /v1/sources/refund-rule-001?scope_id=git%3Agithub.com%2Facme%2Fpayments&source_type=content` |
-| List Sources | `GET /v1/sources` | `list_sources` | Query: required `scope_id`, `source_type`; optional `limit`, `cursor`, and structured time filters | `200 SourcePage{items,next_cursor}` without ranking fields | `GET /v1/sources?scope_id=...&source_type=content&limit=50` |
-| Search Sources | `GET /v1/source-search-results` | `search_sources` | Query: required `scope_id`, `source_type`; optional `q`, filters, `limit`, `cursor`; optional `mode` when `q` is nonblank. Blank `q` is treated as omitted | `200 SourceSearchResultPage{query,mode,hits,next_cursor}` | `GET /v1/source-search-results?scope_id=...&source_type=content&q=manual%20review&mode=auto` |
-
 List and Search have different paths, operationIds, and response schemas. `GET /v1/sources` is always
 `list_sources` and does not accept `type`, `q`, or `mode`. `GET /v1/source-search-results` is always
 `search_sources`; no query parameter switches it into List. Generated Clients therefore expose the symmetric
 methods `list_sources()` / `search_sources()` and `list_artifacts()` / `search_artifacts()`.
 
-### Source create compatibility
-
-The new create operation returns the created representation:
-
-```http
-POST /v1/sources
-Content-Type: application/json
-```
+### Source create contract and compatibility example
 
 ```json
 {
-  "scope_id": "git:github.com/acme/payments",
-  "source_type": "content",
-  "source_id": "refund-rule-001",
-  "content": "Refunds require manual review.",
-  "metadata": {"media_type": "text/plain"}
-}
-```
-
-```http
-HTTP/1.1 201 Created
-Location: /v1/sources/refund-rule-001?scope_id=git%3Agithub.com%2Facme%2Fpayments&source_type=content
-```
-
-```json
-{
-  "scope_id": "git:github.com/acme/payments",
-  "source_ref": {"name": "content", "source_id": "refund-rule-001"},
-  "content": "Refunds require manual review.",
-  "metadata": {"media_type": "text/plain"},
-  "created_at": "2026-09-01T04:00:00Z",
-  "position": 42,
-  "content_digest": "sha256:..."
-}
-```
-
-Existing `POST /v1/sources/content` remains a strongly typed compatibility facade and keeps its `202 Accepted`
-response. Both operations delegate to the same durable write. Replaying the same identity and canonical payload is
-an idempotent success; reusing the identity for different content returns `409 idempotency_conflict`.
-
-### Source get example
-
-```http
-GET /v1/sources/refund-rule-001?scope_id=git%3Agithub.com%2Facme%2Fpayments&source_type=content
-```
-
-```json
-{
-  "scope_id": "git:github.com/acme/payments",
-  "source_ref": {"name": "content", "source_id": "refund-rule-001"},
-  "content": "Refunds require manual review.",
-  "metadata": {"title": "Refund constraint", "media_type": "text/plain"},
-  "created_at": "2026-09-01T04:00:00Z",
-  "position": 42,
-  "content_digest": "sha256:..."
-}
-```
-
-### Source list example
-
-```http
-GET /v1/sources?scope_id=git%3Agithub.com%2Facme%2Fpayments&source_type=content&limit=50
-```
-
-```json
-{
-  "items": [
-    {
+  "operation_id": "create_source",
+  "request": {
+    "method": "POST",
+    "path": "/v1/sources",
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "body": {
+      "required_fields": [
+        "scope_id",
+        "source_type",
+        "source_id",
+        "content"
+      ],
+      "optional_fields": [
+        "metadata"
+      ],
+      "example": {
+        "scope_id": "git:github.com/acme/payments",
+        "source_type": "content",
+        "source_id": "refund-rule-001",
+        "content": "Refunds require manual review.",
+        "metadata": {
+          "title": "Refund constraint",
+          "media_type": "text/plain"
+        }
+      }
+    }
+  },
+  "success": {
+    "status": 201,
+    "schema": "SourceRecord",
+    "headers": {
+      "Location": "/v1/sources/refund-rule-001?scope_id=git%3Agithub.com%2Facme%2Fpayments&source_type=content"
+    },
+    "body": {
       "scope_id": "git:github.com/acme/payments",
-      "source_ref": {"name": "content", "source_id": "refund-rule-001"},
-      "metadata": {"title": "Refund constraint"},
+      "source_ref": {
+        "name": "content",
+        "source_id": "refund-rule-001"
+      },
+      "content": "Refunds require manual review.",
+      "metadata": {
+        "title": "Refund constraint",
+        "media_type": "text/plain"
+      },
       "created_at": "2026-09-01T04:00:00Z",
       "position": 42,
       "content_digest": "sha256:..."
     }
-  ],
-  "next_cursor": null
+  },
+  "errors": [
+    {
+      "status": 409,
+      "code": "idempotency_conflict"
+    }
+  ]
 }
 ```
 
-### Source search example
-
-```http
-GET /v1/source-search-results?scope_id=git%3Agithub.com%2Facme%2Fpayments&source_type=content&q=manual%20review&mode=auto&limit=20
-```
+Existing `POST /v1/sources/content` remains a strongly typed compatibility facade:
 
 ```json
 {
-  "query": "manual review",
-  "mode": "keyword",
-  "hits": [
-    {
-      "source_ref": {"name": "content", "source_id": "refund-rule-001"},
-      "metadata": {"title": "Refund constraint"},
-      "created_at": "2026-09-01T04:00:00Z",
-      "score": 0.91,
-      "snippets": ["Refunds require manual review."]
+  "operation_id": "capture_content_source",
+  "request": {
+    "method": "POST",
+    "path": "/v1/sources/content",
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "body": {
+      "required_fields": [
+        "scope_id",
+        "source_id",
+        "content"
+      ],
+      "optional_fields": [
+        "metadata"
+      ],
+      "example": {
+        "scope_id": "git:github.com/acme/payments",
+        "source_id": "refund-rule-001",
+        "content": "Refunds require manual review.",
+        "metadata": {
+          "title": "Refund constraint",
+          "media_type": "text/plain"
+        }
+      }
     }
-  ],
-  "next_cursor": null
+  },
+  "success": {
+    "status": 202,
+    "schema": "CaptureContentSourceResponse",
+    "body": {
+      "status": "accepted",
+      "source": {
+        "name": "content",
+        "source_id": "refund-rule-001"
+      },
+      "position": 42
+    }
+  }
 }
 ```
 
-When `q` is omitted, empty, or whitespace-only, Search returns the same result-page schema with `query: null`,
-`mode: null`, deterministic ordering, `score: null`, and empty snippets. The caller omits `mode` in that case.
+Both operations delegate to the same durable write. Replaying the same identity and canonical payload is an
+idempotent success; reusing the identity for different content returns `409 idempotency_conflict`.
+
+### Source get contract and example
+
+```json
+{
+  "operation_id": "get_source",
+  "request": {
+    "method": "GET",
+    "path": "/v1/sources/{source_id}",
+    "path_parameters": {
+      "required": [
+        "source_id"
+      ],
+      "example": {
+        "source_id": "refund-rule-001"
+      }
+    },
+    "query_parameters": {
+      "required": [
+        "scope_id",
+        "source_type"
+      ],
+      "example": {
+        "scope_id": "git:github.com/acme/payments",
+        "source_type": "content"
+      }
+    }
+  },
+  "success": {
+    "status": 200,
+    "schema": "SourceRecord",
+    "body": {
+      "scope_id": "git:github.com/acme/payments",
+      "source_ref": {
+        "name": "content",
+        "source_id": "refund-rule-001"
+      },
+      "content": "Refunds require manual review.",
+      "metadata": {
+        "title": "Refund constraint",
+        "media_type": "text/plain"
+      },
+      "created_at": "2026-09-01T04:00:00Z",
+      "position": 42,
+      "content_digest": "sha256:..."
+    }
+  },
+  "errors": [
+    {
+      "status": 404,
+      "code": "source_not_found"
+    }
+  ]
+}
+```
+
+### Source list contract and example
+
+```json
+{
+  "operation_id": "list_sources",
+  "request": {
+    "method": "GET",
+    "path": "/v1/sources",
+    "query_parameters": {
+      "required": [
+        "scope_id",
+        "source_type"
+      ],
+      "optional": [
+        "limit",
+        "cursor",
+        "created_after",
+        "created_before"
+      ],
+      "example": {
+        "scope_id": "git:github.com/acme/payments",
+        "source_type": "content",
+        "limit": 50
+      }
+    }
+  },
+  "success": {
+    "status": 200,
+    "schema": "SourcePage",
+    "body": {
+      "items": [
+        {
+          "scope_id": "git:github.com/acme/payments",
+          "source_ref": {
+            "name": "content",
+            "source_id": "refund-rule-001"
+          },
+          "metadata": {
+            "title": "Refund constraint"
+          },
+          "created_at": "2026-09-01T04:00:00Z",
+          "position": 42,
+          "content_digest": "sha256:..."
+        }
+      ],
+      "next_cursor": null
+    }
+  }
+}
+```
+
+### Source search contract and example
+
+```json
+{
+  "operation_id": "search_sources",
+  "request": {
+    "method": "GET",
+    "path": "/v1/source-search-results",
+    "query_parameters": {
+      "required": [
+        "scope_id",
+        "source_type"
+      ],
+      "optional": [
+        "q",
+        "mode",
+        "limit",
+        "cursor",
+        "created_after",
+        "created_before"
+      ],
+      "examples": {
+        "ranked": {
+          "scope_id": "git:github.com/acme/payments",
+          "source_type": "content",
+          "q": "manual review",
+          "mode": "auto",
+          "limit": 20
+        },
+        "without_query": {
+          "scope_id": "git:github.com/acme/payments",
+          "source_type": "content",
+          "created_after": "2026-09-01T00:00:00Z",
+          "limit": 20
+        }
+      },
+      "rules": {
+        "blank_q": "normalize_to_null",
+        "mode_without_q": "omit"
+      }
+    }
+  },
+  "success": {
+    "status": 200,
+    "schema": "SourceSearchResultPage",
+    "examples": {
+      "ranked": {
+        "query": "manual review",
+        "mode": "keyword",
+        "hits": [
+          {
+            "source_ref": {
+              "name": "content",
+              "source_id": "refund-rule-001"
+            },
+            "metadata": {
+              "title": "Refund constraint"
+            },
+            "created_at": "2026-09-01T04:00:00Z",
+            "score": 0.91,
+            "snippets": [
+              "Refunds require manual review."
+            ]
+          }
+        ],
+        "next_cursor": null
+      },
+      "without_query": {
+        "query": null,
+        "mode": null,
+        "hits": [
+          {
+            "source_ref": {
+              "name": "content",
+              "source_id": "refund-rule-001"
+            },
+            "metadata": {
+              "title": "Refund constraint"
+            },
+            "created_at": "2026-09-01T04:00:00Z",
+            "score": null,
+            "snippets": []
+          }
+        ],
+        "next_cursor": null
+      }
+    }
+  }
+}
+```
 
 ## Artifact API
 
 The fixed paths apply to future families. A family registers its content schema and supported actions in the
 assembled Runtime instead of adding another set of endpoints.
 
-| Function | HTTP API | operationId | Request and metadata | Response | Example |
-| --- | --- | --- | --- | --- | --- |
-| Create Artifact | `POST /v1/artifacts` | `create_artifact` | Body: required `scope_id`, `family`, `content`, `schema_version`; optional `artifact_id`, `metadata`, `source_refs`, `artifact_refs` | `201 ArtifactRevision` plus `Location` and `ETag`; commits revision 1 | `POST /v1/artifacts` with family-specific JSON content |
-| Get current Artifact | `GET /v1/artifacts/{artifact_id}` | `get_artifact` | Query: required `scope_id`, `family` | `200 ArtifactRevision` plus `ETag` | `GET /v1/artifacts/dec_01J...?scope_id=...&family=company.example.decision` |
-| Get exact revision | `GET /v1/artifacts/{artifact_id}/revisions/{revision}` | `get_artifact_revision` | Query: required `scope_id`, `family`; path carries exact revision | `200 ArtifactRevision` | `GET /v1/artifacts/dec_01J.../revisions/2?scope_id=...&family=company.example.decision` |
-| List Artifacts | `GET /v1/artifacts` | `list_artifacts` | Query: required `scope_id`, `family`; optional `limit`, `cursor`; only current visible heads | `200 ArtifactPage` | `GET /v1/artifacts?scope_id=...&family=experience&limit=50` |
-| Search Artifacts | `GET /v1/artifact-search-results` | `search_artifacts` | Query: required `scope_id`, `family`; optional `q`, filters, `limit`, `cursor`; optional `mode` when `q` is nonblank. Blank `q` is treated as omitted; searches visible heads | `200 ArtifactSearchResultPage` | `GET /v1/artifact-search-results?scope_id=...&family=experience&q=manual%20review` |
-| Replace Artifact | `PUT /v1/artifacts/{artifact_id}` | `replace_artifact` | Query/body identify `scope_id` and `family`; required `If-Match`; body is a complete replacement | `200 ArtifactRevision` plus new `ETag`; stale ETag is `412` | `PUT /v1/artifacts/dec_01J...?scope_id=...&family=company.example.decision` |
-| Delete Artifact | `DELETE /v1/artifacts/{artifact_id}` | `delete_artifact` | Query: required `scope_id`, `family`; required `If-Match` | `200 ArtifactDeletionStatus`; unsupported family is `405` | `DELETE /v1/artifacts/dec_01J...?scope_id=...&family=company.example.decision` |
-
-### Artifact create example
-
-```http
-POST /v1/artifacts
-Content-Type: application/json
-```
+### Artifact create contract and example
 
 ```json
 {
-  "scope_id": "git:github.com/acme/payments",
-  "family": "company.example.decision",
-  "artifact_id": "dec_01J...",
-  "schema_version": 1,
-  "metadata": {"title": "Refund manual-review constraint"},
-  "content": {"decision": "Refunds require manual review"},
-  "source_refs": [{"name": "content", "source_id": "refund-rule-001"}],
-  "artifact_refs": []
-}
-```
-
-```http
-HTTP/1.1 201 Created
-Location: /v1/artifacts/dec_01J...?scope_id=git%3Agithub.com%2Facme%2Fpayments&family=company.example.decision
-ETag: "revision:1"
-```
-
-```json
-{
-  "scope_id": "git:github.com/acme/payments",
-  "artifact_ref": {
-    "family": "company.example.decision",
-    "artifact_id": "dec_01J...",
-    "revision": 1
+  "operation_id": "create_artifact",
+  "request": {
+    "method": "POST",
+    "path": "/v1/artifacts",
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "body": {
+      "required_fields": [
+        "scope_id",
+        "family",
+        "schema_version",
+        "content"
+      ],
+      "optional_fields": [
+        "artifact_id",
+        "metadata",
+        "source_refs",
+        "artifact_refs",
+        "idempotency_key"
+      ],
+      "example": {
+        "scope_id": "git:github.com/acme/payments",
+        "family": "company.example.decision",
+        "artifact_id": "dec_01J...",
+        "schema_version": 1,
+        "metadata": {
+          "title": "Refund manual-review constraint"
+        },
+        "content": {
+          "decision": "Refunds require manual review"
+        },
+        "source_refs": [
+          {
+            "name": "content",
+            "source_id": "refund-rule-001"
+          }
+        ],
+        "artifact_refs": [],
+        "idempotency_key": "idem_01J..."
+      }
+    }
   },
-  "schema_version": 1,
-  "metadata": {"title": "Refund manual-review constraint"},
-  "content": {"decision": "Refunds require manual review"},
-  "source_refs": [{"name": "content", "source_id": "refund-rule-001"}],
-  "artifact_refs": [],
-  "created_at": "2026-09-01T04:30:00Z",
-  "content_digest": "sha256:..."
-}
-```
-
-### Artifact get-current example
-
-```http
-GET /v1/artifacts/dec_01J...?scope_id=git%3Agithub.com%2Facme%2Fpayments&family=company.example.decision
-```
-
-```http
-HTTP/1.1 200 OK
-ETag: "revision:1"
-```
-
-```json
-{
-  "scope_id": "git:github.com/acme/payments",
-  "artifact_ref": {
-    "family": "company.example.decision",
-    "artifact_id": "dec_01J...",
-    "revision": 1
-  },
-  "schema_version": 1,
-  "metadata": {"title": "Refund manual-review constraint"},
-  "content": {"decision": "Refunds require manual review"},
-  "source_refs": [{"name": "content", "source_id": "refund-rule-001"}],
-  "artifact_refs": [],
-  "created_at": "2026-09-01T04:30:00Z",
-  "content_digest": "sha256:..."
-}
-```
-
-### Artifact exact-revision example
-
-```http
-GET /v1/artifacts/dec_01J.../revisions/1?scope_id=git%3Agithub.com%2Facme%2Fpayments&family=company.example.decision
-```
-
-```json
-{
-  "scope_id": "git:github.com/acme/payments",
-  "artifact_ref": {
-    "family": "company.example.decision",
-    "artifact_id": "dec_01J...",
-    "revision": 1
-  },
-  "schema_version": 1,
-  "metadata": {"title": "Refund manual-review constraint"},
-  "content": {"decision": "Refunds require manual review"},
-  "source_refs": [{"name": "content", "source_id": "refund-rule-001"}],
-  "artifact_refs": [],
-  "created_at": "2026-09-01T04:30:00Z",
-  "content_digest": "sha256:..."
-}
-```
-
-Exact-revision responses do not carry the current-head ETag. Their committed content remains immutable after a
-later replacement or deletion.
-
-### Artifact list example
-
-```http
-GET /v1/artifacts?scope_id=git%3Agithub.com%2Facme%2Fpayments&family=company.example.decision&limit=50
-```
-
-```json
-{
-  "items": [
-    {
+  "success": {
+    "status": 201,
+    "schema": "ArtifactRevision",
+    "headers": {
+      "Location": "/v1/artifacts/dec_01J...?scope_id=git%3Agithub.com%2Facme%2Fpayments&family=company.example.decision",
+      "ETag": "revision:1"
+    },
+    "body": {
+      "scope_id": "git:github.com/acme/payments",
       "artifact_ref": {
         "family": "company.example.decision",
         "artifact_id": "dec_01J...",
         "revision": 1
       },
       "schema_version": 1,
-      "metadata": {"title": "Refund manual-review constraint"},
+      "metadata": {
+        "title": "Refund manual-review constraint"
+      },
+      "content": {
+        "decision": "Refunds require manual review"
+      },
+      "source_refs": [
+        {
+          "name": "content",
+          "source_id": "refund-rule-001"
+        }
+      ],
+      "artifact_refs": [],
       "created_at": "2026-09-01T04:30:00Z",
       "content_digest": "sha256:..."
     }
-  ],
-  "next_cursor": null
+  }
 }
 ```
 
-### Artifact search example
-
-```http
-GET /v1/artifact-search-results?scope_id=git%3Agithub.com%2Facme%2Fpayments&family=company.example.decision&q=manual%20review&mode=auto&limit=20
-```
+### Artifact get-current contract and example
 
 ```json
 {
-  "query": "manual review",
-  "mode": "keyword",
-  "hits": [
-    {
+  "operation_id": "get_artifact",
+  "request": {
+    "method": "GET",
+    "path": "/v1/artifacts/{artifact_id}",
+    "path_parameters": {
+      "required": [
+        "artifact_id"
+      ],
+      "example": {
+        "artifact_id": "dec_01J..."
+      }
+    },
+    "query_parameters": {
+      "required": [
+        "scope_id",
+        "family"
+      ],
+      "example": {
+        "scope_id": "git:github.com/acme/payments",
+        "family": "company.example.decision"
+      }
+    }
+  },
+  "success": {
+    "status": 200,
+    "schema": "ArtifactRevision",
+    "headers": {
+      "ETag": "revision:1"
+    },
+    "body": {
+      "scope_id": "git:github.com/acme/payments",
       "artifact_ref": {
         "family": "company.example.decision",
         "artifact_id": "dec_01J...",
         "revision": 1
       },
-      "metadata": {"title": "Refund manual-review constraint"},
-      "score": 0.94,
-      "snippets": ["Refunds require manual review"]
+      "schema_version": 1,
+      "metadata": {
+        "title": "Refund manual-review constraint"
+      },
+      "content": {
+        "decision": "Refunds require manual review"
+      },
+      "source_refs": [
+        {
+          "name": "content",
+          "source_id": "refund-rule-001"
+        }
+      ],
+      "artifact_refs": [],
+      "created_at": "2026-09-01T04:30:00Z",
+      "content_digest": "sha256:..."
+    }
+  },
+  "errors": [
+    {
+      "status": 404,
+      "code": "artifact_not_found"
+    }
+  ]
+}
+```
+
+### Artifact exact-revision contract and example
+
+```json
+{
+  "operation_id": "get_artifact_revision",
+  "request": {
+    "method": "GET",
+    "path": "/v1/artifacts/{artifact_id}/revisions/{revision}",
+    "path_parameters": {
+      "required": [
+        "artifact_id",
+        "revision"
+      ],
+      "example": {
+        "artifact_id": "dec_01J...",
+        "revision": 1
+      }
+    },
+    "query_parameters": {
+      "required": [
+        "scope_id",
+        "family"
+      ],
+      "example": {
+        "scope_id": "git:github.com/acme/payments",
+        "family": "company.example.decision"
+      }
+    }
+  },
+  "success": {
+    "status": 200,
+    "schema": "ArtifactRevision",
+    "headers": {},
+    "body": {
+      "scope_id": "git:github.com/acme/payments",
+      "artifact_ref": {
+        "family": "company.example.decision",
+        "artifact_id": "dec_01J...",
+        "revision": 1
+      },
+      "schema_version": 1,
+      "metadata": {
+        "title": "Refund manual-review constraint"
+      },
+      "content": {
+        "decision": "Refunds require manual review"
+      },
+      "source_refs": [
+        {
+          "name": "content",
+          "source_id": "refund-rule-001"
+        }
+      ],
+      "artifact_refs": [],
+      "created_at": "2026-09-01T04:30:00Z",
+      "content_digest": "sha256:..."
+    }
+  },
+  "errors": [
+    {
+      "status": 404,
+      "code": "artifact_not_found"
+    }
+  ]
+}
+```
+
+Exact-revision responses do not carry the current-head ETag. Their committed content remains immutable after a
+later replacement or deletion.
+
+### Artifact list contract and example
+
+```json
+{
+  "operation_id": "list_artifacts",
+  "request": {
+    "method": "GET",
+    "path": "/v1/artifacts",
+    "query_parameters": {
+      "required": [
+        "scope_id",
+        "family"
+      ],
+      "optional": [
+        "limit",
+        "cursor",
+        "created_after",
+        "created_before"
+      ],
+      "example": {
+        "scope_id": "git:github.com/acme/payments",
+        "family": "company.example.decision",
+        "limit": 50
+      }
+    }
+  },
+  "success": {
+    "status": 200,
+    "schema": "ArtifactPage",
+    "body": {
+      "items": [
+        {
+          "artifact_ref": {
+            "family": "company.example.decision",
+            "artifact_id": "dec_01J...",
+            "revision": 1
+          },
+          "schema_version": 1,
+          "metadata": {
+            "title": "Refund manual-review constraint"
+          },
+          "created_at": "2026-09-01T04:30:00Z",
+          "content_digest": "sha256:..."
+        }
+      ],
+      "next_cursor": null
+    }
+  }
+}
+```
+
+### Artifact search contract and example
+
+```json
+{
+  "operation_id": "search_artifacts",
+  "request": {
+    "method": "GET",
+    "path": "/v1/artifact-search-results",
+    "query_parameters": {
+      "required": [
+        "scope_id",
+        "family"
+      ],
+      "optional": [
+        "q",
+        "mode",
+        "limit",
+        "cursor",
+        "created_after",
+        "created_before"
+      ],
+      "example": {
+        "scope_id": "git:github.com/acme/payments",
+        "family": "company.example.decision",
+        "q": "manual review",
+        "mode": "auto",
+        "limit": 20
+      },
+      "rules": {
+        "blank_q": "normalize_to_null",
+        "mode_without_q": "omit",
+        "revision_selection": "current_visible_head"
+      }
+    }
+  },
+  "success": {
+    "status": 200,
+    "schema": "ArtifactSearchResultPage",
+    "body": {
+      "query": "manual review",
+      "mode": "keyword",
+      "hits": [
+        {
+          "artifact_ref": {
+            "family": "company.example.decision",
+            "artifact_id": "dec_01J...",
+            "revision": 1
+          },
+          "metadata": {
+            "title": "Refund manual-review constraint"
+          },
+          "score": 0.94,
+          "snippets": [
+            "Refunds require manual review"
+          ]
+        }
+      ],
+      "next_cursor": null
+    },
+    "without_query": {
+      "query": null,
+      "mode": null,
+      "score": null,
+      "snippets": []
+    }
+  }
+}
+```
+
+### Artifact replace contract and example
+
+```json
+{
+  "operation_id": "replace_artifact",
+  "request": {
+    "method": "PUT",
+    "path": "/v1/artifacts/{artifact_id}",
+    "path_parameters": {
+      "required": [
+        "artifact_id"
+      ],
+      "example": {
+        "artifact_id": "dec_01J..."
+      }
+    },
+    "query_parameters": {
+      "required": [
+        "scope_id",
+        "family"
+      ],
+      "example": {
+        "scope_id": "git:github.com/acme/payments",
+        "family": "company.example.decision"
+      }
+    },
+    "headers": {
+      "required": [
+        "Content-Type",
+        "If-Match"
+      ],
+      "example": {
+        "Content-Type": "application/json",
+        "If-Match": "revision:1"
+      }
+    },
+    "body": {
+      "semantics": "complete_replacement",
+      "required_fields": [
+        "schema_version",
+        "content"
+      ],
+      "optional_fields": [
+        "metadata",
+        "source_refs",
+        "artifact_refs",
+        "idempotency_key"
+      ],
+      "example": {
+        "schema_version": 1,
+        "metadata": {
+          "title": "Refund manual-review constraint"
+        },
+        "content": {
+          "decision": "Refunds require manual review",
+          "rationale": "Satisfy funds-safety requirements"
+        },
+        "source_refs": [
+          {
+            "name": "content",
+            "source_id": "refund-rule-001"
+          }
+        ],
+        "artifact_refs": [],
+        "idempotency_key": "idem_01K..."
+      }
+    }
+  },
+  "success": {
+    "status": 200,
+    "schema": "ArtifactRevision",
+    "headers": {
+      "ETag": "revision:2"
+    },
+    "body": {
+      "scope_id": "git:github.com/acme/payments",
+      "artifact_ref": {
+        "family": "company.example.decision",
+        "artifact_id": "dec_01J...",
+        "revision": 2
+      },
+      "schema_version": 1,
+      "metadata": {
+        "title": "Refund manual-review constraint"
+      },
+      "content": {
+        "decision": "Refunds require manual review",
+        "rationale": "Satisfy funds-safety requirements"
+      },
+      "source_refs": [
+        {
+          "name": "content",
+          "source_id": "refund-rule-001"
+        }
+      ],
+      "artifact_refs": [],
+      "created_at": "2026-09-01T04:45:00Z",
+      "content_digest": "sha256:..."
+    }
+  },
+  "errors": [
+    {
+      "status": 428,
+      "code": "precondition_required"
+    },
+    {
+      "status": 412,
+      "code": "revision_conflict",
+      "body": {
+        "code": "revision_conflict",
+        "message": "Artifact ETag does not match the current head",
+        "details": {
+          "provided_etag": "revision:1",
+          "current_etag": "revision:2"
+        }
+      }
     }
   ],
-  "next_cursor": null
+  "rules": {
+    "creates_next_revision": true,
+    "historical_revisions_immutable": true,
+    "merge_patch_supported": false,
+    "automatic_merge": false
+  }
 }
 ```
 
-Omitting or blanking `q` preserves the result-page schema but returns `query: null`, `mode: null`, deterministic
-ordering, no score, and empty snippets.
-
-### Artifact replace example
-
-Replace sends a complete representation and the current ETag:
-
-```http
-PUT /v1/artifacts/dec_01J...?scope_id=git%3Agithub.com%2Facme%2Fpayments&family=company.example.decision
-Content-Type: application/json
-If-Match: "revision:1"
-```
+### Artifact delete contract and example
 
 ```json
 {
-  "scope_id": "git:github.com/acme/payments",
-  "family": "company.example.decision",
-  "schema_version": 1,
-  "metadata": {"title": "Refund manual-review constraint"},
-  "content": {
-    "decision": "Refunds require manual review",
-    "rationale": "Satisfy funds-safety requirements"
+  "operation_id": "delete_artifact",
+  "request": {
+    "method": "DELETE",
+    "path": "/v1/artifacts/{artifact_id}",
+    "path_parameters": {
+      "required": [
+        "artifact_id"
+      ],
+      "example": {
+        "artifact_id": "dec_01J..."
+      }
+    },
+    "query_parameters": {
+      "required": [
+        "scope_id",
+        "family"
+      ],
+      "example": {
+        "scope_id": "git:github.com/acme/payments",
+        "family": "company.example.decision"
+      }
+    },
+    "headers": {
+      "required": [
+        "If-Match"
+      ],
+      "example": {
+        "If-Match": "revision:2"
+      }
+    }
   },
-  "source_refs": [{"name": "content", "source_id": "refund-rule-001"}],
-  "artifact_refs": []
-}
-```
-
-```http
-HTTP/1.1 200 OK
-ETag: "revision:2"
-```
-
-```json
-{
-  "scope_id": "git:github.com/acme/payments",
-  "artifact_ref": {
-    "family": "company.example.decision",
-    "artifact_id": "dec_01J...",
-    "revision": 2
+  "success": {
+    "status": 200,
+    "schema": "ArtifactDeletionStatus",
+    "body": {
+      "artifact_ref": {
+        "family": "company.example.decision",
+        "artifact_id": "dec_01J...",
+        "revision": 2
+      },
+      "status": "deleted",
+      "deleted_at": "2026-09-01T05:00:00Z"
+    }
   },
-  "schema_version": 1,
-  "metadata": {"title": "Refund manual-review constraint"},
-  "content": {
-    "decision": "Refunds require manual review",
-    "rationale": "Satisfy funds-safety requirements"
-  },
-  "source_refs": [{"name": "content", "source_id": "refund-rule-001"}],
-  "artifact_refs": [],
-  "created_at": "2026-09-01T04:45:00Z",
-  "content_digest": "sha256:..."
-}
-```
-
-If revision 1 is no longer the head, the operation returns `412 revision_conflict` with both the provided and
-current ETags. The Runtime does not merge, retain omitted fields, or overwrite revision 1.
-
-### Delete semantics
-
-Delete records a lifecycle tombstone and does not physically erase revisions:
-
-- normal head get, list, search, and context preparation no longer return the deleted head;
-- exact historical lineage remains verifiable;
-- retrying delete with the same revision returns the same deletion state;
-- restore and purge are not provided by this RFC;
-- `If-Match` prevents deletion of a concurrently revised head;
-- a family must explicitly support delete, otherwise the operation returns `405 operation_not_supported`.
-
-```http
-DELETE /v1/artifacts/dec_01J...?scope_id=git%3Agithub.com%2Facme%2Fpayments&family=company.example.decision
-If-Match: "revision:2"
-```
-
-```json
-{
-  "artifact_ref": {
-    "family": "company.example.decision",
-    "artifact_id": "dec_01J...",
-    "revision": 2
-  },
-  "status": "deleted",
-  "deleted_at": "2026-09-01T05:00:00Z"
+  "errors": [
+    {
+      "status": 428,
+      "code": "precondition_required"
+    },
+    {
+      "status": 412,
+      "code": "revision_conflict"
+    },
+    {
+      "status": 405,
+      "code": "operation_not_supported"
+    }
+  ],
+  "rules": {
+    "deletion_mode": "lifecycle_tombstone",
+    "physical_revision_erasure": false,
+    "hidden_from_head_get_list_search_context": true,
+    "historical_lineage_verifiable": true,
+    "idempotent_for_same_revision": true,
+    "restore_supported": false,
+    "purge_supported": false,
+    "family_must_enable_delete": true
+  }
 }
 ```
 
@@ -621,12 +1221,60 @@ scores are null, and snippets are empty. A nonblank query reports the normalized
 
 A fixed Artifact path does not imply that every family accepts direct writes:
 
-| Family kind | Create | Get/List/Search | Replace | Delete |
-| --- | --- | --- | --- | --- |
-| Direct family | commits revision 1 | reads committed revisions and heads | commits next revision | available only when declared |
-| Review family, including Experience and managed Skill | `405`; use propose/review | approved Artifacts only | `405`; use Candidate revision and review | disabled by default |
-| Memory | use Memory commands | Artifact-level reads do not replace Memory entry APIs | disabled; entry revision keeps its own CAS | disabled |
-| Handoff | use prepare/finalize/commit | committed Handoffs only | disabled | disabled |
+```json
+[
+  {
+    "family_kind": "direct",
+    "capabilities": {
+      "create": "commit_revision_1",
+      "get_list_search": "committed_revision_and_head",
+      "replace": "commit_next_revision",
+      "delete": "available_when_declared"
+    }
+  },
+  {
+    "family_kind": "review",
+    "examples": [
+      "experience",
+      "managed_skill"
+    ],
+    "capabilities": {
+      "create": {
+        "supported": false,
+        "status": 405,
+        "code": "operation_not_supported",
+        "required_workflow": "propose_review"
+      },
+      "get_list_search": "approved_or_committed_artifact_only",
+      "replace": {
+        "supported": false,
+        "status": 405,
+        "code": "operation_not_supported",
+        "required_workflow": "candidate_revision_and_review"
+      },
+      "delete": "disabled_by_default"
+    }
+  },
+  {
+    "family_kind": "memory",
+    "capabilities": {
+      "create": "use_memory_commands",
+      "get_list_search": "artifact_reads_do_not_replace_memory_entry_apis",
+      "replace": "disabled; entry_revision_retains_its_own_cas",
+      "delete": "disabled"
+    }
+  },
+  {
+    "family_kind": "handoff",
+    "capabilities": {
+      "create": "use_prepare_finalize_commit",
+      "get_list_search": "committed_handoff_only",
+      "replace": "disabled",
+      "delete": "disabled"
+    }
+  }
+]
+```
 
 Candidate is not an Artifact. Pending and rejected Candidates never appear in Artifact list/search. Only an approved
 Candidate whose result was committed can be read as an Artifact.
@@ -638,30 +1286,133 @@ assume every assembled deployment supports every mutation.
 
 The operations reuse the existing error envelope and stabilize these codes:
 
-| HTTP status | code | Meaning |
-| --- | --- | --- |
-| `400/422` | `invalid_request` | invalid fields, query/cursor combination, or metadata |
-| `401` | `unauthorized` | authentication is required |
-| `403` | `forbidden` | authenticated caller lacks mutation authority |
-| `404` | `source_not_found`, `artifact_not_found` | absent or invisible object |
-| `405` | `operation_not_supported` | action is unsupported or would bypass review |
-| `409` | `idempotency_conflict` | stable identity was reused for different canonical content |
-| `412` | `revision_conflict` | `If-Match` does not identify the current Artifact head |
-| `428` | `precondition_required` | replace/delete omitted `If-Match` |
-| `422` | `schema_validation_failed` | content does not match the registered Source/family schema |
-| `503` | `capability_unavailable` | a declared backend is temporarily unavailable |
+```json
+[
+  {
+    "http_status": [
+      400,
+      422
+    ],
+    "code": "invalid_request",
+    "meaning": "invalid fields, query and cursor combination, or metadata"
+  },
+  {
+    "http_status": 401,
+    "code": "unauthorized",
+    "meaning": "authentication is required"
+  },
+  {
+    "http_status": 403,
+    "code": "forbidden",
+    "meaning": "the authenticated caller lacks mutation authority"
+  },
+  {
+    "http_status": 404,
+    "code": [
+      "source_not_found",
+      "artifact_not_found"
+    ],
+    "meaning": "the object is absent or invisible"
+  },
+  {
+    "http_status": 405,
+    "code": "operation_not_supported",
+    "meaning": "the action is unsupported or would bypass review"
+  },
+  {
+    "http_status": 409,
+    "code": "idempotency_conflict",
+    "meaning": "a stable identity was reused for different canonical content"
+  },
+  {
+    "http_status": 412,
+    "code": "revision_conflict",
+    "meaning": "If-Match does not identify the current Artifact head"
+  },
+  {
+    "http_status": 428,
+    "code": "precondition_required",
+    "meaning": "replace or delete omitted If-Match"
+  },
+  {
+    "http_status": 422,
+    "code": "schema_validation_failed",
+    "meaning": "content does not match the registered Source or Artifact Family schema"
+  },
+  {
+    "http_status": 503,
+    "code": "capability_unavailable",
+    "meaning": "a declared backend is temporarily unavailable"
+  }
+]
+```
 
 ## Existing API overlap and compatibility
 
-| New design | Existing API | Relationship | Compatibility rule |
-| --- | --- | --- | --- |
-| `POST /v1/sources` | `POST /v1/sources/content` | same durable Source write, different HTTP response | share one application service; new endpoint returns `201 SourceRecord`, old endpoint remains `202 CaptureContentSourceResponse` |
-| Source get/list/search | none | new read surface | read the same Source journal and projection |
-| Artifact head/exact get | `/v1/experience/get`, `/v1/skill/get`, and other typed reads | overlapping read | use the same committed revisions; typed responses remain available |
-| Artifact list/search | Memory entry list/search | different identity level | Artifact endpoints operate on heads; Memory endpoints retain entry identity, citation, and ranking |
-| Artifact replace | Candidate revise and Memory entry revise | different lifecycle | generic replace never bypasses review or pretends an entry update is a whole Artifact replacement |
-| Artifact delete | Memory retire and other family lifecycles | different lifecycle | only a family that explicitly opts in accepts generic delete |
-| Source create followed by Memory flush | `/v1/memory/flush` | reuses the existing command | no combined server parameter or response is added |
+```json
+[
+  {
+    "new_api": "POST /v1/sources",
+    "existing_api": [
+      "POST /v1/sources/content",
+      "capture_content_source"
+    ],
+    "relationship": "same durable Source write with a different HTTP response",
+    "compatibility_rule": "delegate to one application service; the new API returns 201 SourceRecord and the compatibility API keeps 202 CaptureContentSourceResponse"
+  },
+  {
+    "new_api": "Source Get/List/Search",
+    "existing_api": null,
+    "relationship": "new generic read surface",
+    "compatibility_rule": "read the same Source journal and projection"
+  },
+  {
+    "new_api": "Artifact Head/Revision Get",
+    "existing_api": [
+      "/v1/experience/get",
+      "/v1/skill/get",
+      "other typed read APIs"
+    ],
+    "relationship": "overlapping read semantics",
+    "compatibility_rule": "delegate to one application service; the base API returns an exact revision and typed responses remain available"
+  },
+  {
+    "new_api": "Artifact List/Search",
+    "existing_api": [
+      "Memory Entry List",
+      "Memory Entry Search"
+    ],
+    "relationship": "different identity level",
+    "compatibility_rule": "Artifact APIs operate on heads; Memory Entry APIs retain entry identity, citation, and ranking"
+  },
+  {
+    "new_api": "Artifact Replace",
+    "existing_api": [
+      "Candidate revise",
+      "Memory Entry revise"
+    ],
+    "relationship": "different lifecycle",
+    "compatibility_rule": "never bypass review or represent an Entry mutation as a whole Artifact replacement"
+  },
+  {
+    "new_api": "Artifact Delete",
+    "existing_api": [
+      "Memory retire",
+      "other Family lifecycle commands"
+    ],
+    "relationship": "different lifecycle",
+    "compatibility_rule": "only a Family that explicitly enables Delete accepts the generic operation"
+  },
+  {
+    "new_api": "Source Create followed by Memory Flush",
+    "existing_api": [
+      "/v1/memory/flush"
+    ],
+    "relationship": "reuses an existing command",
+    "compatibility_rule": "adds no combined server parameter or response"
+  }
+]
+```
 
 No current domain endpoint is removed or deprecated by this RFC. Parity tests ensure overlapping entries resolve to
 the same durable Source or Artifact revision, digest, lineage, authorization result, and error semantics.
@@ -671,10 +1422,36 @@ the same durable Source or Artifact revision, digest, lineage, authorization res
 `openapi/powercontext.yaml` remains the sole HTTP contract. Generated models and operation metadata are checked in,
 and Client methods encode path segments, query values, and `If-Match` without adding family-specific methods.
 
-The contract adds or reuses these schemas: `SourceRecord`, `CreateSourceRequest`, `SourceSummary`, `SourcePage`,
-`SourceSearchHit`, `SourceSearchResultPage`, `ArtifactRevision`, `ArtifactSummary`, `ArtifactPage`,
-`CreateArtifactRequest`, `ReplaceArtifactRequest`, `ArtifactSearchHit`, `ArtifactSearchResultPage`, and
-`ArtifactDeletionStatus`. It adds no Scope schema; those contracts remain owned by PR #1401.
+```json
+{
+  "contract_source": "openapi/powercontext.yaml",
+  "schemas": [
+    "SourceRecord",
+    "CreateSourceRequest",
+    "SourceSummary",
+    "SourcePage",
+    "SourceSearchHit",
+    "SourceSearchResultPage",
+    "ArtifactRevision",
+    "ArtifactSummary",
+    "ArtifactPage",
+    "CreateArtifactRequest",
+    "ReplaceArtifactRequest",
+    "ArtifactSearchHit",
+    "ArtifactSearchResultPage",
+    "ArtifactDeletionStatus"
+  ],
+  "headers": {
+    "response": [
+      "ETag"
+    ],
+    "request": [
+      "If-Match"
+    ]
+  },
+  "scope_schema_owner": "PR #1401"
+}
+```
 
 The persistence implementation uses the existing Source journal, Artifact revision table, Artifact head table, and
 lineage tables. Timestamp, digest, schema metadata, and deletion state may use compatible side tables so existing
