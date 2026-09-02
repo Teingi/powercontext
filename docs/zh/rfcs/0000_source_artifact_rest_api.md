@@ -137,6 +137,23 @@ Artifact lifecycle head 的联合唯一键是 `(scope_id, family, artifact_id)`�
 
 ## 基础操作、HTTP 方法与 URL
 
+本 RFC 共新增 11 个 HTTP API：Source 4 个，Artifact 7 个。下表只统计本文新增的基础 API，不包含 Scope API、
+既有 Family 强类型 API，也不把客户端编排所复用的 `/v1/memory/flush` 计入新增接口。
+
+| 对象 | 功能 | operationId | HTTP 方法与 URL | 资源定位或查询条件 | 成功返回 |
+| --- | --- | --- | --- | --- | --- |
+| Source | Create | `create_source` | `POST /v1/scopes/{scope_id}/sources/{source_type}` | path 为联合键前缀；`source_id` 由服务端生成 | `201 SourceRecord` |
+| Source | Get | `get_source` | `GET /v1/scopes/{scope_id}/sources/{source_type}/{source_id}` | path 包含完整 Source 联合键 | `200 SourceRecord` |
+| Source | List | `list_sources` | `GET /v1/scopes/{scope_id}/sources/{source_type}` | path 确定 Scope 与 Source type；query 仅用于分页和时间过滤 | `200 SourcePage` |
+| Source | Search | `search_sources` | `GET /v1/scopes/{scope_id}/source-search-results` | path 确定 Scope；query 使用必填 `source_type` 及可选 `q`、`mode`、分页和时间过滤 | `200 SourceSearchResultPage` |
+| Artifact | Create | `create_artifact` | `POST /v1/scopes/{scope_id}/artifacts/{family}` | path 为 Artifact head 联合键前缀；`artifact_id` 可由调用方提供或服务端生成 | `201 ArtifactRevision` + `ETag` |
+| Artifact | Get head | `get_artifact` | `GET /v1/scopes/{scope_id}/artifacts/{family}/{artifact_id}` | path 包含完整 Artifact head 联合键 | `200 ArtifactRevision` + `ETag` |
+| Artifact | Get Revision | `get_artifact_revision` | `GET /v1/scopes/{scope_id}/artifacts/{family}/{artifact_id}/revisions/{revision}` | path 包含完整 Artifact Revision 联合键 | `200 ArtifactRevision` |
+| Artifact | List | `list_artifacts` | `GET /v1/scopes/{scope_id}/artifacts/{family}` | path 确定 Scope 与 Family；query 仅用于分页和时间过滤 | `200 ArtifactPage` |
+| Artifact | Search | `search_artifacts` | `GET /v1/scopes/{scope_id}/artifact-search-results` | path 确定 Scope；query 使用必填 `family` 及可选 `q`、`mode`、分页和时间过滤 | `200 ArtifactSearchResultPage` |
+| Artifact | Replace | `replace_artifact` | `PUT /v1/scopes/{scope_id}/artifacts/{family}/{artifact_id}` | path 包含完整 head 联合键；`If-Match` 指定当前 Revision | `200 ArtifactRevision` + 新 `ETag` |
+| Artifact | Delete | `delete_artifact` | `DELETE /v1/scopes/{scope_id}/artifacts/{family}/{artifact_id}` | path 包含完整 head 联合键；`If-Match` 指定当前 Revision | `200 ArtifactDeletionStatus` |
+
 基础操作的 wire-level 契约固定如下：
 
 ```json

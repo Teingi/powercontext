@@ -211,6 +211,23 @@ defined here.
 
 ## Base operations, HTTP methods, and URLs
 
+This RFC adds 11 HTTP APIs: four for Source and seven for Artifact. The inventory below excludes the Scope API,
+existing typed Family APIs, and the existing `/v1/memory/flush` operation reused by client-side composition.
+
+| Object | Function | operationId | HTTP method and URL | Identity or query inputs | Success response |
+| --- | --- | --- | --- | --- | --- |
+| Source | Create | `create_source` | `POST /v1/scopes/{scope_id}/sources/{source_type}` | Path is the composite-key prefix; the Server generates `source_id` | `201 SourceRecord` |
+| Source | Get | `get_source` | `GET /v1/scopes/{scope_id}/sources/{source_type}/{source_id}` | Path carries the complete Source composite key | `200 SourceRecord` |
+| Source | List | `list_sources` | `GET /v1/scopes/{scope_id}/sources/{source_type}` | Path selects Scope and Source type; query only paginates and filters by time | `200 SourcePage` |
+| Source | Search | `search_sources` | `GET /v1/scopes/{scope_id}/source-search-results` | Path selects Scope; query requires `source_type` and optionally carries `q`, `mode`, pagination, and time filters | `200 SourceSearchResultPage` |
+| Artifact | Create | `create_artifact` | `POST /v1/scopes/{scope_id}/artifacts/{family}` | Path is the head-key prefix; the caller may supply `artifact_id` or let the Server generate it | `201 ArtifactRevision` + `ETag` |
+| Artifact | Get head | `get_artifact` | `GET /v1/scopes/{scope_id}/artifacts/{family}/{artifact_id}` | Path carries the complete Artifact head key | `200 ArtifactRevision` + `ETag` |
+| Artifact | Get Revision | `get_artifact_revision` | `GET /v1/scopes/{scope_id}/artifacts/{family}/{artifact_id}/revisions/{revision}` | Path carries the complete Artifact Revision key | `200 ArtifactRevision` |
+| Artifact | List | `list_artifacts` | `GET /v1/scopes/{scope_id}/artifacts/{family}` | Path selects Scope and Family; query only paginates and filters by time | `200 ArtifactPage` |
+| Artifact | Search | `search_artifacts` | `GET /v1/scopes/{scope_id}/artifact-search-results` | Path selects Scope; query requires `family` and optionally carries `q`, `mode`, pagination, and time filters | `200 ArtifactSearchResultPage` |
+| Artifact | Replace | `replace_artifact` | `PUT /v1/scopes/{scope_id}/artifacts/{family}/{artifact_id}` | Path carries the complete head key; `If-Match` names the current Revision | `200 ArtifactRevision` + new `ETag` |
+| Artifact | Delete | `delete_artifact` | `DELETE /v1/scopes/{scope_id}/artifacts/{family}/{artifact_id}` | Path carries the complete head key; `If-Match` names the current Revision | `200 ArtifactDeletionStatus` |
+
 The wire contract for each base operation is fixed as follows:
 
 ```json
