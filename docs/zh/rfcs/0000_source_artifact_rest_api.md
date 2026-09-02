@@ -15,7 +15,8 @@ API 直接复用 PowerContext 已有的 Source、Artifact、Artifact Revision �
 
 接口遵守以下约定：
 
-- URL 使用复数名词，不使用 `/add`、`/get`、`/list`、`/update`、`/delete` 动词路径；
+- Source 资源路径固定为 `/v1/sources`，Artifact 资源路径固定为 `/v1/artifacts`，搜索结果路径固定为
+  `/v1/source-search-results` 与 `/v1/artifact-search-results`；
 - `GET` 用于读取、列举和搜索，`POST` 用于创建，`PUT` 用于完整替换 Artifact head，`DELETE` 用于删除；
 - Artifact 历史 Revision 不可变；`PUT` 替换当前 head 时，Runtime 在内部创建下一 Revision，而不是覆盖历史 Revision；
 - List 使用 `items + next_cursor`，继续遵守 PowerContext 当前的 snake_case 与 cursor 约定。
@@ -91,22 +92,25 @@ Revision 是 Artifact 身份的一部分，也是并发前置条件。Create 生
 
 # REST API conventions
 
-## `create/get/list/search/replace/delete` 的 HTTP 映射
+## 基础操作、HTTP 方法与 URL
 
-这些词适合作为用户能力名称，但不应全部写入 URL 并统一使用 POST。`POST /v1/artifacts/get`、`POST /v1/artifacts/list`、`POST /v1/artifacts/update` 属于 RPC command 风格，不是推荐的 REST 表达。
+基础操作的 wire-level 契约固定如下：
 
-本 RFC 采用下表映射：
-
-| 用户能力 | REST 表达 | HTTP 方法 | 推荐 operationId | 结论 |
+| 接口功能 | REST 语义 | HTTP 方法 | operationId | URL 格式 |
 | --- | --- | --- | --- | --- |
-| Create | 向集合创建对象 | `POST` | `create_source` / `create_artifact` | URL 不使用 `/add` |
-| Get | 读取一个具名对象或精确 Revision | `GET` | `get_source` / `get_artifact` / `get_artifact_revision` | URL 不使用 `/get` |
-| List | 读取资源集合 | `GET` | `list_sources` / `list_artifacts` | 固定使用 `/v1/sources`、`/v1/artifacts`，URL 不使用 `/list` |
-| Search | 读取搜索命中集合 | `GET` | `search_sources` / `search_artifacts` | 固定使用 `/v1/source-search-results`、`/v1/artifact-search-results` |
-| Replace | 完整替换 Artifact head | `PUT` | `replace_artifact` | 必须携带 `If-Match`；内部创建下一 Revision |
-| Delete | 删除一个具名 Artifact 的当前可见状态 | `DELETE` | `delete_artifact` | URL 不使用 `/delete` |
+| Source Create | 向 Source 集合创建对象 | `POST` | `create_source` | `/v1/sources` |
+| Source Get | 读取一个具名 Source | `GET` | `get_source` | `/v1/sources/{source_id}` |
+| Source List | 读取 Source 集合 | `GET` | `list_sources` | `/v1/sources` |
+| Source Search | 读取 Source 搜索命中集合 | `GET` | `search_sources` | `/v1/source-search-results` |
+| Artifact Create | 向 Artifact 集合创建对象 | `POST` | `create_artifact` | `/v1/artifacts` |
+| Artifact Head Get | 读取 Artifact 当前 head | `GET` | `get_artifact` | `/v1/artifacts/{artifact_id}` |
+| Artifact Revision Get | 读取 Artifact 精确 Revision | `GET` | `get_artifact_revision` | `/v1/artifacts/{artifact_id}/revisions/{revision}` |
+| Artifact List | 读取 Artifact 集合 | `GET` | `list_artifacts` | `/v1/artifacts` |
+| Artifact Search | 读取 Artifact 搜索命中集合 | `GET` | `search_artifacts` | `/v1/artifact-search-results` |
+| Artifact Replace | 完整替换 Artifact head | `PUT` | `replace_artifact` | `/v1/artifacts/{artifact_id}` |
+| Artifact Delete | 删除 Artifact 当前可见状态 | `DELETE` | `delete_artifact` | `/v1/artifacts/{artifact_id}` |
 
-OpenAPI `operationId` 使用动词是正常的；REST 约束的是 wire-level URL 与 HTTP method，不是要求所有 SDK 方法都只能使用名词。
+`operationId`、HTTP 方法和 URL 格式以表中定义为准，共同构成基础 API 的 wire contract。
 
 ## PowerContext HTTP 接口约束
 
@@ -116,9 +120,9 @@ OpenAPI `operationId` 使用动词是正常的；REST 约束的是 wire-level UR
 - 子对象使用子集合表达；
 - List 返回 typed items 和分页元数据；
 - `PUT` 只接受完整 replacement；Artifact Replace/Delete 必须通过 `If-Match` 携带当前 head 的 ETag，不能静默覆盖并发写入；
-- 不增加额外的类型 envelope 或通用版本字段，直接复用 `SourceReference`、`ArtifactReference`、Artifact Revision 和 Source journal position；
-- 不把 `scope_id` 放进 URL path。PowerContext 的 `scope_id` 可能是 `git:github.com/acme/payments`，包含 `:` 与 `/`；因此 GET/DELETE 使用 query parameter，POST 使用 request body；
-- 不为每个 Source type 或 Artifact Family 增加一条 OpenAPI path。基础集合固定为 `/v1/sources` 与 `/v1/artifacts`，`source_type` / `family` 放在 body 或 query 中；这保证新增 Family 不增加 generated Client method；
+- response 直接复用 `SourceReference`、`ArtifactReference`、Artifact Revision 和 Source journal position；
+- `scope_id` 使用 query parameter 或 request body；GET/DELETE 使用 query parameter，POST/PUT 使用 request body；
+- 基础集合固定为 `/v1/sources` 与 `/v1/artifacts`，`source_type` / `family` 使用 request body 或 query parameter；
 - 字段名继续使用现有 snake_case；
 - Scope identity 与可见性由 PR #1401 的 Scope API 负责；本文不从 Source/Artifact 数据反向推导或列举 Scope。
 
@@ -920,28 +924,6 @@ OpenAPI 还必须声明 `ETag` response header 与 `If-Match` request header。�
 - Artifact logical delete、历史 lineage 可验证与 retention 之间仍需 Family 实现正确衔接。
 - Source Create + Memory Flush 不是一个事务；客户端必须处理“Source 成功、flush 失败”的可重试状态。
 - Source 与 Artifact 各增加一个独立 search-result collection 和 response schema，OpenAPI surface 略有增加，但 generated Client 方法与返回类型保持明确对称。
-
-# Alternatives
-
-## 在 URL 中使用 `/add`、`/get`、`/list`、`/update`、`/delete`
-
-这种方式与现有 command API 风格一致，但会放弃 HTTP GET 缓存、标准中间件、状态码和集合语义，也不符合本 RFC 的 REST contract，因此不采用。
-
-## 所有动作都使用 POST
-
-精确读取、确定性 List 和首期 Search 都不需要 request body，应使用 GET。Create 使用 POST，完整 Replace 使用 PUT，Delete 使用 DELETE。不能因 `scope_id` 复杂就把所有请求退回 POST；`scope_id` 可以安全放在 query parameter。
-
-## 使用 `POST .../revisions` 表达 Artifact Replace
-
-这种方式能直接表达“创建下一 Revision”，但用户面对的基础对象是 Artifact head，更新能力更适合对具名 head 使用 `PUT`。本 RFC 因此使用 `PUT /v1/artifacts/{artifact_id}` 完整替换 head，并通过 `If-Match` 做并发控制；Runtime 内部仍创建下一不可变 Revision。首期不接受 PATCH。
-
-## 把 Scope 放入 path
-
-PowerContext 既有 `scope_id` 是外部稳定身份，可能包含 `:` 和 `/`；即使新 ID 使用 path-safe 的 `scp_` 格式，也必须保持对既有 ID 的兼容。将 `scope_id` 放入 path 会造成网关、路由和双重解码风险，因此本 RFC 使用 query/body。
-
-## 使用一个混合 Search
-
-跨 Source type、跨 Artifact Family 的 ranking、分页和授权合并需要新的全局索引与 score 校准。基础企业场景按单 Scope、单 type/family 查询即可，首期不增加混合 Search。
 
 # Related PowerContext RFCs
 

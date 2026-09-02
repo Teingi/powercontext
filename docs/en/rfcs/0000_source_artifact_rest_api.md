@@ -112,19 +112,25 @@ than or equal to the Source `position`. A flush failure does not roll back the d
 
 # Reference-level explanation
 
-## HTTP and naming conventions
+## Base operations, HTTP methods, and URLs
 
-Capability names such as create, get, list, search, replace, and delete are useful SDK names. They are not added as
-path suffixes. The mapping is:
+The wire contract for each base operation is fixed as follows:
 
-| Capability | HTTP representation | Method | operationId |
-| --- | --- | --- | --- |
-| Create | submit to a collection | `POST` | `create_source`, `create_artifact` |
-| Get | read a named object or exact revision | `GET` | `get_source`, `get_artifact`, `get_artifact_revision` |
-| List | read a resource collection | `GET` | `list_sources`, `list_artifacts` |
-| Search | read a search-hit collection | `GET` | `search_sources`, `search_artifacts` |
-| Replace | fully replace the Artifact head | `PUT` | `replace_artifact` |
-| Delete | delete the current visible Artifact head | `DELETE` | `delete_artifact` |
+| Operation | REST semantics | HTTP method | operationId | URL pattern |
+| --- | --- | --- | --- | --- |
+| Source Create | create an object in the Source collection | `POST` | `create_source` | `/v1/sources` |
+| Source Get | read one named Source | `GET` | `get_source` | `/v1/sources/{source_id}` |
+| Source List | read the Source collection | `GET` | `list_sources` | `/v1/sources` |
+| Source Search | read the Source search-hit collection | `GET` | `search_sources` | `/v1/source-search-results` |
+| Artifact Create | create an object in the Artifact collection | `POST` | `create_artifact` | `/v1/artifacts` |
+| Artifact Head Get | read the current Artifact head | `GET` | `get_artifact` | `/v1/artifacts/{artifact_id}` |
+| Artifact Revision Get | read one exact Artifact revision | `GET` | `get_artifact_revision` | `/v1/artifacts/{artifact_id}/revisions/{revision}` |
+| Artifact List | read the Artifact collection | `GET` | `list_artifacts` | `/v1/artifacts` |
+| Artifact Search | read the Artifact search-hit collection | `GET` | `search_artifacts` | `/v1/artifact-search-results` |
+| Artifact Replace | fully replace the Artifact head | `PUT` | `replace_artifact` | `/v1/artifacts/{artifact_id}` |
+| Artifact Delete | delete the current visible Artifact state | `DELETE` | `delete_artifact` | `/v1/artifacts/{artifact_id}` |
+
+The `operationId`, HTTP method, and URL pattern in this table together define the base API wire contract.
 
 The API additionally requires:
 
@@ -712,24 +718,6 @@ The implementation sequence is:
   retryable flush failure.
 - Source and Artifact each add a dedicated search-result collection and response schema. This slightly enlarges the
   OpenAPI surface but keeps generated Client methods and return types explicit and symmetric.
-
-# Rationale and alternatives
-
-Action suffixes such as `/add`, `/get`, `/list`, `/update`, and `/delete` were rejected because HTTP methods already
-express those operations and noun paths give each object one stable address. Making every action a POST would also
-discard safe/cacheable read semantics and standard conditional requests.
-
-`POST /v1/artifacts/{id}/revisions` was considered for updates. It represents append-only storage accurately but
-makes callers construct revision transitions directly. `PUT` on the current head better expresses complete
-replacement while the Runtime retains revision allocation and CAS.
-
-Putting `scope_id` in paths was rejected because valid Scope identifiers may contain `/`. A combined Source and
-Artifact search was rejected because identity, ranking, projection, and lifecycle differ.
-
-# Unresolved questions
-
-There are no unresolved wire-level decisions required to accept this RFC. Authorization vocabulary, cross-Scope
-sharing, family schema registration details, and partial Artifact updates are intentionally separate designs.
 
 # Future possibilities
 
