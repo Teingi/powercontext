@@ -17,6 +17,9 @@
 from __future__ import annotations
 
 import asyncio
+import base64
+import binascii
+import ipaddress
 import json
 import logging
 from collections.abc import Awaitable, Callable, Mapping, Sequence
@@ -60,20 +63,54 @@ from powercontext.builtin.artifacts.memory.errors import (
     MemoryEntryNotFoundError,
 )
 from powercontext.builtin.artifacts.skill import (
+    AgentKind,
     AgentSkillTarget,
     ExternalSkillNotFoundError,
     ExternalSkillRegistryUnavailableError,
     ExternalSkillSnapshotUnavailableError,
     Skill,
+    SkillPackageRef,
+    SkillPackageSnapshot,
+    SkillSearchHit,
 )
 from powercontext.builtin.artifacts.skill import (
     ExternalSkillResolution as RuntimeExternalSkillResolution,
+)
+from powercontext.builtin.artifacts.skill.distribution import (
+    RemotePublicationGenerationError,
+    RemoteSkillDistributionError,
+    RemoteSkillLifecycleError,
+    RemoteTargetAuthenticationError,
+    RemoteTargetEnrollmentError,
+    RemoteTargetStateError,
+)
+from powercontext.builtin.artifacts.skill.distribution import (
+    RemoteSkillObservation as DomainRemoteSkillObservation,
+)
+from powercontext.builtin.artifacts.skill.distribution import (
+    RemoteSkillReceipt as DomainRemoteSkillReceipt,
+)
+from powercontext.builtin.artifacts.skill.distribution import (
+    RemoteSkillReceiptResult as DomainRemoteSkillReceiptResult,
+)
+from powercontext.builtin.artifacts.skill.distribution import (
+    RemoteSkillReconcileResult as DomainRemoteSkillReconcileResult,
+)
+from powercontext.builtin.artifacts.skill.distribution import (
+    RemoteSkillTargetStatus as DomainRemoteSkillTargetStatus,
+)
+from powercontext.builtin.artifacts.skill.distribution import (
+    RemoteTargetCredential as DomainRemoteTargetCredential,
+)
+from powercontext.builtin.artifacts.skill.distribution import (
+    RemoteTargetEnrollment as DomainRemoteTargetEnrollment,
 )
 from powercontext.builtin.artifacts.skill.projection import (
     AgentSkillProjectionConflictError,
     inspect_skill_projection,
     publish_skill_projection,
 )
+from powercontext.builtin.artifacts.skill.publication import ManagedSkillPublicationStatus
 from powercontext.builtin.handoff_report import (
     HandoffReportApplication,
     HandoffReportBusyError,
@@ -107,6 +144,18 @@ from powercontext.builtin.handoff_report.repository import (
     InvalidActivityRepositoryArgumentError,
 )
 from powercontext.builtin.inference.errors import InferenceTimeoutError, InferenceUnavailableError
+from powercontext.builtin.persistence.agent_skill_targets import RemoteAgentSkillTarget
+from powercontext.builtin.persistence.artifact_governance import (
+    ArtifactGovernance,
+    ArtifactLifecycleState,
+    InvalidArtifactLifecycleError,
+)
+from powercontext.builtin.persistence.errors import (
+    PersistenceError,
+    RepositoryNotFoundError,
+    StoredPayloadConflictError,
+)
+from powercontext.builtin.persistence.skill_publications import SkillPublication
 from powercontext.builtin.review import (
     ArtifactTargetConflictError,
     CandidateConflictError,
@@ -213,6 +262,12 @@ from powercontext.builtin.runtime import (
 from powercontext.builtin.runtime import (
     SubmitSourceObservation as RuntimeSubmitSourceObservation,
 )
+from powercontext.builtin.sources import (
+    ObservedInvocation,
+    ObservedOutcome,
+    ObservedValidation,
+    SkillUsageCapture,
+)
 from powercontext.builtin.work import (
     AcknowledgeHandoff as RuntimeAcknowledgeHandoff,
 )
@@ -275,8 +330,11 @@ from powercontext.http import (
     ContinueHandoffRequest,
     CreateAccessBindingRequest,
     CreateHandoffReportProjectRequest,
+    CreateRemoteSkillTargetRequest,
     CreateWorkContractRequest,
     DetachHandoffReportWorkspaceRequest,
+    DownloadRemoteSkillPackageRequest,
+    EnrollRemoteSkillTargetRequest,
     ErrorDetail,
     ErrorResponse,
     ExperienceArtifact,
@@ -294,6 +352,7 @@ from powercontext.http import (
     GetHandoffReportRequest,
     GetHandoffReportWorkspaceRequest,
     GetMemoryEntryRequest,
+    GetSkillPackageRequest,
     GetSkillRequest,
     GetStatsRequest,
     HandoffAcknowledgement,
@@ -318,10 +377,14 @@ from powercontext.http import (
     ListHandoffReportKnownScopesRequest,
     ListHandoffReportProjectsRequest,
     ListHandoffReportWorkstreamsRequest,
+    ListManagedSkillsRequest,
+    ListManagedSkillsResponse,
     ListMemoryChangesRequest,
     ListMemoryChangesResponse,
     ListMemoryEntriesRequest,
     ListMemoryEntriesResponse,
+    ListRemoteSkillTargetsRequest,
+    ListRemoteSkillTargetsResponse,
     ListSkillPublicationTargetsRequest,
     ListSkillPublicationTargetsResponse,
     ManagedSkillPublication,
@@ -335,24 +398,39 @@ from powercontext.http import (
     ProjectDescriptor,
     ProjectPage,
     ProposeExperienceRequest,
+    ProposeSkillPackageRequest,
     ProposeSkillRequest,
     PublishManagedSkillRequest,
+    PublishRemoteSkillRequest,
     PurgeHandoffReportActivitiesRequest,
     PurgeHandoffReportActivitiesResponse,
     ReadinessResponse,
     ReadinessStatus,
     ReassignHandoffReceiverRequest,
+    ReconcileRemoteSkillsRequest,
+    ReconcileRemoteSkillsResponse,
     RecordHandoffReportActivityRequest,
+    RecordRemoteSkillReceiptRequest,
+    RecordSkillUsageRequest,
     RecordTaskOutcomeRequest,
     RegisterHandoffReportWorkstreamRequest,
     RegisterSourceDefinitionRequest,
     RejectArtifactCandidateRequest,
     RememberMemoryRequest,
+    RemoteSkillAction,
+    RemoteSkillPublication,
+    RemoteSkillReceiptResponse,
+    RemoteSkillTarget,
+    RemoteSkillTargetCredential,
+    RemoteSkillTargetEnrollment,
+    RemoteSkillTargetStatus,
+    RenameRemoteSkillTargetRequest,
     ResolveExternalSkillRequest,
     RetireMemoryEntryRequest,
     ReviseArtifactCandidateRequest,
     ReviseMemoryEntryRequest,
     RevokeAccessBindingRequest,
+    RevokeRemoteSkillTargetRequest,
     ScanExternalSkillsRequest,
     ScanExternalSkillsResponse,
     ScopeAccessResource,
@@ -361,13 +439,19 @@ from powercontext.http import (
     SearchMemoryResponse,
     ServerAccessResource,
     SkillArtifact,
+    SkillGovernance,
+    SkillPackageDownload,
+    SkillPackageFile,
+    SkillPackageManifest,
     SkillPublicationTarget,
     SourceDefinitionManifest,
     SourceObservationReceipt,
     StoredHandoffReportActivity,
     SubmitSourceObservationRequest,
+    UnpublishRemoteSkillRequest,
     UpdateHandoffReportProjectRequest,
     UpdateHandoffReportWorkstreamRequest,
+    UpdateSkillLifecycleRequest,
     WorkSourceReceipt,
     WorkstreamDescriptor,
     WorkstreamPage,
@@ -458,8 +542,12 @@ from powercontext.http._generated.operations import (
     CONTINUE_HANDOFF,
     CREATE_ACCESS_BINDING,
     CREATE_HANDOFF_REPORT_PROJECT,
+    CREATE_REMOTE_SKILL_TARGET,
     CREATE_WORK_CONTRACT,
     DETACH_HANDOFF_REPORT_WORKSPACE,
+    DOWNLOAD_REMOTE_SKILL_PACKAGE,
+    DOWNLOAD_SKILL_PACKAGE,
+    ENROLL_REMOTE_SKILL_TARGET,
     FINALIZE_HANDOFF,
     FLUSH_MEMORY,
     GENERATE_EXPERIENCE,
@@ -476,6 +564,7 @@ from powercontext.http._generated.operations import (
     GET_MEMORY_ENTRY,
     GET_READINESS,
     GET_SKILL,
+    GET_SKILL_PACKAGE_MANIFEST,
     GET_STATS,
     HANDOFF_CURRENT_WORK,
     IMPORT_EXTERNAL_SKILL,
@@ -489,33 +578,44 @@ from powercontext.http._generated.operations import (
     LIST_HANDOFF_REPORT_KNOWN_SCOPES,
     LIST_HANDOFF_REPORT_PROJECTS,
     LIST_HANDOFF_REPORT_WORKSTREAMS,
+    LIST_MANAGED_SKILLS,
     LIST_MEMORY_CHANGES,
     LIST_MEMORY_ENTRIES,
+    LIST_REMOTE_SKILL_TARGETS,
     LIST_SKILL_PUBLICATION_TARGETS,
     OPENAPI_VERSION,
     PREPARE_CONTEXT,
     PREPARE_HANDOFF,
     PROPOSE_EXPERIENCE,
     PROPOSE_SKILL,
+    PROPOSE_SKILL_PACKAGE,
     PUBLISH_MANAGED_SKILL,
+    PUBLISH_REMOTE_SKILL,
     PURGE_HANDOFF_REPORT_ACTIVITIES,
     REASSIGN_HANDOFF_RECEIVER_BINDING,
+    RECONCILE_REMOTE_SKILLS,
     RECORD_HANDOFF_REPORT_ACTIVITY,
+    RECORD_REMOTE_SKILL_RECEIPT,
+    RECORD_SKILL_USAGE,
     RECORD_TASK_OUTCOME,
     REGISTER_HANDOFF_REPORT_WORKSTREAM,
     REGISTER_SOURCE_DEFINITION,
     REJECT_ARTIFACT_CANDIDATE,
     REMEMBER_MEMORY,
+    RENAME_REMOTE_SKILL_TARGET,
     RESOLVE_EXTERNAL_SKILL,
     RETIRE_MEMORY_ENTRY,
     REVISE_ARTIFACT_CANDIDATE,
     REVISE_MEMORY_ENTRY,
     REVOKE_ACCESS_BINDING,
+    REVOKE_REMOTE_SKILL_TARGET,
     SCAN_EXTERNAL_SKILLS,
     SEARCH_MEMORY,
     SUBMIT_SOURCE_OBSERVATION,
+    UNPUBLISH_REMOTE_SKILL,
     UPDATE_HANDOFF_REPORT_PROJECT,
     UPDATE_HANDOFF_REPORT_WORKSTREAM,
+    UPDATE_SKILL_LIFECYCLE,
     AccessRequirement,
     Operation,
 )
@@ -627,9 +727,135 @@ class _ScopedSkillApplication(Protocol):
 
     async def get(self, request: RuntimeGetSkillRequest, /) -> Skill: ...
 
+    async def search(self, query: str, limit: int, /) -> tuple[SkillSearchHit, ...]: ...
+
+    async def list(
+        self, *, include_deprecated: bool = False, limit: int = 100
+    ) -> tuple[tuple[Skill, ArtifactGovernance], ...]: ...
+
+    async def package(self, artifact: ArtifactRef, /) -> SkillPackageSnapshot: ...
+
+    async def package_snapshot(self, package: SkillPackageRef, /) -> SkillPackageSnapshot: ...
+
+    async def upload_package(
+        self,
+        archive_bytes: bytes,
+        reason: str | None,
+        target: ArtifactRef | None,
+        /,
+    ) -> SkillCandidate: ...
+
+    async def record_usage(self, observation: SkillUsageCapture, /) -> SourceReceipt: ...
+
+    async def governance(self, artifact_id: str, /) -> ArtifactGovernance: ...
+
+    async def update_lifecycle(
+        self,
+        artifact_id: str,
+        expected_generation: int,
+        lifecycle_state: ArtifactLifecycleState,
+        replacement_artifact_id: str | None,
+        /,
+    ) -> ArtifactGovernance: ...
+
+    async def inspect_publication(
+        self, artifact: ArtifactRef, target: AgentSkillTarget, /
+    ) -> ManagedSkillPublicationStatus: ...
+
+    async def publish(
+        self,
+        artifact: ArtifactRef,
+        target: AgentSkillTarget,
+        /,
+        *,
+        allow_deprecated: bool = False,
+    ) -> ManagedSkillPublicationStatus: ...
+
+    async def unpublish(self, artifact: ArtifactRef, target: AgentSkillTarget, /) -> ManagedSkillPublicationStatus: ...
+
 
 class _SkillApplication(Protocol):
     def for_scope(self, scope_id: str, /) -> _ScopedSkillApplication: ...
+
+
+class _RemoteSkillApplication(Protocol):
+    async def list_targets(
+        self,
+        scope_id: str,
+        /,
+        *,
+        target_id: str | None = None,
+        limit: int = 100,
+    ) -> tuple[DomainRemoteSkillTargetStatus, ...]: ...
+
+    async def create_target(
+        self,
+        scope_id: str,
+        agent_kind: AgentKind,
+        display_name: str,
+        /,
+    ) -> DomainRemoteTargetEnrollment: ...
+
+    async def enroll(
+        self,
+        enrollment_code: str,
+        installation_id: str,
+        receiver_version: str,
+        environment_fingerprint: str | None,
+        machine_hostname: str | None,
+        workspace_name: str | None,
+        /,
+    ) -> DomainRemoteTargetCredential: ...
+
+    async def rename_target(
+        self,
+        scope_id: str,
+        target_id: str,
+        expected_generation: int,
+        display_name: str,
+        /,
+    ) -> RemoteAgentSkillTarget: ...
+
+    async def revoke_target(
+        self, scope_id: str, target_id: str, expected_generation: int, /
+    ) -> RemoteAgentSkillTarget: ...
+
+    async def publish(
+        self,
+        scope_id: str,
+        target_id: str,
+        artifact: ArtifactRef,
+        expected_generation: int | None,
+        /,
+        *,
+        allow_deprecated: bool = False,
+    ) -> SkillPublication: ...
+
+    async def unpublish(
+        self, scope_id: str, target_id: str, artifact_id: str, expected_generation: int, /
+    ) -> SkillPublication: ...
+
+    async def reconcile(
+        self,
+        credential: str,
+        observations: tuple[DomainRemoteSkillObservation, ...],
+        receiver_version: str,
+        environment_fingerprint: str | None,
+        /,
+    ) -> DomainRemoteSkillReconcileResult: ...
+
+    async def download(
+        self,
+        credential: str,
+        generation: int,
+        artifact: ArtifactRef,
+        package: SkillPackageRef,
+        /,
+    ) -> SkillPackageSnapshot: ...
+
+    async def receipt(
+        self, credential: str, receipt: DomainRemoteSkillReceipt, /
+    ) -> DomainRemoteSkillReceiptResult: ...
 
 
 class _ScopedExternalSkillApplication(Protocol):
@@ -751,6 +977,7 @@ class ServerApplication(Protocol):
     memory: _MemoryApplication
     review: _ReviewApplication
     skill: _SkillApplication
+    remote_skills: _RemoteSkillApplication
     statistics: _StatisticsApplication
     handoff_report: HandoffReportApplication | None
 
@@ -785,6 +1012,7 @@ def create_app(
     access_mode: Literal["disabled", "enforced"] | None = None,
     authentication_provider: AuthenticationProvider | None = None,
     agent_skill_targets: Sequence[AgentSkillTarget] = (),
+    allow_insecure_remote_http: bool = False,
 ) -> FastAPI:
     """Build the HTTP adapter around an optional Runtime application binding."""
 
@@ -809,6 +1037,7 @@ def create_app(
     app.state.agent_skill_targets = tuple(target for target in agent_skill_targets if target.allow_managed_publish)
     app.state.metrics = metrics
     app.state.tracing = tracing
+    app.state.allow_insecure_remote_http = allow_insecure_remote_http
     app.state.capabilities = Capabilities(
         source_types=[],
         artifact_families=[],
@@ -845,9 +1074,13 @@ def create_app(
 
     @app.exception_handler(_RuntimeNotReadyError)
     @app.exception_handler(PowerContextError)
+    @app.exception_handler(PersistenceError)
     async def application_error(request: Request, error: Exception) -> JSONResponse:
         response_status, code, message, details = _map_error(error)
-        return _error_response(response_status, code=code, message=message, details=details)
+        response = _error_response(response_status, code=code, message=message, details=details)
+        if isinstance(error, RemoteTargetAuthenticationError):
+            response.headers["WWW-Authenticate"] = "Bearer"
+        return response
 
     @app.exception_handler(Exception)
     async def unexpected_error(request: Request, error: Exception) -> JSONResponse:
@@ -922,6 +1155,22 @@ def create_app(
     _add_route(app, GET_SKILL, get_skill)
     _add_route(app, LIST_SKILL_PUBLICATION_TARGETS, list_skill_publication_targets)
     _add_route(app, PUBLISH_MANAGED_SKILL, publish_managed_skill)
+    _add_route(app, LIST_MANAGED_SKILLS, list_managed_skills)
+    _add_route(app, UPDATE_SKILL_LIFECYCLE, update_skill_lifecycle)
+    _add_route(app, GET_SKILL_PACKAGE_MANIFEST, get_skill_package_manifest)
+    _add_route(app, DOWNLOAD_SKILL_PACKAGE, download_skill_package)
+    _add_route(app, PROPOSE_SKILL_PACKAGE, propose_skill_package)
+    _add_route(app, RECORD_SKILL_USAGE, record_skill_usage)
+    _add_route(app, LIST_REMOTE_SKILL_TARGETS, list_remote_skill_targets)
+    _add_route(app, CREATE_REMOTE_SKILL_TARGET, create_remote_skill_target)
+    _add_route(app, ENROLL_REMOTE_SKILL_TARGET, enroll_remote_skill_target)
+    _add_route(app, RENAME_REMOTE_SKILL_TARGET, rename_remote_skill_target)
+    _add_route(app, REVOKE_REMOTE_SKILL_TARGET, revoke_remote_skill_target)
+    _add_route(app, PUBLISH_REMOTE_SKILL, publish_remote_skill)
+    _add_route(app, UNPUBLISH_REMOTE_SKILL, unpublish_remote_skill)
+    _add_route(app, RECONCILE_REMOTE_SKILLS, reconcile_remote_skills)
+    _add_route(app, DOWNLOAD_REMOTE_SKILL_PACKAGE, download_remote_skill_package)
+    _add_route(app, RECORD_REMOTE_SKILL_RECEIPT, record_remote_skill_receipt)
     _add_route(app, SCAN_EXTERNAL_SKILLS, scan_external_skills)
     _add_route(app, LIST_EXTERNAL_SKILLS, list_external_skills)
     _add_route(app, RESOLVE_EXTERNAL_SKILL, resolve_external_skill)
@@ -2045,6 +2294,383 @@ async def list_skill_publication_targets(
     )
 
 
+async def list_managed_skills(
+    request: ListManagedSkillsRequest,
+    application: Annotated[ServerApplication, Depends(_require_application)],
+) -> ListManagedSkillsResponse:
+    scoped = application.skill.for_scope(request.scope_id)
+    values: list[tuple[Skill, ArtifactGovernance]] = []
+    query = "" if request.query is None else request.query.strip()
+    if query:
+        for hit in await scoped.search(query, request.limit):
+            skill = await scoped.get(RuntimeGetSkillRequest(artifact=hit.artifact_ref))
+            values.append((skill, await scoped.governance(skill.artifact_id)))
+    else:
+        values.extend(await scoped.list(include_deprecated=request.include_deprecated, limit=request.limit))
+    if query and request.include_deprecated:
+        seen = {skill.artifact_id for skill, _governance in values}
+        for skill, governance in await scoped.list(include_deprecated=True, limit=request.limit):
+            search_text = "\n".join((
+                skill.content.name,
+                skill.content.description,
+                skill.content.instructions,
+                *skill.content.metadata.values(),
+            ))
+            if (
+                governance.lifecycle_state is ArtifactLifecycleState.DEPRECATED
+                and skill.artifact_id not in seen
+                and query.casefold() in search_text.casefold()
+            ):
+                values.append((skill, governance))
+    return ListManagedSkillsResponse(
+        skills=[mapping.managed_skill_library_entry(skill, governance) for skill, governance in values[: request.limit]]
+    )
+
+
+async def update_skill_lifecycle(
+    request: UpdateSkillLifecycleRequest,
+    application: Annotated[ServerApplication, Depends(_require_application)],
+) -> SkillGovernance:
+    result = await application.skill.for_scope(request.scope_id).update_lifecycle(
+        request.artifact_id,
+        request.expected_generation,
+        ArtifactLifecycleState(request.lifecycle_state.value),
+        request.replacement_artifact_id,
+    )
+    return mapping.skill_governance(result)
+
+
+async def get_skill_package_manifest(
+    request: GetSkillPackageRequest,
+    application: Annotated[ServerApplication, Depends(_require_application)],
+) -> SkillPackageManifest:
+    package = await application.skill.for_scope(request.scope_id).package(
+        mapping.runtime_artifact_reference(request.artifact)
+    )
+    return _skill_package_manifest(package)
+
+
+async def download_skill_package(
+    request: GetSkillPackageRequest,
+    application: Annotated[ServerApplication, Depends(_require_application)],
+) -> SkillPackageDownload:
+    package = await application.skill.for_scope(request.scope_id).package(
+        mapping.runtime_artifact_reference(request.artifact)
+    )
+    return SkillPackageDownload(
+        package=package.reference.model_dump(mode="json"),
+        archive_base64=base64.b64encode(package.archive_bytes).decode("ascii"),
+    )
+
+
+async def propose_skill_package(
+    request: ProposeSkillPackageRequest,
+    application: Annotated[ServerApplication, Depends(_require_application)],
+) -> ArtifactCandidate:
+    try:
+        archive_bytes = base64.b64decode(request.archive_base64, validate=True)
+    except (binascii.Error, ValueError) as error:
+        raise InvalidRuntimeRequestError("skill-package-base64") from error
+    try:
+        candidate = await application.skill.for_scope(request.scope_id).upload_package(
+            archive_bytes,
+            request.reason,
+            None if request.target is None else mapping.runtime_artifact_reference(request.target),
+        )
+    except ValueError as error:
+        raise InvalidRuntimeRequestError("skill-package") from error
+    return mapping.candidate_response(candidate)
+
+
+async def record_skill_usage(
+    request: RecordSkillUsageRequest,
+    application: Annotated[ServerApplication, Depends(_require_application)],
+) -> CaptureContentSourceResponse:
+    try:
+        receipt = await application.skill.for_scope(request.scope_id).record_usage(
+            SkillUsageCapture(
+                observation_id=request.observation_id,
+                skill_ref=mapping.runtime_artifact_reference(request.skill_ref),
+                package_digest=request.package_digest,
+                target_id=request.target_id,
+                selected=request.selected,
+                invoked=ObservedInvocation(request.invoked.value),
+                validation=ObservedValidation(request.validation.value),
+                outcome=ObservedOutcome(request.outcome.value),
+                task_source=(
+                    None if request.task_source is None else mapping.runtime_source_reference(request.task_source)
+                ),
+                environment_fingerprint=request.environment_fingerprint,
+            )
+        )
+    except ValueError as error:
+        raise InvalidRuntimeRequestError("skill-usage") from error
+    return mapping.capture_response(receipt)
+
+
+async def create_remote_skill_target(
+    request: CreateRemoteSkillTargetRequest,
+    application: Annotated[ServerApplication, Depends(_require_application)],
+) -> RemoteSkillTargetEnrollment:
+    enrollment = await application.remote_skills.create_target(
+        request.scope_id,
+        request.agent_kind.value,
+        request.display_name,
+    )
+    expires_at = enrollment.target.enrollment_expires_at
+    if expires_at is None:
+        raise RuntimeError("pending remote target is missing enrollment expiry")  # noqa: TRY003
+    return RemoteSkillTargetEnrollment(
+        target=_remote_skill_target(enrollment.target),
+        enrollment_code=enrollment.enrollment_code.get_secret_value(),
+        enrollment_expires_at=_aware_datetime(expires_at),
+    )
+
+
+async def list_remote_skill_targets(
+    request: ListRemoteSkillTargetsRequest,
+    application: Annotated[ServerApplication, Depends(_require_application)],
+) -> ListRemoteSkillTargetsResponse:
+    statuses = await application.remote_skills.list_targets(
+        request.scope_id,
+        target_id=request.target_id,
+        limit=request.limit,
+    )
+    return ListRemoteSkillTargetsResponse(targets=[_remote_skill_target_status(value) for value in statuses])
+
+
+async def enroll_remote_skill_target(
+    request: EnrollRemoteSkillTargetRequest,
+    http_request: Request,
+    application: Annotated[ServerApplication, Depends(_require_application)],
+) -> RemoteSkillTargetCredential:
+    _require_secure_remote_transport(http_request)
+    credential = await application.remote_skills.enroll(
+        request.enrollment_code,
+        request.installation_id,
+        request.receiver_version,
+        request.environment_fingerprint,
+        request.machine_hostname,
+        request.workspace_name,
+    )
+    return RemoteSkillTargetCredential.model_validate({
+        "scope_id": credential.scope_id,
+        "target_id": credential.target_id,
+        "agent_kind": credential.agent_kind,
+        "credential": credential.credential.get_secret_value(),
+    })
+
+
+async def rename_remote_skill_target(
+    request: RenameRemoteSkillTargetRequest,
+    application: Annotated[ServerApplication, Depends(_require_application)],
+) -> RemoteSkillTarget:
+    target = await application.remote_skills.rename_target(
+        request.scope_id,
+        request.target_id,
+        request.expected_generation,
+        request.display_name,
+    )
+    return _remote_skill_target(target)
+
+
+async def revoke_remote_skill_target(
+    request: RevokeRemoteSkillTargetRequest,
+    application: Annotated[ServerApplication, Depends(_require_application)],
+) -> RemoteSkillTarget:
+    target = await application.remote_skills.revoke_target(
+        request.scope_id,
+        request.target_id,
+        request.expected_generation,
+    )
+    return _remote_skill_target(target)
+
+
+async def publish_remote_skill(
+    request: PublishRemoteSkillRequest,
+    application: Annotated[ServerApplication, Depends(_require_application)],
+) -> RemoteSkillPublication:
+    publication = await application.remote_skills.publish(
+        request.scope_id,
+        request.target_id,
+        mapping.runtime_artifact_reference(request.artifact),
+        request.expected_generation,
+        allow_deprecated=request.allow_deprecated,
+    )
+    return _remote_skill_publication(publication)
+
+
+async def unpublish_remote_skill(
+    request: UnpublishRemoteSkillRequest,
+    application: Annotated[ServerApplication, Depends(_require_application)],
+) -> RemoteSkillPublication:
+    publication = await application.remote_skills.unpublish(
+        request.scope_id,
+        request.target_id,
+        request.artifact_id,
+        request.expected_generation,
+    )
+    return _remote_skill_publication(publication)
+
+
+async def reconcile_remote_skills(
+    request: ReconcileRemoteSkillsRequest,
+    http_request: Request,
+    application: Annotated[ServerApplication, Depends(_require_application)],
+) -> ReconcileRemoteSkillsResponse:
+    _require_secure_remote_transport(http_request)
+    credential = _target_credential(http_request)
+    observations = tuple(
+        DomainRemoteSkillObservation.model_validate(observation.model_dump(mode="json"))
+        for observation in request.observations
+    )
+    result = await application.remote_skills.reconcile(
+        credential,
+        observations,
+        request.receiver_version,
+        request.environment_fingerprint,
+    )
+    return ReconcileRemoteSkillsResponse(
+        scope_id=result.scope_id,
+        target_id=result.target_id,
+        actions=[RemoteSkillAction.model_validate(action.model_dump(mode="json")) for action in result.actions],
+    )
+
+
+async def download_remote_skill_package(
+    request: DownloadRemoteSkillPackageRequest,
+    http_request: Request,
+    application: Annotated[ServerApplication, Depends(_require_application)],
+) -> SkillPackageDownload:
+    _require_secure_remote_transport(http_request)
+    package = await application.remote_skills.download(
+        _target_credential(http_request),
+        request.generation,
+        mapping.runtime_artifact_reference(request.artifact),
+        SkillPackageRef.model_validate(request.package.model_dump(mode="json")),
+    )
+    return SkillPackageDownload(
+        package=package.reference.model_dump(mode="json"),
+        archive_base64=base64.b64encode(package.archive_bytes).decode("ascii"),
+    )
+
+
+async def record_remote_skill_receipt(
+    request: RecordRemoteSkillReceiptRequest,
+    http_request: Request,
+    application: Annotated[ServerApplication, Depends(_require_application)],
+) -> RemoteSkillReceiptResponse:
+    _require_secure_remote_transport(http_request)
+    try:
+        receipt = DomainRemoteSkillReceipt.model_validate(request.model_dump(mode="json"))
+    except ValueError as error:
+        raise InvalidRuntimeRequestError("remote-skill-receipt") from error
+    result = await application.remote_skills.receipt(_target_credential(http_request), receipt)
+    return RemoteSkillReceiptResponse(
+        accepted=result.accepted,
+        stale=result.stale,
+        publication=_remote_skill_publication(result.publication),
+    )
+
+
+def _remote_skill_target(target: RemoteAgentSkillTarget) -> RemoteSkillTarget:
+    return RemoteSkillTarget.model_validate({
+        "scope_id": target.scope_id,
+        "target_id": target.target_id,
+        "display_name": target.display_name,
+        "agent_kind": target.agent_kind,
+        "installation_scope": target.installation_scope,
+        "delivery_mode": target.delivery_mode,
+        "installation_id": target.installation_id,
+        "state": target.state.value,
+        "receiver_version": target.receiver_version,
+        "environment_fingerprint": target.environment_fingerprint,
+        "machine_hostname": target.machine_hostname,
+        "workspace_name": target.workspace_name,
+        "last_seen_at": None if target.last_seen_at is None else _aware_datetime(target.last_seen_at),
+        "generation": target.generation,
+    })
+
+
+def _remote_skill_target_status(status: DomainRemoteSkillTargetStatus) -> RemoteSkillTargetStatus:
+    return RemoteSkillTargetStatus(
+        target=_remote_skill_target(status.target),
+        publications=[_remote_skill_publication(publication) for publication in status.publications],
+    )
+
+
+def _remote_skill_publication(publication: SkillPublication) -> RemoteSkillPublication:
+    return RemoteSkillPublication.model_validate({
+        "scope_id": publication.scope_id,
+        "target_id": publication.target_id,
+        "artifact_id": publication.artifact_id,
+        "desired_state": publication.desired_state.value,
+        "desired_revision": publication.desired_revision,
+        "desired_tree_digest": publication.desired_tree_digest,
+        "observed_revision": publication.observed_revision,
+        "observed_tree_digest": publication.observed_tree_digest,
+        "observed_generation": publication.observed_generation,
+        "state": publication.state.value,
+        "last_error_code": publication.last_error_code,
+        "observed_at": None if publication.observed_at is None else _aware_datetime(publication.observed_at),
+        "generation": publication.generation,
+    })
+
+
+def _target_credential(request: Request) -> str:
+    authorization = request.headers.get("authorization")
+    if authorization is None:
+        raise RemoteTargetAuthenticationError("the target credential is missing")  # noqa: TRY003
+    scheme, separator, credential = authorization.partition(" ")
+    if not separator or scheme.casefold() != "bearer" or not credential:
+        raise RemoteTargetAuthenticationError("the target credential is invalid")  # noqa: TRY003
+    return credential
+
+
+def _require_secure_remote_transport(request: Request) -> None:
+    if request.url.scheme.casefold() == "https":
+        return
+    peer = request.client
+    if peer is not None and _loopback_peer(peer.host):
+        return
+    if request.app.state.allow_insecure_remote_http:
+        return
+    raise InvalidRuntimeRequestError("remote-skill-https")
+
+
+def _loopback_peer(host: str) -> bool:
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
+
+
+def _aware_datetime(value: datetime) -> datetime:
+    return value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC)
+
+
+def _skill_package_manifest(package: SkillPackageSnapshot) -> SkillPackageManifest:
+    return SkillPackageManifest(
+        package=package.reference.model_dump(mode="json"),
+        name=package.metadata.name,
+        description=package.metadata.description,
+        license=package.metadata.license,
+        compatibility=package.metadata.compatibility,
+        metadata=package.metadata.metadata,
+        allowed_tools=package.metadata.allowed_tools,
+        files=[
+            SkillPackageFile(
+                path=entry.path,
+                digest=entry.digest,
+                size=entry.size,
+                media_type=entry.media_type,
+                executable=bool(entry.mode & 0o111),
+            )
+            for entry in package.entries
+        ],
+    )
+
+
 async def publish_managed_skill(
     request: PublishManagedSkillRequest,
     http_request: Request,
@@ -2781,6 +3407,42 @@ def _exact_skill_access(
     return ((AccessAction.ARTIFACT_READ, _artifact_resource(payload, "artifact", family="skill")),)
 
 
+def _skill_identity_write_access(
+    payload: Mapping[str, Any],
+    _deployment_id: str,
+) -> tuple[tuple[AccessAction, ResourceRef], ...]:
+    return ((
+        AccessAction.ARTIFACT_WRITE,
+        ResourceRef.artifact(
+            _nested_request_value(payload, "scope_id"),
+            family="skill",
+            artifact_id=_nested_request_value(payload, "artifact_id"),
+        ),
+    ),)
+
+
+def _skill_usage_access(
+    payload: Mapping[str, Any],
+    _deployment_id: str,
+) -> tuple[tuple[AccessAction, ResourceRef], ...]:
+    scope_id = _nested_request_value(payload, "scope_id")
+    return (
+        (AccessAction.SCOPE_CONTRIBUTE, ResourceRef.scope(scope_id)),
+        (AccessAction.ARTIFACT_READ, _artifact_resource(payload, "skill_ref", family="skill")),
+    )
+
+
+def _publish_remote_skill_access(
+    payload: Mapping[str, Any],
+    _deployment_id: str,
+) -> tuple[tuple[AccessAction, ResourceRef], ...]:
+    scope_id = _nested_request_value(payload, "scope_id")
+    return (
+        (AccessAction.SCOPE_ADMIN, ResourceRef.scope(scope_id)),
+        (AccessAction.ARTIFACT_READ, _artifact_resource(payload, "artifact", family="skill")),
+    )
+
+
 def _continue_handoff_resolver(
     payload: Mapping[str, Any],
     _deployment_id: str,
@@ -2807,7 +3469,10 @@ _NAMED_ACCESS_RESOLVERS: dict[
     "exact_experience_access": _exact_experience_access,
     "exact_memory_access": _exact_memory_access,
     "exact_skill_access": _exact_skill_access,
+    "publish_remote_skill_access": _publish_remote_skill_access,
     "skill_candidate_write_access": _skill_candidate_write_access,
+    "skill_identity_write_access": _skill_identity_write_access,
+    "skill_usage_access": _skill_usage_access,
 }
 
 
@@ -2892,6 +3557,7 @@ def _sensitive_operation_error(error: Exception) -> bool:
             _SkillPublicationTargetNotFoundError,
             _SkillPublicationConflictError,
             _SkillPublicationFailedError,
+            RemoteSkillDistributionError,
         ),
     )
 
@@ -2990,6 +3656,42 @@ def _map_error(error: Exception) -> tuple[int, str, str, dict[str, Any] | None]:
     publication_error = _map_skill_publication_error(error)
     if publication_error is not None:
         return publication_error
+    service_error = _map_service_error(error)
+    return _map_domain_error(error) if service_error is None else service_error
+
+
+def _map_service_error(error: Exception) -> tuple[int, str, str, dict[str, Any] | None] | None:
+    if isinstance(error, _RuntimeNotReadyError):
+        return status.HTTP_503_SERVICE_UNAVAILABLE, "runtime_not_ready", "The Runtime is not ready.", None
+    external_skill_error = _map_external_skill_error(error)
+    if external_skill_error is not None:
+        return external_skill_error
+    remote_skill_error = _map_remote_skill_error(error)
+    if remote_skill_error is not None:
+        return remote_skill_error
+    if isinstance(error, GenerationCapabilityUnavailableError):
+        return (
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "generation_unavailable",
+            "Artifact generation is not configured.",
+            {"family": error.family},
+        )
+    governance_error = _map_governance_error(error)
+    if governance_error is not None:
+        return governance_error
+    candidate_error = _map_candidate_error(error)
+    if candidate_error is not None:
+        return candidate_error
+    availability_error = _map_availability_error(error)
+    if availability_error is not None:
+        return availability_error
+    report_error = _map_report_error(error)
+    if report_error is not None:
+        return report_error
+    return None
+
+
+def _map_external_skill_error(error: Exception) -> tuple[int, str, str, dict[str, Any] | None] | None:
     if isinstance(error, ExternalSkillRegistryUnavailableError):
         return (
             status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -3006,23 +3708,33 @@ def _map_error(error: Exception) -> tuple[int, str, str, dict[str, Any] | None]:
             "The exact external Skill snapshot is unavailable.",
             None,
         )
-    if isinstance(error, GenerationCapabilityUnavailableError):
-        return (
-            status.HTTP_503_SERVICE_UNAVAILABLE,
-            "generation_unavailable",
-            "Artifact generation is not configured.",
-            {"family": error.family},
-        )
-    candidate_error = _map_candidate_error(error)
-    if candidate_error is not None:
-        return candidate_error
-    availability_error = _map_availability_error(error)
-    if availability_error is not None:
-        return availability_error
-    report_error = _map_report_error(error)
-    if report_error is not None:
-        return report_error
-    return _map_domain_error(error)
+    return None
+
+
+def _map_remote_skill_error(error: Exception) -> tuple[int, str, str, dict[str, Any] | None] | None:
+    if isinstance(error, RemoteTargetAuthenticationError):
+        return status.HTTP_401_UNAUTHORIZED, error.code, "The target credential is invalid or revoked.", None
+    if isinstance(error, RemoteTargetEnrollmentError):
+        return status.HTTP_409_CONFLICT, error.code, "The enrollment cannot be completed.", None
+    if isinstance(error, RemotePublicationGenerationError):
+        return status.HTTP_409_CONFLICT, error.code, "The remote publication generation is stale.", None
+    if isinstance(error, RemoteSkillLifecycleError):
+        return status.HTTP_422_UNPROCESSABLE_CONTENT, error.code, "The Skill lifecycle rejects publication.", None
+    if isinstance(error, RemoteTargetStateError):
+        return status.HTTP_409_CONFLICT, error.code, "The remote target state rejects this operation.", None
+    if isinstance(error, RemoteSkillDistributionError):
+        return status.HTTP_422_UNPROCESSABLE_CONTENT, error.code, "The remote Skill request is invalid.", None
+    return None
+
+
+def _map_governance_error(error: Exception) -> tuple[int, str, str, dict[str, Any] | None] | None:
+    if isinstance(error, RepositoryNotFoundError):
+        return status.HTTP_404_NOT_FOUND, "not_found", "The requested value was not found.", None
+    if isinstance(error, StoredPayloadConflictError):
+        return status.HTTP_409_CONFLICT, "generation_conflict", "The requested state is stale.", None
+    if isinstance(error, InvalidArtifactLifecycleError):
+        return status.HTTP_422_UNPROCESSABLE_CONTENT, "invalid_lifecycle", str(error), None
+    return None
 
 
 def _map_skill_publication_error(error: Exception) -> tuple[int, str, str, dict[str, Any] | None] | None:
