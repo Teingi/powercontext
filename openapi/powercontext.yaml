@@ -565,6 +565,7 @@ paths:
     post:
       tags: [handoff]
       summary: Resolve a Handoff as untrusted historical input
+      description: Select an exact or latest business Revision through one logical Handoff grant and inspect the evidence declared by that Revision's immutable manifest.
       operationId: continue_handoff
       x-powercontext-access:
         resolver: continue_handoff_access
@@ -3042,6 +3043,7 @@ components:
     MemoryEntryAccessSelector:
       type: object
       additionalProperties: false
+      description: Logical Memory entry selector; the Binding covers the entry's existing and future versions.
       required: [type, entry_id]
       properties:
         type: {type: string, enum: [memory_entry]}
@@ -3049,6 +3051,7 @@ components:
     AccessArtifactIdentity:
       type: object
       additionalProperties: false
+      description: Logical Artifact identity; the Binding covers existing and future Revisions of the same Artifact.
       required: [family, artifact_id]
       properties:
         family: {type: string, minLength: 1, maxLength: 128, pattern: '^[\x21-\x7E]+$'}

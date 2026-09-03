@@ -294,7 +294,7 @@ def test_memory_search_declares_the_revision_conflict_response() -> None:
     assert SEARCH_MEMORY.responses[409] == {"$ref": "#/components/responses/Conflict"}
 
 
-def test_handoff_access_metadata_preserves_exact_revision_authorization() -> None:
+def test_handoff_access_metadata_resolves_business_revision_to_logical_authorization() -> None:
     assert CONTINUE_HANDOFF.access is not None
     assert CONTINUE_HANDOFF.access.action is None
     assert CONTINUE_HANDOFF.access.resolver == "continue_handoff_access"
@@ -314,6 +314,10 @@ def test_access_contract_uses_logical_resources_and_generic_skill_read_access() 
     assert set(artifact["properties"]) == {"type", "scope_id", "identity", "selector"}
     selector = schemas["MemoryEntryAccessSelector"]
     assert selector["required"] == ["type", "entry_id"]
+    assert set(selector["properties"]) == {"type", "entry_id"}
+    identity = schemas["AccessArtifactIdentity"]
+    assert identity["required"] == ["family", "artifact_id"]
+    assert set(identity["properties"]) == {"family", "artifact_id"}
     assert set(schemas["AccessDecision"]["properties"]) == {"allowed", "reason_code"}
     assert schemas["AccessBinding"]["properties"]["policy_revision"]["maxLength"] == 64
     assert schemas["AccessAuditEvent"]["properties"]["policy_revision"]["maxLength"] == 64

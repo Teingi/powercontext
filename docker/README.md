@@ -42,8 +42,7 @@ port is reachable, and its network namespace is the controlled boundary that opt
 it by default and the `docker run` above starts without extra configuration. Access is still governed by which ports
 you publish (`--publish`) and the surrounding network. For an exposed deployment, put the Server behind a
 TLS-terminating proxy and enable enforced Access Control with
-`POWERCONTEXT_SERVER_ACCESS_MODE=enforced`, `POWERCONTEXT_SERVER_AUTH_PROVIDER=static-bearer`,
-`POWERCONTEXT_SERVER_AUTHORIZATION_PROVIDER=builtin`, and `POWERCONTEXT_SERVER_AUTH_TOKEN=...`; in enforced mode the
+`POWERCONTEXT_SERVER_ACCESS_MODE=enforced` and `POWERCONTEXT_SERVER_AUTH_TOKEN=...`; in enforced mode the
 opt-in is no longer required.
 
 The `Build Docker image` GitHub workflow builds downloadable Linux amd64 and arm64 image archives for pull requests,

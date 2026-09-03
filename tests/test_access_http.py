@@ -22,6 +22,8 @@ from typing import Self
 
 import httpx
 import pytest
+from fastapi.testclient import TestClient
+from pydantic import SecretStr
 from starlette.middleware import Middleware
 
 from powercontext.artifacts import ArtifactRef
@@ -52,7 +54,7 @@ from powercontext.server.authz import (
 from powercontext.server.authz.repository import ACCESS_TABLES, RelationalAccessRepository
 from powercontext.server.factory import create_server_app
 from powercontext.server.middleware import AuthenticationMiddleware
-from powercontext.server.settings import AccessControlConfig, AuthenticationConfig, ServerSettings
+from powercontext.server.settings import AccessControlConfig, BearerAuthConfig, ServerSettings
 from powercontext.server.web import mount_web_ui
 
 ADMIN = PrincipalRef(type="service", id="admin", description="deployment administrator")
@@ -80,25 +82,62 @@ class _ActingAuthenticationProvider:
 
 
 def test_enforced_mode_cannot_silently_start_without_authentication_or_provider() -> None:
-    with pytest.raises(ValueError, match="requires authentication and authorization Providers"):
-        ServerSettings(access=AccessControlConfig(mode="enforced"))
+    with pytest.raises(ValueError, match="injected Authentication Provider or legacy AUTH_TOKEN"):
+        create_server_app(settings=ServerSettings(access=AccessControlConfig(mode="enforced")))
 
-    with pytest.raises(ValueError, match="selected Authentication Provider"):
-        create_server_app(
-            settings=ServerSettings(
-                access=AccessControlConfig(mode="enforced"),
-                auth=AuthenticationConfig(provider="oidc"),
-                authorization_provider="builtin",
-            )
-        )
-
-    with pytest.raises(ValueError, match="BACKGROUND_PRINCIPAL_ID"):
-        ServerSettings(
+    scheduled = create_server_app(
+        settings=ServerSettings(
             access=AccessControlConfig(mode="enforced"),
-            auth=AuthenticationConfig(provider="oidc"),
-            authorization_provider="builtin",
             runtime=RuntimeConfig(schedule_seconds=60),
+        ),
+        authentication_provider=_ActingAuthenticationProvider(),
+    )
+    with pytest.raises(ValueError, match="BACKGROUND_PRINCIPAL_ID"), TestClient(scheduled):
+        pass
+
+
+def test_enforced_mode_uses_injected_authentication_and_builtin_access(tmp_path: Path) -> None:
+    app = create_server_app(
+        settings=ServerSettings(
+            access=AccessControlConfig(mode="enforced"),
+            database=SQLiteConfig(url=f"sqlite+aiosqlite:///{tmp_path / 'injected-auth.db'}"),
+        ),
+        authentication_provider=_ActingAuthenticationProvider(),
+    )
+
+    with TestClient(app) as client:
+        principal = client.get("/v1/access/me")
+        protected = client.get("/v1/capabilities")
+
+    assert principal.status_code == 200
+    assert principal.json()["principal"]["id"] == "bob"
+    assert principal.json()["mode"] == "enforced"
+    assert protected.status_code == 403
+
+
+def test_injected_authentication_takes_precedence_over_legacy_token(tmp_path: Path) -> None:
+    app = create_server_app(
+        settings=ServerSettings(
+            access=AccessControlConfig(mode="enforced"),
+            auth=BearerAuthConfig(token=SecretStr("legacy-server-secret")),
+            database=SQLiteConfig(url=f"sqlite+aiosqlite:///{tmp_path / 'injected-precedence.db'}"),
+        ),
+        authentication_provider=_ActingAuthenticationProvider(),
+    )
+
+    with TestClient(app) as client:
+        principal = client.get(
+            "/v1/access/me",
+            headers={"Authorization": "Bearer legacy-server-secret"},
         )
+        protected = client.get(
+            "/v1/capabilities",
+            headers={"Authorization": "Bearer legacy-server-secret"},
+        )
+
+    assert principal.status_code == 200
+    assert principal.json()["principal"]["id"] == "bob"
+    assert protected.status_code == 403
 
 
 def test_low_level_enforced_app_fails_closed_without_an_authorization_provider() -> None:

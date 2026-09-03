@@ -44,7 +44,8 @@ The first version defines three stable Resource Kinds:
 
 - `server`: the current PowerContext deployment;
 - `scope`: one exact Workstream scope;
-- `artifact`: an exact Artifact Revision or Family-owned selector interpreted by an Artifact Family Access Profile.
+- `artifact`: one logical Artifact identity or Family-owned logical selector interpreted by an Artifact Family Access
+  Profile.
 
 The `artifact` Resource Kind initially registers Artifact Family Access Profiles for `handoff`, `memory`,
 `experience`, `skill`, and `prompt`. `ArtifactReference.family` is the only Profile discriminator. A client does not
@@ -53,13 +54,13 @@ submit a second content type that could conflict with it.
 User A can collaborate in two ways:
 
 - grant a Workstream role to a long-term collaborator; or
-- grant B access to one exact persisted or approved resource.
+- grant B access to one logical persisted or approved resource.
 
-The second option is the least-privilege path in the first version. B may read the shared exact resource and perform
-only the actions defined by its Artifact Family Access Profile. An exact Handoff receiver may inspect the evidence
-explicitly cited by that Handoff through its resolver and leave a Receipt for the same Revision. An exact Memory,
-Artifact, or Prompt grant does
-not open the rest of the scope, the current head, later Revisions, search results, or resources referenced by lineage.
+The second option is the least-privilege path in the first version. B may read existing and future versions of the
+shared logical resource and perform only the actions defined by its Artifact Family Access Profile. A Handoff receiver
+may inspect the evidence explicitly cited by the selected Revision through its resolver and leave a Receipt for that
+Revision. A logical Memory, Artifact, or Prompt grant does not open the rest of the scope, aggregate search or list
+results, another logical resource, or resources referenced by lineage.
 Reading a Skill, publishing it to a target, and allowing a host to load or execute it are separate authorization
 boundaries. An `accepted` Receipt, Artifact approval, Prompt read, or Skill publication never grants tools, network,
 filesystem, model Provider, or credential access.
@@ -79,12 +80,12 @@ operation. The Server cannot express that:
 - A administers a Workstream while B can see only one transfer;
 - B may acknowledge a transfer but may not publish another milestone;
 - a team member may view a Handoff Report but may not approve an Experience or Skill;
-- B may read one shared Memory Entry Version but may not search the scope or follow later versions;
-- B may read an approved Experience or managed Skill Revision but may not review a Candidate;
-- B may use one exact Prompt but may not silently promote it to a host system or developer instruction;
-- a publisher may publish one exact managed Skill but cannot thereby modify its source Revision or gain host execution
+- B may read the versions of one shared Memory Entry but may not search the scope or read another entry;
+- B may read Revisions of one approved Experience or managed Skill but may not review a Candidate;
+- B may use one logical Prompt but may not silently promote it to a host system or developer instruction;
+- a publisher may publish a selected managed Skill Revision but cannot thereby modify its source or gain host execution
   authority;
-- a revoked receiver may not read later Revisions;
+- an active Handoff Binding covers later Revisions, while a revoked receiver may not read any Revision afterward;
 - HTTP, MCP, and the Dashboard make the same decision for the same Principal.
 
 RFC 0048 requires a receiver to be able to read the Handoff's scope and evidence. Adding B to the complete scope meets
@@ -108,21 +109,22 @@ A Handoff answers “where is the work?” An Access Binding answers “who may 
 different lifecycles:
 
 ```text
-Prepared Handoff -> Commit -> immutable Handoff Revision
+Prepared Handoff -> Commit -> logical Handoff -> immutable Revisions
                                   |
                                   +-> Access Binding for user B
                                            |
-                                  read / inspect / acknowledge
+                              read any Revision / inspect / acknowledge
                                            |
                                     expire or revoke
 ```
 
-Committing a new Handoff does not share it automatically. Sharing does not change the Handoff content or Revision.
-Revoking a Binding does not delete the Handoff, Receipt, or audit events.
+The first commit does not share a Handoff automatically. Once a logical Handoff Binding exists, later immutable
+Revisions of that same Handoff are covered without replacing the Binding. Sharing does not change Handoff content or
+Revision. Revoking a Binding does not delete the Handoff, Receipt, or audit events.
 
 ## One Access Plane with Artifact Family-driven Profiles
 
-The Access Control core answers only whether the current Principal may perform an action on an exact resource. A
+The Access Control core answers only whether the current Principal may perform an action on a logical resource. A
 Resource Kind defines the shape of an authorization object. An Artifact Family Access Profile defines the
 authorization semantics for one kind of content:
 
@@ -142,17 +144,17 @@ Each Artifact Family Access Profile must define:
 
 | Family profile contract | Required definition |
 | --- | --- |
-| share unit | Whether the grant covers an exact Revision or a Family-owned exact selector |
+| share unit | Which logical identity or Family-owned logical selector the grant covers across versions |
 | shareable state | Which lifecycle states, such as committed, approved, or retained, allow Binding creation |
 | parent | How scope- or server-level roles imply child-resource actions in one direction |
 | actions | Stable actions for reading, using, acknowledging, publishing, and administration |
 | grantable roles | Fixed roles that may bind to the resource and who may create those Bindings |
 | resolution | Operations that can resolve the resource from a validated request and what they may not read first |
-| listing | How an exact grant is discovered and which aggregate lists still require scope or server authority |
+| listing | How a logical grant is discovered and which aggregate lists still require scope or server authority |
 | transitivity | Whether reading the resource also reads lineage, citations, or other related resources |
 
 All Families reuse the same `/v1/access/*` API. They do not add parallel authorization endpoints such as
-`/memory/share`, `/experience/share`, `/skill/share`, or `/prompt/share`. A new exact-read Family that reuses
+`/memory/share`, `/experience/share`, `/skill/share`, or `/prompt/share`. A new logical-resource Family that reuses
 `artifact.read` does not require another ResourceRef variant, but it must be registered explicitly. A Family that
 introduces a semantic action, selector, or role must update OpenAPI, the fixed action and role vocabulary, Server-owned
 resolvers, Provider conformance vectors, and generated transport artifacts together. Unknown Families are not
@@ -161,18 +163,18 @@ shareable by default.
 Resource visibility, context selection, and external execution authority are separate planes:
 
 ```text
-Access Plane:      Which exact resource the Principal may read or use
+Access Plane:      Which logical resource the Principal may read or use across versions
 Context Plane:     Which authorized content enters bounded PreparedContext after explicit selection
 Execution Plane:   Whether a host installs, loads, or executes a Skill or Prompt and which tools it may use
 ```
 
-An allow decision does not propagate across planes. An exact Memory, Artifact, or Prompt grant does not place content
+An allow decision does not propagate across planes. A logical Memory, Artifact, or Prompt grant does not place content
 in normal scope recall automatically. A receiver first discovers it in a “Shared with me” view, then explicitly reads
 it, attaches it to the current task, or forks it into a scope where the receiver may contribute. Shared content remains
 `untrusted_history` or untrusted instruction; Context builders and hosts still enforce their own budgets, precedence,
 approval, and sandbox policy.
 
-## A transfers one exact Handoff to B
+## A transfers one logical Handoff to B
 
 Assume A administers the `project:payments` Workstream and has prepared a transfer. The normal flow is:
 
@@ -189,12 +191,12 @@ Assume A administers the `project:payments` Workstream and has prepared a transf
 2. A explicitly selects B. The Dashboard or integration resolves B through the deployment's identity directory to a
    trusted canonical Principal. Model output, a display name, or email text cannot replace this resolution.
 3. The Server checks whether A has `scope.delegate` on `project:payments`.
-4. The Server creates an Access Binding with the `handoff.receiver` role for that exact Revision and optionally sets an
-   expiration time.
-5. B signs in using B's own credential. `resources/list` returns exact Handoffs B may read. B never receives A's token
+4. The Server validates that the selected Revision belongs to a committed Handoff, then creates an Access Binding with
+   the `handoff.receiver` role for that logical Handoff and optionally sets an expiration time.
+5. B signs in using B's own credential. `resources/list` returns logical Handoffs B may read. B never receives A's token
    or a new bearer share link.
-6. B calls Continue with an exact selection. The Server reads the same Revision and resolves only the evidence it
-   explicitly cites.
+6. B calls Continue with an exact or latest selection. The Server reads the selected Revision and resolves only the
+   evidence it explicitly cites. Existing and future Revisions of the same logical Handoff use the same Binding.
 7. After checking the live workspace, capability, and authorization state, B may leave an `accepted`,
    `needs_clarification`, or `declined` Receipt for the same Revision.
 
@@ -210,11 +212,11 @@ An example Binding creation request is:
   "resource": {
     "type": "artifact",
     "scope_id": "project:payments",
-    "reference": {
+    "identity": {
       "family": "handoff",
-      "artifact_id": "project:payments",
-      "revision": 12
-    }
+      "artifact_id": "project:payments"
+    },
+    "selector": null
   },
   "role": "handoff.receiver",
   "expires_at": "2026-09-06T12:00:00Z",
@@ -227,49 +229,50 @@ The Server supplies `granted_by`, creation time, and policy revision. The caller
 
 ## What B can see
 
-`handoff.receiver` is an exact-resource role, not a scope role:
+`handoff.receiver` is a logical-resource role, not a scope role:
 
 | Operation | Result | Reason |
 | --- | --- | --- |
-| Read Handoff Revision 12 | Allowed | The Binding identifies this exact Revision |
-| Inspect the citations of Revision 12 through Continue | Allowed | `handoff.evidence.read` covers only this Revision's citation manifest |
-| Acknowledge Revision 12 | Allowed | A receiver may leave a Receipt for the exact Handoff it inspected |
-| Request `latest` | Denied | Latest may be a later Revision that was never granted to B |
-| Read Revision 11 or 13 | Denied | An exact Binding does not inherit to adjacent Revisions |
+| Read Handoff Revision 12 | Allowed | The Binding identifies the logical Handoff |
+| Inspect the citations of Revision 12 through Continue | Allowed | `handoff.evidence.inspect` covers only the selected Revision's immutable citation manifest |
+| Acknowledge Revision 12 | Allowed | A receiver may leave a Receipt for the selected Handoff Revision it inspected |
+| Request `latest` | Allowed | Latest resolves within the same bound logical Handoff |
+| Read Revision 11 or 13 | Allowed when present | Historical and future Revisions of the same logical Handoff share one Access identity |
 | Open the aggregate Handoff Report | Denied | The Report contains scope-level history and statistics |
 | Search scope Memory or list Sources | Denied | A Handoff Binding does not grant general scope read |
 | Commit a Handoff or record a Task Outcome | Denied | Those operations require `scope.contribute` |
 | Approve a Candidate | Denied | Approval requires independent `scope.review` authority |
 
 Least-privilege evidence access does not copy each Source or Memory item, and it does not require an external PDP to
-store every citation. The Server first builds the exact Handoff `ArtifactResourceRef` from the validated request and
-checks both `artifact.read` and `handoff.evidence.read` for B. Only when both decisions allow access may it read the
+store every citation. The Server first builds the logical Handoff `ArtifactResourceRef` from the validated request and
+checks both `artifact.read` and `handoff.evidence.inspect` for B. Only when both decisions allow access may it select an
 immutable Handoff Revision, obtain its citation manifest, and dereference exact citations in that manifest through the
-Handoff resolver. B cannot reuse that permission by placing an arbitrary Source ID in a general read API.
+Handoff resolver. The manifest is the bounded transitive authorization edge: B cannot reuse it by placing an arbitrary
+Source, Memory, or Artifact identifier in a general read API.
 
-If a citation has been deleted, retired, corrupted, or denied by a higher-order policy, Continue marks the
-corresponding evidence unavailable. A Handoff Binding does not override retention, legal hold, data classification, or
-an explicit deny policy.
+If a citation has been deleted, retired, corrupted, or cannot be resolved, Continue marks the corresponding evidence
+unavailable. A Handoff Binding does not override retention, legal hold, or data classification policy.
 
 ## Sharing other Artifact Families
 
-Other Artifact Families use the same exact-share flow without inheriting Handoff evidence or Receipt semantics:
+Other Artifact Families use the same logical-share flow without inheriting Handoff evidence or Receipt semantics:
 
-1. A selects an exact persisted resource that can be authorized. Memory uses a complete `MemoryCitation`; Experience,
-   managed Skill, and Prompt use an `ArtifactReference` with a positive integer Revision.
+1. A selects a persisted version to identify a resource that can be authorized. The Server normalizes Memory to its
+   logical `entry_id` selector and other Artifacts to `{family, artifact_id}`; Revision fields do not enter the Binding.
 2. The Server checks whether A may create the relevant Binding in the resource's scope, then verifies that the resource
    exists and is in a shareable state.
-3. B discovers the exact resource through `access/resources/list` and reads or explicitly uses it as B's own Principal.
+3. B discovers the logical resource through `access/resources/list` and reads existing or future versions, or
+   explicitly uses it, as B's own Principal.
 4. To modify or maintain the content, B explicitly forks or proposes a Candidate in a scope where B has
    `scope.contribute`. The original resource and Binding do not change.
 
-First-version exact grants behave as follows:
+First-version logical grants behave as follows:
 
 | Family role | Allows | Does not allow |
 | --- | --- | --- |
-| `artifact.viewer` on a `family=memory` selector | Exact get of one `entry_version_id` | Search, list, changes, current head, revise, retire, or another entry/version |
-| `artifact.viewer` | Exact get of one approved Experience or managed Skill Revision | Candidate read/review, later Revisions, publication, or lineage bodies |
-| `artifact.viewer` on `family=prompt` | Exact get of one approved Prompt Revision | Render/use, later Revisions, or automatic injection |
+| `artifact.viewer` on a `family=memory` selector | Exact get of any version of one `entry_id` | Search, list, changes, revise, retire, or another entry |
+| `artifact.viewer` | Exact get of any approved Revision of one Experience or managed Skill identity | Candidate read/review, publication, another Artifact, or lineage bodies |
+| `artifact.viewer` on `family=prompt` | Exact get of any approved Revision of one Prompt identity | Render/use, another Prompt, or automatic injection |
 | `prompt.user` | `artifact.viewer` plus explicit render/use | Changing instruction priority, enabling tools, or reading credentials |
 
 Ordinary user input remains Source evidence; the word “prompt” in its content does not make it a Prompt Artifact. A later
@@ -279,15 +282,17 @@ Experience or Skill generation, and Handoff generation are Server implementation
 apply a capability, how to perform it, and how to validate it should be a managed Skill rather than a duplicate Prompt
 Artifact.
 
-An exact resource response may return lineage or citation identities defined by its schema, but the grant does not
-propagate to those referenced resources. A general Source, Memory, or Artifact get still requires an independent
-decision for the target. A Provider must not create `can_read` inheritance merely because “A references B.”
+Except for Handoff's manifest-scoped evidence resolver, a logical resource response may return lineage or citation
+identities defined by its schema, but the grant does not propagate to those referenced resources. A general Source,
+Memory, or Artifact get still requires an independent decision for the target. A Provider must not create `can_read`
+inheritance merely because “A references B.”
 
-## Sharing is a read-only snapshot, not collaborative editing
+## Sharing is read-only access to one evolving identity, not collaborative editing
 
-An exact-resource Binding grants only read, explicit use, or a controlled publication operation to a Server-configured
-target. It does not transfer content authority over the original resource. The Binding itself cannot authorize the
-receiver to revise, retire, replace, commit a later Revision, or overwrite the shared content in place. If the receiver
+An Artifact Binding grants only read, explicit use, or a controlled publication operation to a Server-configured
+target. It does not transfer content authority over the original resource. A later Revision created by an authorized
+owner becomes visible through the logical Binding, but the Binding itself cannot authorize the receiver to revise,
+retire, replace, commit a later Revision, or overwrite the shared content in place. If the receiver
 separately has `scope.contribute` or stronger authority in the original scope, that write authority comes from the
 independent scope role, not from the share.
 
@@ -301,7 +306,7 @@ State produced by the receiver remains separate from the shared original:
 | Fork, import, or copy | Requires `scope.contribute` on the destination scope; creates a new identity or Candidate with lineage to the original |
 
 Product surfaces should offer actions such as “View,” “Use,” “Acknowledge,” “Request changes,” “Copy to my scope,” or
-“Publish to configured target.” They should not present an exact share as “Edit shared content.” Ongoing co-maintenance
+“Publish to configured target.” They should not present a logical share as “Edit shared content.” Ongoing co-maintenance
 requires a separate scope role. For an Artifact Family with Review, a contributor still creates a Candidate and uses
 the Review lifecycle to produce a new Revision instead of editing an approved Revision in place. Revocation prevents
 later access, but it cannot erase content already seen by the receiver or automatically revoke a Receipt, projection,
@@ -313,22 +318,22 @@ Reading Skill content and publishing it to a configured host-local Agent target 
 publication request accepts only an exact managed Skill `ArtifactReference` and an opaque Server-configured
 `target_id`. It does not accept a destination path, Agent home, SSH credential, or arbitrary filesystem locator.
 Before it reads the Skill body, resolves `target_id`, inspects target host state, or writes a projection, the Server
-must obtain both allow decisions on the same exact Skill Artifact:
+must allow `artifact.read` on the logical Skill identity:
 
 ```text
-artifact.read AND skill.publish on exact family=skill Artifact
+artifact.read on logical family=skill Artifact
 ```
 
-`skill.publisher` binds only to one exact managed Skill Revision and grants both actions. `target_id` is an opaque
-operation parameter configured by `server.admin`, not a `ResourceRef`, Access Binding, or authorization resource in
+The business request still selects one exact managed Skill Revision, but the Access Resource contains no Revision.
+`target_id` is an opaque operation parameter configured by `server.admin`, not a `ResourceRef`, Access Binding, or authorization resource in
 `/access/resources/list`. Only after authorization may the Server confirm that `target_id` is registered and resolve it
 to host-local Agent projection configuration. An unknown or disabled target rejects publication. Host IDs,
 destination paths, Agent homes, credential references, and locators do not enter the request, Binding, ordinary audit,
 or public errors.
 
 An ordinary publisher selects a target through `POST /v1/skills/publication-targets/list`. The request contains the
-`scope_id` and exact Skill `ArtifactReference`, and the Server reuses the two requirements above. It reads the Skill
-Repository and target registry only after every decision allows access. The response lists only enabled targets and
+`scope_id` and exact Skill `ArtifactReference`, and the Server resolves that request to the logical identity before the
+authorization check. It reads the Skill Repository and target registry only after the decision allows access. The response lists only enabled targets and
 their opaque `target_id`, Agent kind, installation scope, and safe capabilities. It does not return desired or applied
 state, host paths, Agent homes, credential references, or underlying errors. This operation belongs to the Skill
 publication domain contract; it is not Access Resource listing and creates no target Binding.
@@ -354,8 +359,8 @@ publication domain contract; it is not Access Resource listing and creates no ta
 }
 ```
 
-The first version does not support per-target delegation. A Principal with `skill.publisher` on an exact Skill may
-publish that Revision to any enabled configured target in the current deployment. Only `server.admin` may configure,
+The first version does not support per-target delegation. A Principal with `artifact.read` on a logical Skill may
+publish any selected Revision of it to any enabled configured target in the current deployment. Only `server.admin` may configure,
 change, or remove targets. Target status is operational information protected by `server.observe` or `server.admin`.
 If the product must express “B may publish to X but not Y,” a separate distribution RFC introduces a generic
 `execution_target` Resource instead of mixing a Skill-specific target into the Artifact sharing model.
@@ -373,7 +378,7 @@ must separately grant `scope.contributor`:
 
 ```text
 handoff.receiver
-  = read one exact Handoff + inspect its citations + acknowledge it
+  = read one logical Handoff across Revisions + inspect selected manifest citations + acknowledge a selected Revision
 
 scope.contributor
   = read the Workstream + contribute Sources + prepare/commit Handoffs
@@ -393,11 +398,11 @@ A stable team can receive scope roles instead of a new Binding for each Revision
 - `scope.contributor` writes work evidence, Memory contributions, Handoffs, and Outcomes and proposes Artifact or Prompt
   Candidates in addition to viewer access;
 - `scope.reviewer` reviews Artifact Candidates in addition to viewer access;
-- `scope.delegator` shares exact Handoffs with receivers in addition to viewer access;
+- `scope.delegator` shares logical Handoffs with receivers in addition to viewer access;
 - `scope.admin` administers all roles and policies for the scope.
 
 `scope.delegate` continues to authorize only viewer or receiver Bindings for `family=handoff` Artifacts in this RFC. In
-the first version, only `scope.admin` may create exact Bindings for other Artifact Families. An existing Handoff
+the first version, only `scope.admin` may create logical Bindings for other Artifact Families. An existing Handoff
 delegator does not silently gain a wider sharing boundary. A later resource-specific delegation action is an explicit
 wire-contract change. `server.admin` manages publication targets through deployment configuration; targets do not
 receive Access Bindings.
@@ -407,7 +412,7 @@ map organization roles, teams, or relationships to these actions.
 
 ## Revocation and expiration
 
-A, the applicable grant administrator, or a scope administrator can revoke an exact Artifact Binding within its
+A, the applicable grant administrator, or a scope administrator can revoke a logical Artifact Binding within its
 administration boundary. For a Handoff, after revocation:
 
 - B's later read, Continue, and acknowledge requests return 403;
@@ -443,10 +448,10 @@ This RFC aims to:
 
 - establish one Server PEP in front of HTTP, MCP, and the Dashboard;
 - establish a Principal from a credential without allowing the request to override it;
-- support scope-level RBAC and exact Handoff receiver Bindings;
-- define stable Resource Kinds and an Artifact Family Access Profile contract, with exact authorization for Handoff,
+- support scope-level RBAC and logical Handoff receiver Bindings;
+- define stable Resource Kinds and an Artifact Family Access Profile contract, with logical authorization for Handoff,
   Memory, Experience, Skill, and Prompt resources;
-- resolve evidence cited by an exact Handoff safely without opening the complete scope;
+- resolve evidence cited by a selected Revision of an authorized Handoff safely without opening the complete scope;
 - separate resource reads, context selection, Skill publication, and host execution authority;
 - provide a replaceable decision interface and an optional relationship mutation interface;
 - provide APIs for self-checks, resource discovery, Binding administration, and audit;
@@ -462,8 +467,8 @@ This RFC does not define:
 - redaction, cross-organization export, legal hold, or retention policy;
 - approval workflows, temporary elevation, or an Agent requesting more authority automatically;
 - PowerContext as a general-purpose IAM product;
-- multi-writer collaborative editing of an exact shared resource or ownership transfer through a Binding;
-- dynamic subscription sharing for Memory collections, Artifact catalogs, or resources that follow `latest`;
+- multi-writer collaborative editing of a shared logical resource or ownership transfer through a Binding;
+- dynamic subscription sharing for Memory collections or Artifact catalogs whose membership changes over time;
 - the Prompt Artifact content schema, variable language, Review lifecycle, or host instruction-precedence policy;
 - per-target publication delegation or a general `execution_target` Resource;
 - remote managed Skill projection or a Receiver distribution contract; or
@@ -481,22 +486,24 @@ An implementation must preserve these invariants:
    action.
 5. `is_internal_bridge()` may skip repeated transport authentication but never authorization.
 6. Every protected operation receives a decision before it accesses a Repository or application service.
-7. An exact Handoff grant does not allow `latest` and does not cover other Revisions of the same Artifact.
+7. A logical Handoff grant allows exact and latest selection for existing and future Revisions of the same Artifact,
+   but no other Handoff or parent-scope collection.
 8. An `accepted` Receipt does not create, update, or inherit an Access Binding.
 9. A model may suggest a receiver or explain a denial, but it cannot choose a canonical Principal or invoke an
    allow-all fallback.
-10. An exact Memory Entry grant consists of an exact `family=memory` `ArtifactReference` and a complete `memory_entry`
-    selector. Every other exact Artifact grant contains a positive integer Revision; none allows `latest` or inherits
-    to later Revisions. The Server derives the Access Profile only from `ArtifactReference.family`; it rejects an
-    independent content profile, an unknown Family, or a selector mismatch.
+10. A Memory Entry grant consists of the logical `family=memory` Artifact identity and a `memory_entry` selector that
+    contains only `entry_id`. Every other Artifact grant contains only `{family, artifact_id}`. A business request may
+    select a positive integer Revision or version, but those fields never enter the Access Resource or Binding. The
+    Server derives the Access Profile only from `identity.family`; it rejects an independent content profile, an
+    unknown Family, or a selector mismatch.
 11. Reading Memory, Artifact, or Prompt content does not grant its lineage or citation targets and does not place it in
     PreparedContext automatically.
-12. An exact-resource Binding does not grant revise, retire, replace, commit-next-Revision, or any other mutation of
+12. A logical-resource Binding does not grant revise, retire, replace, commit-next-Revision, or any other mutation of
     shared content. Receipts, feedback, projections, and forks are separate resources or operations that require
     independent authorization and do not modify the original resource identity, content, or Revision.
-13. `prompt.use` does not change host instruction precedence. `skill.publish` does not authorize host loading,
+13. `prompt.use` does not change host instruction precedence. Skill publication does not authorize host loading,
     execution, tools, networks, filesystems, or secrets.
-14. Skill publication requires both `artifact.read` and `skill.publish` on the exact `family=skill` Artifact before
+14. Skill publication requires `artifact.read` on the logical `family=skill` Artifact before
     resolving `target_id` or performing any host or filesystem inspection. `target_id` is not an authorization
     resource, and the first version resolves only configured host-local targets.
 15. Public errors, logs, metrics, and traces do not contain credentials, Handoff, Memory, Artifact, or Prompt content,
@@ -539,7 +546,7 @@ contain `:`, `/`, or user data into policy strings:
 | --- | --- | --- |
 | `server` | Deployment identifier | None |
 | `scope` | Exact `scope_id` | Server |
-| `artifact` | Exact `ArtifactReference`, optional Family-owned selector, and `scope_id` | Scope |
+| `artifact` | Logical `{family, artifact_id}`, optional Family-owned logical selector, and `scope_id` | Scope |
 
 `ResourceRef` is an OpenAPI discriminated union. Each variant uses `additionalProperties: false` and accepts only these
 fields:
@@ -548,36 +555,36 @@ fields:
 | --- | --- |
 | `server` | `deployment_id` |
 | `scope` | `scope_id` |
-| `artifact` | `scope_id`, `reference`, and optional `selector` |
+| `artifact` | `scope_id`, `identity`, and optional `selector` |
 
-An ordinary Artifact Revision has no selector:
+An ordinary logical Artifact has no selector or Revision:
 
 ```json
 {
   "type": "artifact",
   "scope_id": "project:payments",
-  "reference": {"family": "experience", "artifact_id": "exp-retry-budget", "revision": 3}
+  "identity": {"family": "experience", "artifact_id": "exp-retry-budget"},
+  "selector": null
 }
 ```
 
-Memory Entry uses an exact selector owned by the `memory` Family. The combination of `reference` and `selector` is a
-complete `MemoryCitation`:
+Memory Entry uses a logical selector owned by the `memory` Family. `entry_version_id` and the backing Memory Artifact
+Revision remain in business citations, not in Access Resources:
 
 ```json
 {
   "type": "artifact",
   "scope_id": "project:payments",
-  "reference": {"family": "memory", "artifact_id": "memory", "revision": 18},
+  "identity": {"family": "memory", "artifact_id": "memory"},
   "selector": {
     "type": "memory_entry",
-    "entry_id": "retry-policy",
-    "entry_version_id": "01K..."
+    "entry_id": "retry-policy"
   }
 }
 ```
 
-`ArtifactResourceRef.reference.family` is the only Artifact Family Access Profile discriminator. A request contains no
-separate `profile` field. The Server derives the Profile from the validated exact `ArtifactReference`, avoiding
+`ArtifactResourceRef.identity.family` is the only Artifact Family Access Profile discriminator. A request contains no
+separate `profile` field. The Server derives the Profile from the validated logical identity, avoiding
 conflicts such as `profile=prompt` with `family=skill`. Each Family declares its selector required, forbidden, or one
 specific discriminated-union variant. The first version requires a `memory_entry` selector for `memory` and forbids a
 selector for `handoff`, `experience`, `skill`, and `prompt`.
@@ -588,34 +595,34 @@ contains at least:
 | Field | Requirement |
 | --- | --- |
 | `family` | Stable name that exactly matches `ArtifactReference.family` |
-| `share_unit` | `revision` or one explicit Family-owned selector type |
+| `share_unit` | `artifact` or one explicit Family-owned logical selector type |
 | `shareable_states` | Lifecycle states in which a Binding may be created |
 | `base_action` | `artifact.read` in the first version |
 | `additional_actions` | Family-specific use, acknowledge, or publish actions |
-| `grantable_roles` | Fixed exact roles compatible with the Family |
+| `grantable_roles` | Fixed logical-resource roles compatible with the Family |
 | `parent_implications` | Child actions implied by scope roles in one direction |
 | `transitivity` | Whether lineage, citations, or other related resources need separate decisions; the default is none |
-| `resolver` | How to resolve the exact resource after authorization and which safe identity to return |
+| `resolver` | How to resolve a selected business version after logical authorization and which safe identity to return |
 
 The first-version registry is:
 
-| Artifact Family | Share unit | Shareable state | Exact actions | Grantable exact roles |
+| Artifact Family | Share unit | Shareable state | Actions | Grantable resource roles |
 | --- | --- | --- | --- | --- |
-| `handoff` | Revision | committed | `artifact.read`, `handoff.evidence.read`, `handoff.acknowledge` | `handoff.viewer`, `handoff.receiver` |
-| `memory` | `memory_entry` selector | active in the referenced Revision | `artifact.read` | `artifact.viewer` |
-| `experience` | Revision | approved | `artifact.read` | `artifact.viewer` |
-| `skill` | Revision | approved | `artifact.read`, `skill.publish` | `artifact.viewer`, `skill.publisher` |
-| `prompt` | Revision | approved | `artifact.read`, `prompt.use` | `artifact.viewer`, `prompt.user` |
+| `handoff` | logical Artifact | at least one committed Revision | `artifact.read`, `handoff.evidence.inspect`, `handoff.acknowledge` | `handoff.viewer`, `handoff.receiver` |
+| `memory` | logical `memory_entry` selector | entry exists | `artifact.read` | `artifact.viewer` |
+| `experience` | logical Artifact | at least one approved Revision | `artifact.read` | `artifact.viewer` |
+| `skill` | logical Artifact | at least one approved Revision | `artifact.read` | `artifact.viewer` |
+| `prompt` | logical Artifact | at least one approved Revision | `artifact.read`, `prompt.use` | `artifact.viewer`, `prompt.user` |
 
-A Prepared Handoff has no persistent identity and cannot receive an exact Access Binding. A least-privilege cross-user
+A Prepared Handoff has no persistent identity and cannot receive an Access Binding. A least-privilege cross-user
 transfer must be committed first. A pending or rejected Candidate likewise cannot receive an Artifact Binding. Even a
 new Family that reuses only `artifact.read` must be registered explicitly as shareable. Unknown, disabled, or
-selector-incompatible Families are denied by default. `revision=latest`, an `entry_id` alone, a Memory current head, or
-a search query is not a stable authorization identity. Later Artifact Revisions and Memory Entry Versions do not
-inherit an exact Binding.
+selector-incompatible Families are denied by default. `revision`, `entry_version_id`, a Memory current head, and a
+search query are not authorization identities. Later Artifact Revisions and Memory Entry Versions are covered by the
+same logical Binding, while aggregate discovery still requires scope authority.
 
 Each Resource Kind defines a stable canonical serialization for adapter object IDs. An Artifact key includes
-`scope_id`, `family`, `artifact_id`, a positive integer `revision`, and the complete selector. The same business
+`scope_id`, `family`, `artifact_id`, and the logical selector when present. The same business
 identity produces the same key over HTTP, MCP, and the Dashboard. Different Families or selectors cannot share a
 Binding through string collisions.
 
@@ -634,36 +641,34 @@ First-version actions are stable lowercase dotted strings:
 | `scope.read` | scope | Read general resources, approved content, and projections in a Workstream |
 | `scope.contribute` | scope | Write Sources, Memory contributions, Handoffs/Outcomes, and propose Artifact/Prompt Candidates |
 | `scope.review` | scope | Review Artifact Candidates in the scope |
-| `scope.delegate` | scope | Create viewer or receiver Bindings for exact Handoffs |
+| `scope.delegate` | scope | Create viewer or receiver Bindings for logical Handoffs |
 | `scope.admin` | scope | Administer roles, Bindings, and policy for the scope |
-| `artifact.read` | exact artifact | Read the exact Revision or selector defined by its Family Profile |
-| `handoff.evidence.read` | `family=handoff` artifact | Resolve that Revision's citation manifest through the Handoff resolver |
-| `handoff.acknowledge` | `family=handoff` artifact | Create a Handoff Receipt for that Revision |
+| `artifact.read` | logical artifact | Read selected existing and future versions of the identity or selector defined by its Family Profile |
+| `handoff.evidence.inspect` | `family=handoff` artifact | Resolve a selected Revision's citation manifest through the Handoff resolver |
+| `handoff.acknowledge` | `family=handoff` artifact | Create a Handoff Receipt for a selected Revision |
 | `prompt.use` | `family=prompt` artifact | Explicitly render or attach an authorized Prompt without deciding host instruction precedence |
-| `skill.publish` | `family=skill` artifact | Discover safe target choices and select one exact managed Skill Revision for publication |
 
-`artifact.read` has one meaning across every Family: read only the exact Revision or selector named by the Binding. It
-does not include Handoff evidence, Prompt use, Skill publication, lineage bodies, or any mutation. A Family adds a
+`artifact.read` has one meaning across every Family: read versions of only the logical identity or selector named by
+the Binding. It does not include Handoff evidence, Prompt use, lineage bodies, or any mutation. Managed Skill
+publication is a controlled projection of a selected readable Revision to a Server-configured target. A Family adds a
 semantic action only for an operation with a genuinely different security effect.
 
 Business operations check actions rather than role names. External role and relationship models can therefore evolve
 without changing application code.
 
-Policy may make `scope.read` imply `artifact.read` for every registered Family, `handoff.evidence.read` for Handoffs,
+Policy may make `scope.read` imply `artifact.read` for every registered Family, `handoff.evidence.inspect` for Handoffs,
 and `prompt.use` for Prompts under the scope. `scope.contribute` may imply acknowledge, prepare, commit, Memory
-contribution, Artifact or Prompt Candidate proposal, and Outcome writes. The reverse implication never holds: an exact
+contribution, Artifact or Prompt Candidate proposal, and Outcome writes. The reverse implication never holds: a resource
 viewer or user role does not gain `scope.read` or `scope.contribute`.
-`scope.read` does not imply `skill.publish`.
 
 ## Built-in roles
 
 | Role | Granted actions |
 | --- | --- |
-| `handoff.viewer` | `artifact.read`, `handoff.evidence.read` on one exact `family=handoff` Artifact |
-| `handoff.receiver` | Viewer actions plus `handoff.acknowledge` on one exact Handoff |
-| `artifact.viewer` | `artifact.read` on one compatible exact Artifact Revision or selector |
-| `prompt.user` | `artifact.read`, `prompt.use` on one exact `family=prompt` Artifact |
-| `skill.publisher` | `artifact.read`, `skill.publish` on one exact managed Skill Revision |
+| `handoff.viewer` | `artifact.read`, `handoff.evidence.inspect` on one logical `family=handoff` Artifact |
+| `handoff.receiver` | Viewer actions plus `handoff.acknowledge` on one logical Handoff |
+| `artifact.viewer` | `artifact.read` on one compatible logical Artifact or selector |
+| `prompt.user` | `artifact.read`, `prompt.use` on one logical `family=prompt` Artifact |
 | `scope.viewer` | `scope.read` |
 | `scope.contributor` | `scope.read`, `scope.contribute` |
 | `scope.reviewer` | `scope.read`, `scope.review` |
@@ -672,33 +677,33 @@ viewer or user role does not gain `scope.read` or `scope.contribute`.
 | `server.observer` | `server.observe` |
 | `server.admin` | Every server, scope, and Artifact Family action |
 
-Every exact-resource role is read-only with respect to its bound content. `handoff.receiver` adds only the creation of
-a separate Receipt. `skill.publisher` adds only a projection write to a Server-configured target. Neither
-role may modify the source Handoff or Skill Revision. Mutation of the original resource requires an independent scope
-role and the relevant domain lifecycle.
+Every resource role is read-only with respect to its bound content. `handoff.receiver` adds only the creation of a
+separate Receipt. Publishing a readable Skill writes only a projection to a Server-configured target. Neither operation
+may modify the source Handoff or Skill Revision. Mutation of the original resource requires an independent scope role
+and the relevant domain lifecycle.
 
 The first version does not allow the public API to create roles or change role-to-action mappings. Fixed roles give
 OpenAPI, the Dashboard, and adapter conformance tests stable semantics. An enterprise PDP may map custom organization
 roles to the actions externally.
 
 A Principal with `scope.delegate` may create only `handoff.viewer` or `handoff.receiver`, and only for an existing
-exact Handoff in that scope. Creating a scope role requires `scope.admin`. Creating `server.admin` requires an existing
+logical Handoff in that scope. Creating a scope role requires `scope.admin`. Creating `server.admin` requires an existing
 `server.admin` and permission from deployment policy. A Principal cannot grant itself authority beyond the caller's
 administration boundary.
 
-In the first version, only `scope.admin` may create `artifact.viewer`, `prompt.user`, or `skill.publisher` Bindings in
-an administered scope. `artifact.viewer` may bind only to an exact Revision or selector declared compatible by the
-Family registry. `prompt.user` and `skill.publisher` may bind only to approved `family=prompt` and `family=skill`
-Artifacts, respectively. A role and Artifact Family Access Profile or Resource Kind mismatch returns 422; insufficient
+In the first version, only `scope.admin` may create `artifact.viewer` or `prompt.user` Bindings in
+an administered scope. `artifact.viewer` may bind only to a logical Artifact or selector declared compatible by the
+Family registry. `prompt.user` may bind only to an approved `family=prompt` Artifact. A role and Artifact Family Access
+Profile or Resource Kind mismatch returns 422; insufficient
 authority returns 403. The
 Server must not forward an incompatible role string unchanged to an external RelationshipWriter.
 
-| Resource or Artifact Family Profile | Grantable exact roles | Binding administrator |
+| Resource or Artifact Family Profile | Grantable resource roles | Binding administrator |
 | --- | --- | --- |
 | `artifact` with `family=handoff` | `handoff.viewer`, `handoff.receiver` | `scope.delegate`, `scope.admin`, or `server.admin` |
 | `artifact` with `family=memory` and a `memory_entry` selector | `artifact.viewer` | `scope.admin` or `server.admin` |
 | `artifact` with `family=experience` | `artifact.viewer` | `scope.admin` or `server.admin` |
-| `artifact` with `family=skill` | `artifact.viewer`, `skill.publisher` | `scope.admin` or `server.admin` |
+| `artifact` with `family=skill` | `artifact.viewer` | `scope.admin` or `server.admin` |
 | `artifact` with `family=prompt` | `artifact.viewer`, `prompt.user` | `scope.admin` or `server.admin` |
 
 ## Authorization request and decision
@@ -736,11 +741,11 @@ A normalized request is:
   "resource": {
     "type": "artifact",
     "scope_id": "project:payments",
-    "reference": {
+    "identity": {
       "family": "handoff",
-      "artifact_id": "project:payments",
-      "revision": 12
-    }
+      "artifact_id": "project:payments"
+    },
+    "selector": null
   },
   "context": {
     "request_id": "pc-01K...",
@@ -782,36 +787,29 @@ For example, managed Skill publication resolves to:
       "resource": {
         "type": "artifact",
         "scope_id": "project:payments",
-        "reference": {"family": "skill", "artifact_id": "retry-runbook", "revision": 4}
-      }
-    },
-    {
-      "action": {"name": "skill.publish"},
-      "resource": {
-        "type": "artifact",
-        "scope_id": "project:payments",
-        "reference": {"family": "skill", "artifact_id": "retry-runbook", "revision": 4}
+        "identity": {"family": "skill", "artifact_id": "retry-runbook"},
+        "selector": null
       }
     }
   ]
 }
 ```
 
-The business request's `target_id` does not enter these requirements. The Server resolves that parameter only after
-both decisions allow access.
+The business request's Revision and `target_id` do not enter the Access Resource. The Server resolves those business
+parameters only after the decision allows access.
 
-Alternatives such as “scope role or exact role” do not require an `any` expression. The PEP requests the child-resource
-action. A Provider uses a trusted parent relationship to decide whether a scope role implies that action, while an exact
+Alternatives such as “scope role or resource role” do not require an `any` expression. The PEP requests the child-resource
+action. A Provider uses a trusted parent relationship to decide whether a scope role implies that action, while a logical
 Binding applies directly to the child. Providers therefore do not need an arbitrary nested policy expression language.
 
 `resolve_resource_filter` is required for safe list operations. An `AuthorizedResourceFilter` is specific to the
-current Principal and action. It contains bounded canonical resource keys produced by exact Bindings and bounded
+current Principal and action. It contains bounded canonical resource keys produced by logical Bindings and bounded
 server or scope constraints produced by parent roles. A parent constraint means that a Repository may query only
 within that parent, requested Resource Kind, and Family; it is not a client-authored wildcard. The filter also carries
-the policy revision. The Server validates its structure and bounds, then pushes the union of exact keys and parent
+the policy revision. The Server validates its structure and bounds, then pushes the union of logical resource keys and parent
 constraints into one Repository query before totals, ordering, or pagination are computed.
 
-The built-in Provider derives exact keys and parent constraints directly from its Binding Store, so it does not mirror
+The built-in Provider derives logical resource keys and parent constraints directly from its Binding Store, so it does not mirror
 the complete Artifact catalog. An external Provider returns an equivalent authorization filter, or its adapter builds
 one from trusted relationship search. A point-check-only Provider that cannot produce this filter must not query all
 Artifacts, Projects, or Scopes and filter them afterward. The affected list operation returns 503, or configuration
@@ -852,7 +850,7 @@ The built-in Binding Store records at least:
 | --- | --- |
 | `binding_id` | Server-generated opaque ID |
 | `subject` | Canonical `PrincipalRef` |
-| `resource` | Canonical exact `ResourceRef` |
+| `resource` | Canonical logical `ResourceRef` |
 | `role` | One fixed role name |
 | `granted_by` | Authenticated Principal recorded by the Server |
 | `reason` | Optional bounded human explanation |
@@ -882,7 +880,7 @@ The OpenAPI source of truth adds these operations:
 | `POST /v1/access/resources/list` | List resource identities available to the current Principal | Current Principal only |
 | `POST /v1/access/roles/list` | Return fixed roles and action vocabulary | Authenticated Principal |
 | `POST /v1/access/bindings/list` | List Bindings the caller may administer | `scope.delegate`, `scope.admin`, or `server.admin` |
-| `POST /v1/access/bindings/create` | Create a Family-compatible exact-resource or administrative Binding | Resource-specific administration action |
+| `POST /v1/access/bindings/create` | Create a Family-compatible logical-resource or administrative Binding | Resource-specific administration action |
 | `POST /v1/access/bindings/revoke` | Revoke a Binding using CAS | Same administration boundary |
 | `POST /v1/access/bindings/replace` | Atomically revoke an immutable Binding and create its successor | Same administration boundary |
 | `POST /v1/access/audit/list` | Query security audit events | `scope.admin` or `server.admin` |
@@ -915,44 +913,46 @@ The first-version Handoff mappings are:
 | --- | --- |
 | `prepare_handoff`, `finalize_handoff`, `handoff_current_work` | `scope.contribute` on request `scope_id` |
 | `commit_handoff` | `scope.contribute` on request `scope_id` |
-| `continue_handoff(selection=latest)` | `scope.read` on request `scope_id` |
-| `continue_handoff(selection=exact)` | `artifact.read` and `handoff.evidence.read` on the exact `family=handoff` Artifact, directly or through parent `scope.read` |
+| `continue_handoff(selection=latest)` | `artifact.read` and `handoff.evidence.inspect` on the logical `family=handoff` Artifact, directly or through parent `scope.read` |
+| `continue_handoff(selection=exact)` | `artifact.read` and `handoff.evidence.inspect` on the logical `family=handoff` Artifact, directly or through parent `scope.read` |
 | `continue_handoff(selection=prepared)` | `scope.read` on request `scope_id` |
-| `acknowledge_handoff` with an exact Receipt | `scope.contribute` or `handoff.acknowledge` on the exact Revision |
+| `acknowledge_handoff` with an exact Receipt | `scope.contribute` or `handoff.acknowledge` on the logical Handoff selected by the exact Revision |
 | `record_task_outcome` | `scope.contribute` on request `scope_id` |
-| Aggregate Handoff Report queries | Scope-level read; an exact Handoff grant is insufficient |
+| Aggregate Handoff Report queries | Scope-level read; a logical Handoff grant is insufficient |
 | Handoff Report administration | `scope.admin` or an appropriate server administration action |
 
-When an exact receiver calls Continue, the request provides `selection=exact` and an exact `ArtifactReference`. The
-Server builds the Handoff ArtifactResourceRef and evaluates it before reading the Revision. It cannot resolve latest before
-the check or fall back to latest when the exact Revision is absent.
+When a receiver calls Continue, the Server builds the logical Handoff ArtifactResourceRef before reading a Revision.
+For `selection=exact`, it derives the logical identity from the request's exact `ArtifactReference`; for
+`selection=latest`, it uses the registered logical Handoff identity for the scope. Only after authorization may it
+resolve the requested Revision and its manifest.
 
 A Prepared Handoff may contain complete caller-supplied content, so the narrow grant path does not accept
 `selection=prepared`. Only a Principal with `scope.read` may use a prepared selection to resolve scope evidence.
 
 ## Artifact Family operation requirements
 
-Family operations map as follows. “Scope or exact” behavior is implemented by Provider parent relationships, not by a
+Family operations map as follows. “Scope or logical resource” behavior is implemented by Provider parent relationships, not by a
 client-selected bypass path:
 
 | Operation family | Required authorization |
 | --- | --- |
-| Memory search/list/changes | `scope.read` on request `scope_id`; an exact Memory grant is insufficient |
-| Exact Memory get | `artifact.read` on an exact `family=memory` Artifact plus complete `memory_entry` selector, directly or through parent `scope.read` |
-| Memory flush/remember/revise/retire | `scope.contribute`; an exact viewer grant is insufficient |
-| Approved Experience/managed Skill exact get | `artifact.read` on an exact `ArtifactReference`, directly or through parent `scope.read` |
+| Memory search/list/changes | `scope.read` on request `scope_id`; a logical Memory Entry grant is insufficient |
+| Exact Memory get | `artifact.read` on the logical `family=memory` Artifact plus `memory_entry.entry_id`, directly or through parent `scope.read` |
+| Memory flush/remember/revise/retire | `scope.contribute`; a logical viewer grant is insufficient |
+| Approved Experience/managed Skill exact get | `artifact.read` on the logical Artifact identity derived from the exact request, directly or through parent `scope.read` |
 | Experience/Skill propose or generate | `scope.contribute` |
-| Candidate list/get | `scope.read`; an exact Artifact grant does not expose Candidates |
+| Candidate list/get | `scope.read`; a logical Artifact grant does not expose Candidates |
 | Candidate revise/approve/reject | `scope.review` |
-| Approved Prompt exact get | `artifact.read` on an exact `family=prompt` Artifact, directly or through parent `scope.read` |
+| Approved Prompt exact get | `artifact.read` on a logical `family=prompt` Artifact, directly or through parent `scope.read` |
 | Approved Prompt render/use | `prompt.use`, directly or through parent `scope.read` |
 | Prompt propose/revise | Candidate operation defined by the Prompt lifecycle plus `scope.contribute` |
-| List enabled publication targets for an exact managed Skill | `artifact.read` **and** `skill.publish` on the same exact `family=skill` Artifact |
-| Publish managed Skill | `artifact.read` **and** `skill.publish` on the same exact `family=skill` Artifact |
+| List enabled publication targets for an exact managed Skill | `artifact.read` on the logical `family=skill` Artifact |
+| Publish managed Skill | `artifact.read` on the logical `family=skill` Artifact |
 
-An exact-get resolver obtains the complete identity directly from a validated request. A Memory `entry_id`, Artifact
-`artifact_id`, or Prompt name alone is not an authorization key. Search, current-head selection, aggregate projections,
-and the Candidate Inbox remain collection operations; an exact grant cannot enter them.
+An exact-get resolver derives the complete logical identity from a validated business request and discards Revision
+fields for authorization. A bare Memory `entry_id`, Artifact `artifact_id`, or Prompt name without its scope and Family
+is not an authorization key. Search, aggregate projections, and the Candidate Inbox remain collection operations; a
+logical grant cannot enter them.
 
 The Prompt Family Access Profile specifies authorization vocabulary and resolver behavior only. A deployment reports
 that Family as enabled only after it registers an immutable approved `family=prompt` Artifact lifecycle and exposes
@@ -963,7 +963,7 @@ other Families, but it must reject `family=prompt` Bindings and must not claim `
 `server.admin` may configure, modify, or remove a target; `server.observe` or `server.admin` protects detailed target
 status. An operator status response contains only target ID, Agent kind, capabilities, desired and applied exact
 Revisions, a stable state, and a safe reason code. It does not expose host paths, Agent homes, credentials, or raw OS
-errors. For publication and publisher target-list requests, the Server must allow both requirements on the exact Skill
+errors. For publication and publisher target-list requests, the Server must allow `artifact.read` on the logical Skill
 before resolving `target_id` or reading the target registry. A standalone operator status request first checks the
 server-level action.
 
@@ -994,21 +994,21 @@ x-powercontext-access:
 A resolver is deterministic, Server-owned, and unit-tested. It builds an AccessRequest only from the validated request
 model and route metadata. It cannot read a business Repository before deciding what to authorize.
 
-Operations that need multiple requirements use a resolver. Publisher target selection and publication reuse the same
-exact Skill resolver:
+Operations whose resource is derived from business input use a resolver. Publisher target selection and publication
+reuse the same logical Skill resolver:
 
 ```yaml
 /v1/skills/publication-targets/list:
   post:
     operationId: list_skill_publication_targets
     x-powercontext-access:
-      resolver: publish_managed_skill_access
+      resolver: exact_skill_access
 
 /v1/skills/publish:
   post:
     operationId: publish_managed_skill
     x-powercontext-access:
-      resolver: publish_managed_skill_access
+      resolver: exact_skill_access
 ```
 
 Generated `Operation.access` represents either one static requirement or a named resolver. The Server-side resolver
@@ -1067,7 +1067,7 @@ safe order is:
 
 ```text
 AuthorizationProvider.resolve_resource_filter
-  -> validate bounded exact keys and parent constraints
+  -> validate bounded logical resource keys and parent constraints
   -> Repository query applying their union
   -> stable pagination
   -> response
@@ -1080,14 +1080,14 @@ Repository.list_all -> page -> check each item -> remove denied rows
 ```
 
 It leaks totals, cursors, holes, and timing, and can prevent an authorized user from ever reaching later rows. The
-Repository applies the union of exact keys and parent constraints in one query. `total`, cursors, and page boundaries
+Repository applies the union of logical resource keys and parent constraints in one query. `total`, cursors, and page boundaries
 describe only the authorized collection.
 
-An exact Artifact receiver discovers granted resources through Resource Kind and Family filters on
+A logical Artifact receiver discovers granted resources through Resource Kind and Family filters on
 `/v1/access/resources/list`. This does not place those resources in aggregate Project, Workstream, Memory search,
 Artifact catalog, or Candidate Inbox results. Only scope-level read permits the corresponding aggregate query. A
 publication target is not an authorization resource and does not appear in this list. A Principal authorized to
-publish the exact Skill obtains redacted target choices through the Skill-domain preflight. Detailed operational
+publish a selected Revision of the Skill obtains redacted target choices through the Skill-domain preflight. Detailed operational
 status is queried through a Server operation protected by `server.observe` or `server.admin`.
 
 ## Audit and diagnostics
@@ -1117,19 +1117,19 @@ component states and safe reasons. Detailed provider diagnostics stay in a prote
 Committing a Handoff and creating an external authorization relationship are not a disguised cross-system
 transaction. A “send to B” UI performs recoverable steps:
 
-1. commit or reuse the same exact Handoff Revision;
+1. commit or reuse a Handoff Revision belonging to the same logical Handoff;
 2. create the Binding using a stable idempotency key;
 3. display “shared” only after both steps succeed;
 4. if the second step fails, display “Handoff saved, but not yet visible to B” and retry only Binding creation;
 5. do not prepare, commit, or create another Revision.
 
 When the Binding succeeded but the client lost the response, the same idempotency key returns the original Binding.
-If an external RelationshipWriter cannot provide equivalent idempotency, its adapter performs a safe exact
+If an external RelationshipWriter cannot provide equivalent idempotency, its adapter performs a safe canonical
 relationship lookup first or declares self-service mutation unsupported.
 
 Every Artifact Family follows the same “persist or approve first, bind second” sharing rule. A failed Binding creation
 does not roll back or recreate a business Revision; the client retries only the same idempotent Binding mutation.
-Skill publication is a projection operation protected by two decisions. It creates no content Revision and
+Skill publication is a projection operation protected by the logical Skill read decision. It creates no content Revision and
 creates no target Binding or change to target authorization state. A failed target apply retains retryable
 desired/applied state and a safe reason without placing local paths or underlying errors in public audit.
 
@@ -1143,7 +1143,7 @@ window and records the decision revision. The first version does not cache allow
 ### Built-in provider
 
 The built-in profile uses fixed roles and a Server-owned Binding Store. It supports point checks, batch checks,
-pushdown `AuthorizedResourceFilter` generation from exact, scope, and server Bindings, creation, revocation, and audit.
+pushdown `AuthorizedResourceFilter` generation from logical Artifact, scope, and server Bindings, creation, revocation, and audit.
 It does not need a business-resource inventory. It is the reference semantics for local deployments and conformance
 tests and does not provide passwords, a directory, or a custom policy language.
 
@@ -1159,14 +1159,15 @@ A Casbin adapter can use RBAC with domains:
 - role assignment and policy mutation use the Casbin management API and a persistence adapter.
 
 The Casbin domain is an adapter policy namespace. It does not turn `scope_id` into authentication or tenant proof. The
-adapter derives the domain from a trusted ResourceRef supplied by the Server. For list filtering, exact-object policy
+adapter derives the domain from a trusted ResourceRef supplied by the Server. For list filtering, logical-object policy
 produces canonical keys while scope or server role assignments produce parent constraints; the Casbin adapter does not
 enumerate the business Repository.
 
 ### OpenFGA adapter
 
-OpenFGA naturally represents relationships among users, groups, scopes, and exact child resources. Every Artifact
-Family uses one `artifact` object type. The object ID contains the canonical Family, Revision, and selector; the Server
+OpenFGA naturally represents relationships among users, groups, scopes, and logical child resources. Every Artifact
+Family uses one `artifact` object type. The object ID contains the canonical scope, Family, Artifact ID, and selector;
+it contains no Revision. The Server
 validates relation compatibility through the Family registry before a tuple write. A new read-only Family therefore
 does not require a new OpenFGA type:
 
@@ -1201,12 +1202,10 @@ type artifact
     define handoff_viewer: [user]
     define handoff_receiver: [user]
     define prompt_user: [user]
-    define skill_publisher: [user]
-    define can_read: viewer or handoff_viewer or handoff_receiver or prompt_user or skill_publisher or can_read from parent
+    define can_read: viewer or handoff_viewer or handoff_receiver or prompt_user or can_read from parent
     define can_read_handoff_evidence: handoff_viewer or handoff_receiver or can_read from parent
     define can_acknowledge_handoff: handoff_receiver or can_contribute from parent
     define can_use_prompt: prompt_user or can_read from parent
-    define can_publish_skill: skill_publisher or can_admin from parent
 ```
 
 The adapter maps `server.observe` to `server#can_observe` and `server.admin` to `server#can_admin`. `admin from parent`
@@ -1216,9 +1215,9 @@ direction. `server.observer` gains none of those permissions.
 The adapter uses an explicit authorization model ID for Check, ListObjects, and tuple writes. Tuples contain only
 opaque IDs, never email addresses or Handoff content. Model migration switches the configured model ID explicitly; it
 does not use an implicit latest model.
-For lists, exact relations may produce canonical keys through ListObjects, while scope or server roles produce trusted
+For lists, logical resource relations may produce canonical keys through ListObjects, while scope or server roles produce trusted
 parent constraints directly. The adapter does not require an object tuple for every business Artifact that has no
-exact Binding.
+logical Binding.
 
 ### AuthZEN, OPA, and Cerbos adapters
 
@@ -1234,13 +1233,12 @@ from PDP search or trusted relationship data also reports `safe_resource_filteri
 
 ## Configuration and compatibility
 
-The Server provides three explicit modes:
+The Server provides two explicit modes:
 
 | Mode | Behavior |
 | --- | --- |
 | `disabled` | Preserve existing single-user, single-trust-domain behavior; Access API unavailable; no multi-user isolation claim |
-| `legacy-static-admin` | Map the current static Bearer to a deployment-local `server.admin` Principal |
-| `enforced` | Require both an authentication Provider and AuthorizationProvider; run the PEP for every business operation |
+| `enforced` | Require an Authentication Provider and AccessControlService; run the PEP for every business operation |
 
 An upgrade cannot fall back to `disabled` because external identity is configured but a PDP is missing. Mode is
 explicit. Capabilities and readiness report the current mode and whether relationship management, batch checks, and
@@ -1301,12 +1299,12 @@ Implementation proceeds in independently verifiable slices:
    Principal, and stable errors.
 2. **Built-in PEP/PDP**: fixed roles, Binding Store, `_add_route()` authorization wrapper, point/batch checks, and
    audit.
-3. **Exact Handoff receiver**: post-commit Binding creation, exact Continue, citation-manifest resolver, exact
-   acknowledge, revocation, and expiration.
-4. **Artifact Family Access Profiles**: unified ArtifactResourceRef, Family registry, Memory selector, exact read/use
+3. **Logical Handoff receiver**: post-commit Binding creation, exact/latest Continue, citation-manifest resolver,
+   exact acknowledge, future-Revision visibility, revocation, and expiration.
+4. **Artifact Family Access Profiles**: unified ArtifactResourceRef, Family registry, Memory selector, logical read/use
    resolvers, role compatibility, and non-transitive lineage.
 5. **Skill publication**: a Server-configured host-local target registry, publisher-safe selection, operator status,
-   read-plus-publish requirements on the same exact Skill, and redacted failure state.
+   logical Skill authorization for exact business publication, and redacted failure state.
 6. **Safe listing and UI**: authorized resource listing, Handoff inbox, “Shared with me,” Dashboard permission projection, and
    authorization-aware pagination.
 7. **MCP parity**: Principal propagation through the internal bridge, tool-discovery UX, and invocation-time
@@ -1324,52 +1322,52 @@ the PEP, or hide only Dashboard controls without API enforcement.
 The implementation of this RFC is complete only when these observable scenarios pass:
 
 - an unauthenticated request to a protected operation returns 401;
-- A with `scope.delegate` can grant B only an existing committed exact Handoff Revision in that scope, using
+- A with `scope.delegate` can grant B an existing logical Handoff with at least one committed Revision in that scope, using
   `handoff.viewer` or `handoff.receiver`; another Artifact Family or role returns 422, while a missing action returns
   403, and neither failure writes a Binding;
-- B can read, Continue, and acknowledge the granted exact Revision;
-- B is denied latest, adjacent Revisions, the aggregate Handoff Report, Memory lists, Source lists, and Task Outcome
-  writes;
+- B can read and Continue historical, current, and future Revisions of the granted Handoff, use `latest`, and
+  acknowledge a selected exact Revision;
+- B is denied another Handoff, the aggregate Handoff Report, Memory lists, Source lists, and Task Outcome writes;
 - B reads manifest citations only through the authorized Handoff resolver and cannot submit an arbitrary citation to
   a general read endpoint;
 - `handoff.viewer` cannot acknowledge while `handoff.receiver` can;
 - an `accepted` Receipt creates no Binding or scope role;
-- after revocation or expiration, B's later access is denied and authorized resource listing omits the Revision;
+- after revocation or expiration, B's access is denied and authorized resource listing omits the logical Handoff;
 - Binding creation and revocation have stable CAS, idempotency, and audit behavior;
 - 403 does not leak resource existence, and list cursors and totals describe only the authorized collection;
 - an unavailable PDP returns 503 without calling an application service, Repository, or mutation;
 - the MCP internal bridge uses the original Principal and returns the same denial as HTTP;
 - the API denies a request even when Dashboard controls are bypassed or fail to hide it;
-- a legacy static token becomes local admin only in the explicit compatibility mode;
+- in explicit `enforced` mode, a legacy static token becomes local admin only when no Authentication Provider is injected;
 - `server.observer` can read protected service and publication status but cannot modify access or target configuration;
   `server.admin` can perform both classes of operation, with equivalent Built-in, Casbin, and OpenFGA results;
 - built-in, Casbin/OpenFGA, and AuthZEN adapters return equivalent decisions for the same conformance vectors;
-- a request cannot submit an independent content profile; an unknown or disabled Family, `revision=latest`, a missing
-  or extra selector, or a Family-role mismatch returns 422 and writes no Binding;
+- a request cannot submit an independent content profile or Revision in an Access Resource; an unknown or disabled
+  Family, a missing or extra selector, or a Family-role mismatch returns 422 and writes no Binding;
 - `artifact.viewer` always maps only to `artifact.read` for Experience, Skill, Prompt, and a `memory_entry` selector;
   the Family never adds use, publish, acknowledge, or mutation implicitly;
-- `artifact.viewer` can get an authorized Memory Entry through `family=memory` and a complete `memory_entry` selector,
-  but cannot search, list, select current, revise, retire, or read adjacent versions;
-- an exact Artifact viewer can read an approved Experience or managed Skill Revision but cannot see Candidates, later
-  Revisions, or dereference lineage bodies;
+- `artifact.viewer` can get historical and future versions of an authorized Memory Entry through `family=memory` and
+  an `entry_id` selector, but cannot search, list, revise, retire, or read another entry;
+- a logical Artifact viewer can read approved Revisions of one Experience or managed Skill but cannot see Candidates,
+  another Artifact, or dereference lineage bodies;
 - `artifact.viewer` may only read a Prompt while `prompt.user` may use it explicitly; neither role changes host
   instruction precedence or places the Prompt in normal recall automatically;
-- an exact-resource role cannot revise, retire, replace, or commit a later Revision of the shared original, even when
+- a logical-resource role cannot revise, retire, replace, or commit a later Revision of the shared original, even when
   the request supplies the expected version;
 - a Receipt created by acknowledgement and a target projection created by publication do not change the source
   identity, content, Revision, or digest;
 - a fork, import, or copy is denied without `scope.contribute` on the destination scope; when allowed, it creates a new
   identity or Candidate and leaves the original unchanged;
-- managed Skill publication runs only when both `artifact.read` and `skill.publish` allow access on the same exact
-  Skill; any denial or unavailable decision prevents `target_id` resolution, host-path inspection, and projection
+- managed Skill publication runs only when `artifact.read` allows access on the logical Skill; any denial or
+  unavailable decision prevents `target_id` resolution, host-path inspection, and projection
   writes; after authorization, an unknown or disabled target still rejects publication;
-- the publisher target list reads the registry only after both requirements on the same exact Skill allow access and
+- the publisher target list reads the registry only after `artifact.read` on the logical Skill allows access and
   returns only safe identities and capabilities for enabled targets; detailed status still requires `server.observe`
   or `server.admin`;
 - the first version rejects a remote Receiver target without reading remote credentials or opening a network
   connection;
-- `skill.publisher` may publish its authorized exact Skill to any enabled target in the deployment; the first version
-  has no target Binding or per-target delegation;
+- a Principal with `artifact.read` may publish a selected exact Revision of its authorized logical Skill to any enabled
+  target in the deployment; the first version has no target Binding or per-target delegation;
 - `resources/list` totals, cursors, and rows describe only the selected Resource Kind and Artifact Family resources
   discoverable by the current Principal;
 - a deployment without a Prompt lifecycle rejects `family=prompt` Bindings; one without an available publication
@@ -1387,7 +1385,7 @@ Every business request adds an authorization decision. A remote PDP adds a netwo
 require a bounded pushdown `AuthorizedResourceFilter`, so a point-check-only adapter cannot support every Dashboard
 list.
 
-An exact Handoff transfer must be committed first. A temporary Prepared Handoff cannot become a revocable cross-user
+A logical Handoff transfer must be committed first. A temporary Prepared Handoff cannot become a revocable cross-user
 resource. That adds a persistence step but avoids inventing a second identity and ACL model for temporary payloads.
 
 Separating decisions from relationship management makes the adapter surface more complex than a single `check()`.
@@ -1398,10 +1396,10 @@ Handoffs, Memory, Artifacts, or Prompts containing highly sensitive material sti
 data classification, and export controls.
 
 Artifact Family Access Profiles add a registry, selectors, a role compatibility matrix, and conformance vectors. Skill
-publication also checks `artifact.read` and `skill.publish` on the same exact Artifact. A remote PDP without an atomic
+publication checks `artifact.read` on the logical Artifact before resolving the exact business Revision. A remote PDP without an atomic
 multi-requirement decision adds latency and a bounded TOCTOU risk whose policy revision must be recorded.
 
-The first version does not place targets in authorization policy. A Principal with `skill.publisher` on an exact Skill
+The first version does not place targets in authorization policy. A Principal with `artifact.read` on a logical Skill
 may publish it to any enabled target in the deployment. A deployment that needs target-specific isolation must defer
 the capability, isolate deployments, or wait for a separate RFC to define a generic `execution_target` Resource. This
 RFC does not prematurely encode that model as a Skill-specific resource.
@@ -1434,7 +1432,7 @@ should not receive a new Revision whenever team membership changes. This alterna
 
 Granting only `scope.viewer` is easy, but B then sees the complete Workstream's Memory, Sources, history, and Report.
 That violates least privilege for a temporary relay. Scope roles remain available for long-term collaboration;
-exact-resource Bindings serve one-off transfers or asset sharing.
+logical-resource Bindings serve one-off transfers or asset sharing.
 
 ## Alternative: add one share API per domain
 
@@ -1445,7 +1443,7 @@ API with one ArtifactResourceRef, Family role compatibility, and resolvers. Each
 ## Alternative: one Resource Kind per Artifact Family
 
 Separate `ResourceRef.type` values for `handoff`, `memory_entry`, `experience`, `skill`, and `prompt` would duplicate
-scope parentage, exact Revision identity, canonical keys, and read-only sharing structure. Every new Family would also
+scope parentage, logical Artifact identity, canonical keys, and read-only sharing structure. Every new Family would also
 extend the OpenAPI discriminator and external PDP object types. More importantly, `ResourceRef.type` and
 `ArtifactReference.family` would become two potentially conflicting content discriminators. This RFC uses one
 `artifact` Resource Kind and lets the Server derive the Access Profile from `ArtifactReference.family`. Only a Family
@@ -1453,7 +1451,7 @@ such as Memory that needs a narrower authorization unit adds an explicit selecto
 
 ## Alternative: recall every shared resource automatically
 
-Adding every exact grant to PreparedContext conflates visibility with relevance, expands token budgets, and lets an
+Adding every logical grant to PreparedContext conflates visibility with relevance, expands token budgets, and lets an
 untrusted Prompt or Skill affect a receiver's model without explicit selection. The first version provides authorized
 discovery and explicit attachment only. A later shared collection or subscription still passes through an independent
 Context selection policy.
@@ -1483,7 +1481,7 @@ defines semantics and a conformance contract rather than one engine.
 
 ## Alternative: store roles in access tokens
 
-Token roles are simple but poorly suited to exact Handoff grants, revocation, large resource sets, and policy updates.
+Token roles are simple but poorly suited to logical Handoff grants, revocation, large resource sets, and policy updates.
 A token may carry trusted identity and group claims, but the PDP still makes the final resource decision.
 
 ## Alternative: authorize inside every Runtime method
@@ -1529,14 +1527,14 @@ The RFC must resolve these choices before merge, but they do not change the core
   does not provide directory search;
 - whether an enforced deployment requires `safe_resource_filtering` or may disable the corresponding Dashboard lists;
 - whether deployment policy sets a default expiration for `handoff.receiver` or the UI requires an explicit choice;
-- whether the UI suggests a separate `scope.contributor` grant after an exact receiver creates a Receipt, without ever
+- whether the UI suggests a separate `scope.contributor` grant after a Handoff receiver creates a Receipt, without ever
   performing that upgrade automatically;
 - whether the later Prompt Artifact lifecycle uses one fixed Review policy or distinguishes private personal templates
   from organization-approved templates.
 
 Custom roles, organization hierarchy, cross-tenant export, anonymous share links, temporary elevation, approval
-workflows, general Source object-level ACLs, dynamic Memory collections, Artifact catalog sharing, and automatic
-following of future Revisions are explicitly deferred. They require separate threat models and RFCs.
+workflows, general Source object-level ACLs, dynamic Memory collections, and Artifact catalog sharing are explicitly
+deferred. They require separate threat models and RFCs.
 
 # Future possibilities
 
@@ -1559,5 +1557,5 @@ The subject/action/resource contract can later support:
 - a bounded decision cache after a clear revocation-staleness guarantee exists.
 
 These extensions cannot change the first-version invariants: `scope_id` is not an ACL, resource content does not grant
-authority, exact grants do not follow later Revisions, reads do not enter Context or grant execution automatically, and
-every transport fails closed at the Server PEP.
+authority, logical grants cover only the same identity across Revisions, reads do not enter Context or grant execution
+automatically, and every transport fails closed at the Server PEP.

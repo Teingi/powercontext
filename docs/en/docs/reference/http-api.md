@@ -116,9 +116,11 @@ curl --fail \
   "$POWERCONTEXT_URL/v1/access/bindings/create"
 ```
 
-The receiver can read and acknowledge the Handoff's history, current Revision, and future Revisions. It cannot use
-scope-wide latest-Handoff discovery, read another Handoff, or access Memory in the parent scope unless a separate
-scope role allows it. Use `/v1/access/me` to
+The receiver can read and acknowledge the Handoff's history, current Revision, and future Revisions. Continue exposes
+the citations in the selected Revision's immutable manifest and checks those cited resources without requiring a
+second Binding for each citation. This manifest-scoped inspection does not authorize generic Source, Memory, or
+Artifact endpoints: the receiver still cannot discover another Handoff or read the parent scope unless a separate
+scope or Artifact role allows it. It may request `latest` only for the bound logical Handoff. Use `/v1/access/me` to
 verify which Principal the deployment established, `/v1/access/check` for one compound `all` or `any` requirement, and
 `/v1/access/resources/list` for a non-discovering list of already visible resources. Creation is idempotent per
 grantor and key; revocation uses `binding_id` plus `expected_version`. An atomic `/v1/access/bindings/replace`

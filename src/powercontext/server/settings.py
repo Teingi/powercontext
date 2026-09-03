@@ -39,7 +39,7 @@ from powercontext.paths import default_database_path, default_seekdb_path, sqlit
 from powercontext.transport import is_loopback_host
 
 _UNSAFE_BIND_MESSAGE = (
-    "A non-loopback bind requires bearer authentication; "
+    "A non-loopback bind requires authentication; "
     "set allow_unauthenticated_non_loopback to opt in when TLS is "
     "terminated upstream or the network is otherwise controlled"
 )
@@ -61,6 +61,13 @@ class MissingBearerTokenError(ValueError):
     CLI can point the operator at the concrete token / disable levers instead of surfacing
     pydantic's raw validation report.
     """
+
+
+class MissingAuthenticationProviderError(ValueError):
+    """Raised when enforced Access has neither an injected identity Provider nor a legacy token."""
+
+    def __init__(self) -> None:
+        super().__init__("enforced Access Mode requires an injected Authentication Provider or legacy AUTH_TOKEN")
 
 
 def _default_database() -> SQLiteConfig:
@@ -122,20 +129,16 @@ class McpConfig(BaseModel):
         return normalized
 
 
-class AuthenticationConfig(BaseModel):
-    """Authentication Provider selection and provider-specific static settings."""
+class BearerAuthConfig(BaseModel):
+    """Compatibility settings for the pre-Access static bearer authentication."""
 
-    provider: Literal["static-bearer", "oidc", "trusted-header"] | None = None
+    enabled: bool = False
     token: SecretStr | None = Field(default=None, repr=False)
-    principal_id: str = Field(default="server-token", min_length=1, max_length=255)
-    principal_description: str | None = Field(default="PowerContext static bearer", min_length=1, max_length=255)
 
     @model_validator(mode="after")
-    def validate_provider_settings(self) -> AuthenticationConfig:
-        if self.provider == "static-bearer" and (self.token is None or not self.token.get_secret_value()):
+    def require_token_when_enabled(self) -> BearerAuthConfig:
+        if self.enabled and (self.token is None or not self.token.get_secret_value()):
             raise MissingBearerTokenError("Bearer token is required when authentication is enabled")  # noqa: TRY003
-        if self.provider != "static-bearer" and self.token is not None:
-            raise ValueError("AUTH_TOKEN is only valid for AUTH_PROVIDER=static-bearer")  # noqa: TRY003
         return self
 
 
@@ -143,7 +146,6 @@ class AccessControlConfig(BaseModel):
     """Server security profile and deployment-local authorization identity."""
 
     mode: Literal["disabled", "enforced"] = "disabled"
-    static_preset: bool = True
     deployment_id: str = Field(default="powercontext", min_length=1, max_length=128, pattern=r"^[\x21-\x7E]+$")
     background_principal_id: str | None = Field(default=None, min_length=1, max_length=255)
     background_principal_description: str | None = Field(default=None, min_length=1, max_length=255)
@@ -221,9 +223,8 @@ class ServerSettings(BaseSettings):
     public_url: str | None = None
     allow_insecure_http: bool = False
     mcp: McpConfig = Field(default_factory=McpConfig)
-    auth: AuthenticationConfig = Field(default_factory=AuthenticationConfig)
+    auth: BearerAuthConfig = Field(default_factory=BearerAuthConfig)
     access: AccessControlConfig = Field(default_factory=AccessControlConfig)
-    authorization_provider: Literal["builtin", "casbin", "external"] | None = None
     allow_unauthenticated_non_loopback: bool = False
     dashboard: DashboardConfig = Field(default_factory=DashboardConfig)
     logging: ServerLoggingConfig = Field(default_factory=ServerLoggingConfig)
@@ -311,27 +312,15 @@ class ServerSettings(BaseSettings):
     def reject_unauthenticated_non_loopback_bind(self) -> ServerSettings:
         if self.access.background_principal_description is not None and self.access.background_principal_id is None:
             raise ValueError("ACCESS_BACKGROUND_PRINCIPAL_DESCRIPTION requires BACKGROUND_PRINCIPAL_ID")  # noqa: TRY003
-        if self.access.mode == "disabled":
-            if (
-                self.auth.provider is not None
-                or self.auth.token is not None
-                or self.authorization_provider is not None
-                or self.access.background_principal_id is not None
-            ):
-                raise ValueError("ACCESS_MODE=disabled cannot configure authentication or authorization Providers")  # noqa: TRY003
-        elif self.auth.provider is None or self.authorization_provider is None:
-            raise ValueError("ACCESS_MODE=enforced requires authentication and authorization Providers")  # noqa: TRY003
-        elif (
-            (self.runtime.schedule_seconds is not None or self.runtime.experience_schedule_seconds is not None)
-            and self.auth.provider != "static-bearer"
-            and self.access.background_principal_id is None
-        ):
-            raise ValueError(  # noqa: TRY003
-                "scheduled processing in a multi-user enforced deployment requires ACCESS_BACKGROUND_PRINCIPAL_ID"
-            )
+        if self.auth.enabled:
+            self.access.mode = "enforced"
+        if self.access.mode == "disabled" and self.auth.token is not None:
+            raise ValueError("AUTH_TOKEN requires ACCESS_MODE=enforced or legacy AUTH_ENABLED=true")  # noqa: TRY003
+        if self.access.mode == "disabled" and self.access.background_principal_id is not None:
+            raise ValueError("ACCESS_MODE=disabled cannot configure a background Principal")  # noqa: TRY003
         if is_unauthenticated_non_loopback_bind(
             host=self.http.host,
-            auth_enabled=self.access.mode == "enforced",
+            auth_enabled=self.access.mode != "disabled",
             allow_unauthenticated_non_loopback=self.allow_unauthenticated_non_loopback,
         ):
             raise UnauthenticatedNonLoopbackBindError(_UNSAFE_BIND_MESSAGE)
@@ -340,13 +329,14 @@ class ServerSettings(BaseSettings):
 
 __all__ = [
     "AccessControlConfig",
-    "AuthenticationConfig",
+    "BearerAuthConfig",
     "DashboardConfig",
     "DashboardScopeConfig",
     "HandoffReportConfig",
     "HttpConfig",
     "McpConfig",
     "MetricsConfig",
+    "MissingAuthenticationProviderError",
     "MissingBearerTokenError",
     "ServerLoggingConfig",
     "ServerSettings",

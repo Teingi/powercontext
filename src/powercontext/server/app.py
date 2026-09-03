@@ -44,13 +44,10 @@ from powercontext._logging import log_safely
 from powercontext.artifacts import ArtifactRef
 from powercontext.builtin.artifacts.experience import Experience
 from powercontext.builtin.artifacts.handoff import (
-    HandoffArtifactCitation,
     HandoffCitation,
     HandoffEvidenceUnavailableError,
     HandoffGenerationUnavailableError,
-    HandoffMemoryCitation,
     HandoffScopeMismatchError,
-    HandoffSourceCitation,
     InvalidHandoffGenerationError,
     InvalidHandoffReferenceError,
 )
@@ -2078,70 +2075,24 @@ async def commit_handoff(
 async def continue_handoff(
     request: ContinueHandoffRequest,
     application: Annotated[ServerApplication, Depends(_require_application)],
-    http_request: Request,
 ) -> TransportHandoffResolution:
     handoff = application.handoff.for_scope(request.scope_id)
-    evidence_authorizer = _handoff_evidence_authorizer(http_request, request.scope_id)
     if request.selection is HandoffSelection.LATEST:
         _require_handoff_selection(request, prepared=False, revision=False)
-        result = await handoff.continue_latest(evidence_authorizer=evidence_authorizer)
+        result = await handoff.continue_latest()
     elif request.selection is HandoffSelection.PREPARED:
         _require_handoff_selection(request, prepared=True, revision=False)
         prepared = request.prepared
         if prepared is None:
             raise InvalidRuntimeRequestError("handoff-selection")
-        result = await handoff.continue_from(
-            mapping.runtime_prepared_handoff(prepared),
-            evidence_authorizer=evidence_authorizer,
-        )
+        result = await handoff.continue_from(mapping.runtime_prepared_handoff(prepared))
     else:
         _require_handoff_selection(request, prepared=False, revision=True)
         revision = request.revision
         if revision is None:
             raise InvalidRuntimeRequestError("handoff-selection")
-        result = await handoff.continue_from(
-            mapping.runtime_artifact_reference(revision),
-            evidence_authorizer=evidence_authorizer,
-        )
+        result = await handoff.continue_from(mapping.runtime_artifact_reference(revision))
     return mapping.handoff_resolution_response(result)
-
-
-def _handoff_evidence_authorizer(
-    request: Request,
-    scope_id: str,
-) -> Callable[[HandoffCitation], Awaitable[bool]] | None:
-    access = access_control_for_mode(request.app.state.access_control, mode=request.app.state.access_mode)
-    if access is None:
-        return None
-    principal = _require_principal()
-    context = _access_audit_context(CONTINUE_HANDOFF.operation_id)
-
-    async def authorize(citation: HandoffCitation) -> bool:
-        if isinstance(citation, HandoffSourceCitation):
-            action = AccessAction.SCOPE_READ
-            resource = ResourceRef.scope(scope_id)
-        elif isinstance(citation, HandoffArtifactCitation):
-            action = AccessAction.ARTIFACT_READ
-            resource = ResourceRef.artifact(
-                scope_id,
-                family=citation.artifact_ref.family,
-                artifact_id=citation.artifact_ref.artifact_id,
-            )
-        elif isinstance(citation, HandoffMemoryCitation):
-            action = AccessAction.ARTIFACT_READ
-            memory = citation.memory_citation
-            resource = ResourceRef.artifact(
-                scope_id,
-                family=memory.memory_ref.family,
-                artifact_id=memory.memory_ref.artifact_id,
-                selector=MemoryEntrySelector(entry_id=memory.entry_id),
-            )
-        else:
-            return False
-        decision = await access.check(principal, action, resource, context=context)
-        return decision.allowed
-
-    return authorize
 
 
 async def list_memory_entries(

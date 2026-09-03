@@ -26,8 +26,6 @@ is otherwise controlled.
 ```bash
 # Recommended: authenticate the Server, then bind a routable address (put TLS in front in production).
 POWERCONTEXT_SERVER_ACCESS_MODE=enforced \
-POWERCONTEXT_SERVER_AUTH_PROVIDER=static-bearer \
-POWERCONTEXT_SERVER_AUTHORIZATION_PROVIDER=builtin \
 POWERCONTEXT_SERVER_AUTH_TOKEN="replace-with-a-strong-token" \
   uv run powercontext server run --host 0.0.0.0 --port 8080
 ```

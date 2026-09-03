@@ -118,8 +118,6 @@ Load a strong token from your secret manager into the Server process environment
 
 ```bash
 export POWERCONTEXT_SERVER_ACCESS_MODE=enforced
-export POWERCONTEXT_SERVER_AUTH_PROVIDER=static-bearer
-export POWERCONTEXT_SERVER_AUTHORIZATION_PROVIDER=builtin
 export POWERCONTEXT_SERVER_AUTH_TOKEN="$POWERCONTEXT_DEPLOYMENT_TOKEN"
 powercontext server run
 ```
@@ -132,8 +130,6 @@ docker run --rm \
   --publish 127.0.0.1:8000:8000 \
   --volume powercontext-data:/data \
   --env POWERCONTEXT_SERVER_ACCESS_MODE=enforced \
-  --env POWERCONTEXT_SERVER_AUTH_PROVIDER=static-bearer \
-  --env POWERCONTEXT_SERVER_AUTHORIZATION_PROVIDER=builtin \
   --env POWERCONTEXT_SERVER_AUTH_TOKEN \
   powercontext-server:local
 ```

@@ -530,6 +530,11 @@ OPENAPI_SCHEMA: dict[str, JsonValue] = {
             "post": {
                 "tags": ["handoff"],
                 "summary": "Resolve a Handoff as untrusted historical input",
+                "description": "Select an exact or latest business "
+                "Revision through one logical Handoff "
+                "grant and inspect the evidence "
+                "declared by that Revision's immutable "
+                "manifest.",
                 "operationId": "continue_handoff",
                 "requestBody": {
                     "content": {
@@ -2778,6 +2783,11 @@ OPENAPI_SCHEMA: dict[str, JsonValue] = {
                 "additionalProperties": False,
                 "type": "object",
                 "required": ["type", "entry_id"],
+                "description": "Logical Memory entry "
+                "selector; the Binding "
+                "covers the entry's "
+                "existing and future "
+                "versions.",
             },
             "AccessArtifactIdentity": {
                 "properties": {
@@ -2787,6 +2797,10 @@ OPENAPI_SCHEMA: dict[str, JsonValue] = {
                 "additionalProperties": False,
                 "type": "object",
                 "required": ["family", "artifact_id"],
+                "description": "Logical Artifact identity; "
+                "the Binding covers existing "
+                "and future Revisions of the "
+                "same Artifact.",
             },
             "ArtifactAccessResource": {
                 "properties": {

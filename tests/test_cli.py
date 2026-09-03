@@ -739,8 +739,7 @@ def test_server_command_clears_stale_server_values_missing_from_env_file(
 ) -> None:
     environment = tmp_path / ".env"
     environment.write_text("POWERCONTEXT_SERVER_HTTP_HOST=127.0.0.1\n", encoding="utf-8")
-    monkeypatch.setenv("POWERCONTEXT_SERVER_AUTH_PROVIDER", "static-bearer")
-    monkeypatch.delenv("POWERCONTEXT_SERVER_AUTH_TOKEN", raising=False)
+    monkeypatch.setenv("POWERCONTEXT_SERVER_ACCESS_DEPLOYMENT_ID", "stale-deployment")
     run_server = Mock()
     tracing = Mock()
     monkeypatch.setattr("powercontext.server.cli._run_server", run_server)
@@ -754,7 +753,7 @@ def test_server_command_clears_stale_server_values_missing_from_env_file(
 
     assert result.exit_code == 0
     run_server.assert_called_once()
-    assert os.environ["POWERCONTEXT_SERVER_AUTH_PROVIDER"] == "static-bearer"
+    assert os.environ["POWERCONTEXT_SERVER_ACCESS_DEPLOYMENT_ID"] == "stale-deployment"
 
 
 def test_server_command_reports_a_missing_env_file_without_starting(
@@ -861,8 +860,6 @@ def test_server_command_reports_a_friendly_error_when_auth_lacks_a_token(
     monkeypatch.setattr("powercontext.server.cli.configure_server_logging", lambda _config: None)
     monkeypatch.setattr("powercontext.server.cli.configure_server_tracing", lambda _config: tracing)
     monkeypatch.setenv("POWERCONTEXT_SERVER_ACCESS_MODE", "enforced")
-    monkeypatch.setenv("POWERCONTEXT_SERVER_AUTH_PROVIDER", "static-bearer")
-    monkeypatch.setenv("POWERCONTEXT_SERVER_AUTHORIZATION_PROVIDER", "builtin")
     monkeypatch.delenv("POWERCONTEXT_SERVER_AUTH_TOKEN", raising=False)
 
     result = CliRunner().invoke(create_cli([server_app]), ["server", "run"])

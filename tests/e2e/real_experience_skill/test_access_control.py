@@ -57,7 +57,7 @@ from powercontext.server.settings import ServerSettings
 pytestmark = pytest.mark.real_e2e
 
 
-def test_configured_database_persists_exact_skill_grant_and_revocation(pytestconfig: pytest.Config) -> None:
+def test_configured_database_persists_logical_skill_grant_and_revocation(pytestconfig: pytest.Config) -> None:
     if pytestconfig.getoption("real_e2e_mode") not in {"configured", "all"}:
         pytest.skip("configured Access Control acceptance runs in configured mode")
 

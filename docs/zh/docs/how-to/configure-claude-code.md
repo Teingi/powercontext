@@ -128,8 +128,6 @@ timeout 和 flush 控制项见[配置参考](../reference/configuration.md)。�
 
 ```bash
 export POWERCONTEXT_SERVER_ACCESS_MODE=enforced
-export POWERCONTEXT_SERVER_AUTH_PROVIDER=static-bearer
-export POWERCONTEXT_SERVER_AUTHORIZATION_PROVIDER=builtin
 export POWERCONTEXT_SERVER_AUTH_TOKEN="$POWERCONTEXT_LOCAL_TOKEN"
 powercontext server run
 ```

@@ -248,8 +248,6 @@ authentication enabled:
 
 ```bash
 export POWERCONTEXT_SERVER_ACCESS_MODE=enforced
-export POWERCONTEXT_SERVER_AUTH_PROVIDER=static-bearer
-export POWERCONTEXT_SERVER_AUTHORIZATION_PROVIDER=builtin
 export POWERCONTEXT_SERVER_AUTH_TOKEN="$POWERCONTEXT_LOCAL_TOKEN"
 powercontext server run
 ```

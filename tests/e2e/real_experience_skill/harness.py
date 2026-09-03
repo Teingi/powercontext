@@ -2036,7 +2036,7 @@ def _validate_configured_settings(settings: ServerSettings) -> None:
 def _configured_access_token(settings: ServerSettings) -> str | None:
     if settings.access.mode == "disabled":
         return None
-    if settings.auth.provider != "static-bearer" or settings.auth.token is None:
+    if settings.auth.token is None:
         _fail("configured E2E supports enforced Access Control only with static-bearer authentication")
     return settings.auth.token.get_secret_value()
 

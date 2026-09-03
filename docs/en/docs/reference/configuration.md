@@ -46,13 +46,9 @@ Server settings use the `POWERCONTEXT_SERVER_` prefix.
 | `POWERCONTEXT_SERVER_WORKSPACE` | Server startup directory | Resolution root for local project Agent Skill folders |
 | `POWERCONTEXT_SERVER_MCP_ENABLED` | `true` | Enable Streamable HTTP MCP |
 | `POWERCONTEXT_SERVER_MCP_PATH` | `/mcp` | MCP path |
-| `POWERCONTEXT_SERVER_AUTH_PROVIDER` | unset | Authentication Provider: `static-bearer`, `oidc`, or `trusted-header`; required in `enforced` mode |
-| `POWERCONTEXT_SERVER_AUTH_TOKEN` | unset | Static bearer token; valid only with `AUTH_PROVIDER=static-bearer` |
-| `POWERCONTEXT_SERVER_AUTH_PRINCIPAL_ID` | `server-token` | Deployment-wide unique Principal ID represented by the static token |
-| `POWERCONTEXT_SERVER_AUTH_PRINCIPAL_DESCRIPTION` | `PowerContext static bearer` | Optional display-only description for the static Principal |
-| `POWERCONTEXT_SERVER_ACCESS_MODE` | `disabled` | Sole security switch: `disabled` or `enforced` |
-| `POWERCONTEXT_SERVER_AUTHORIZATION_PROVIDER` | unset | Authorization Provider: `builtin`, `casbin`, or `external`; required in `enforced` mode |
-| `POWERCONTEXT_SERVER_ACCESS_STATIC_PRESET` | `true` | Materialize the explicit built-in roles needed by a single-Principal static deployment |
+| `POWERCONTEXT_SERVER_AUTH_ENABLED` | `false` | Legacy static bearer switch; `true` maps to `ACCESS_MODE=enforced` and requires `AUTH_TOKEN` |
+| `POWERCONTEXT_SERVER_AUTH_TOKEN` | unset | Legacy static bearer token; used as compatibility authentication and mapped to the built-in administrator when no Authentication Provider is injected |
+| `POWERCONTEXT_SERVER_ACCESS_MODE` | `disabled` | The only supported Access switch: `disabled` or `enforced` |
 | `POWERCONTEXT_SERVER_ACCESS_DEPLOYMENT_ID` | `powercontext` | Stable deployment identity used by the `server` Access Resource |
 | `POWERCONTEXT_SERVER_ACCESS_BACKGROUND_PRINCIPAL_ID` | unset | Explicit service Principal for scheduled jobs in a multi-user enforced deployment |
 | `POWERCONTEXT_SERVER_ACCESS_BACKGROUND_PRINCIPAL_DESCRIPTION` | unset | Optional display-only description for the scheduled service Principal |
@@ -109,17 +105,19 @@ when TLS is terminated upstream or the network is otherwise controlled, set
 `POWERCONTEXT_SERVER_ALLOW_UNAUTHENTICATED_NON_LOOPBACK=true` to opt in explicitly. Use TLS before exposing an
 authenticated Server over a network.
 
-`POWERCONTEXT_SERVER_ACCESS_MODE` is the only switch. `disabled` rejects authentication and authorization Provider
-configuration and bypasses authorization decisions inside the trusted local boundary. `enforced` requires both
-`AUTH_PROVIDER` and `AUTHORIZATION_PROVIDER`; it enables one policy enforcement point and the configured Provider's
-Binding and audit behavior.
+`POWERCONTEXT_SERVER_ACCESS_MODE` is the only supported switch. `disabled` bypasses authorization decisions inside the
+trusted local boundary. `enforced` enables one policy enforcement point plus Binding and audit behavior. Authorization
+defaults to the built-in implementation and can be replaced through `create_server_app(access_control=...)`;
+Authentication is supplied through `create_server_app(authentication_provider=...)`. Without an injected Authentication
+Provider, the Server accepts only the legacy `AUTH_TOKEN` fallback and bootstraps its fixed `server-token` Principal as a
+built-in administrator. Startup fails when neither is available. The old `AUTH_ENABLED=true` plus `AUTH_TOKEN`
+configuration maps automatically to `ACCESS_MODE=enforced`.
 
 Authentication establishes a Principal; Access Control decides what that Principal may do. Principal IDs are
 deployment-wide unique, non-reused identifiers; `description` is display metadata and is not part of identity. The
-built-in static token always represents one service Principal, so it cannot distinguish user A from user B. With the
-built-in Authorization Provider, `ACCESS_STATIC_PRESET=true` materializes explicit Server and per-scope roles for
-that Principal. Use `oidc` or `trusted-header` with a deployment-supplied Authentication Provider and an appropriate
-Authorization Provider when different users or groups need different access.
+built-in static token always represents one service Principal, so it cannot distinguish user A from user B. The
+compatibility token materializes explicit Server and per-scope roles for that Principal. Inject the deployment
+Authentication Provider and corresponding AccessControlService when different users or groups need different access.
 
 Scheduled Source processing and Experience incubation run as the fixed static Principal, or as the service Principal
 selected by `ACCESS_BACKGROUND_PRINCIPAL_ID`. That Principal must have `scope.contribute` for each processed scope;
@@ -197,7 +195,7 @@ The non-loopback opt-in in this example is independent of the Receiver transport
 Server routes on this listener are reachable without the Server-wide bearer token. Prefer enabling authentication or
 terminating TLS in front of a loopback-bound Server whenever the deployment permits it.
 
-When `AUTH_PROVIDER=static-bearer` is enforced, the HTML shells at `/`, `/skills`, `/reviews`, and `/handoff-reports`, plus
+When compatibility static Bearer authentication is enforced, the HTML shells at `/`, `/skills`, `/reviews`, and `/handoff-reports`, plus
 their static assets, remain public so the browser can render the sign-in form. Data requests stay protected. Enter the
 Server token in that form; the browser keeps it only in the current tab's session storage. Disable both Dashboard and
 Handoff Report if even these sign-in pages must not be exposed.

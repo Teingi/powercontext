@@ -51,7 +51,7 @@ from powercontext.server.authz import AccessControlService
 from powercontext.server.factory import create_server_app
 from powercontext.server.settings import (
     AccessControlConfig,
-    AuthenticationConfig,
+    BearerAuthConfig,
     DashboardConfig,
     DashboardScopeConfig,
     McpConfig,
@@ -375,23 +375,51 @@ def test_server_scheduler_uses_the_powercontext_data_directory(tmp_path, monkeyp
 
 def test_settings_load_bearer_authentication_without_exposing_token(monkeypatch) -> None:
     monkeypatch.setenv("POWERCONTEXT_SERVER_ACCESS_MODE", "enforced")
-    monkeypatch.setenv("POWERCONTEXT_SERVER_AUTH_PROVIDER", "static-bearer")
-    monkeypatch.setenv("POWERCONTEXT_SERVER_AUTHORIZATION_PROVIDER", "builtin")
     monkeypatch.setenv("POWERCONTEXT_SERVER_AUTH_TOKEN", "server-secret")
 
     settings = ServerSettings()
 
     assert settings.access.mode == "enforced"
-    assert settings.auth.provider == "static-bearer"
-    assert settings.authorization_provider == "builtin"
     assert settings.auth.token is not None
     assert settings.auth.token.get_secret_value() == "server-secret"
     assert "server-secret" not in repr(settings)
 
 
+def test_legacy_auth_token_cannot_silently_enable_access(monkeypatch) -> None:
+    monkeypatch.delenv("POWERCONTEXT_SERVER_ACCESS_MODE", raising=False)
+    monkeypatch.delenv("POWERCONTEXT_SERVER_AUTH_ENABLED", raising=False)
+    monkeypatch.setenv("POWERCONTEXT_SERVER_AUTH_TOKEN", "orphaned-server-secret")
+
+    with pytest.raises(ValidationError, match="AUTH_TOKEN requires ACCESS_MODE=enforced"):
+        ServerSettings()
+
+
+def test_legacy_static_bearer_environment_maps_to_server_admin(monkeypatch) -> None:
+    monkeypatch.delenv("POWERCONTEXT_SERVER_ACCESS_MODE", raising=False)
+    monkeypatch.setenv("POWERCONTEXT_SERVER_AUTH_ENABLED", "true")
+    monkeypatch.setenv("POWERCONTEXT_SERVER_AUTH_TOKEN", "legacy-server-secret")
+
+    settings = ServerSettings(database=SQLiteConfig(), mcp=McpConfig(enabled=False))
+
+    assert settings.access.mode == "enforced"
+    assert "legacy-server-secret" not in repr(settings)
+
+    with TestClient(create_server_app(settings=settings)) as client:
+        missing = client.get("/v1/capabilities")
+        principal = client.get(
+            "/v1/access/me",
+            headers={"Authorization": "Bearer legacy-server-secret"},
+        )
+
+    assert missing.status_code == 401
+    assert principal.status_code == 200
+    assert principal.json()["mode"] == "enforced"
+    assert principal.json()["principal"]["id"] == "server-token"
+
+
 def test_enabled_bearer_authentication_requires_a_token() -> None:
     with pytest.raises(ValueError, match="Bearer token is required"):
-        AuthenticationConfig(provider="static-bearer")
+        BearerAuthConfig(enabled=True)
 
 
 def test_liveness_adds_a_server_owned_request_id() -> None:
@@ -429,9 +457,8 @@ def test_scalar_reference_embeds_the_canonical_openapi_contract() -> None:
 def test_server_factory_optionally_requires_bearer_authentication() -> None:
     app = create_server_app(
         settings=ServerSettings(
-            auth=AuthenticationConfig(provider="static-bearer", token=SecretStr("server-secret")),
+            auth=BearerAuthConfig(token=SecretStr("server-secret")),
             access=AccessControlConfig(mode="enforced"),
-            authorization_provider="builtin",
             database=SQLiteConfig(),
             mcp=McpConfig(enabled=False),
         )
@@ -466,9 +493,8 @@ def test_server_factory_optionally_requires_bearer_authentication() -> None:
 def test_enforced_mode_fails_closed_if_the_authorization_provider_disappears(tmp_path) -> None:
     app = create_server_app(
         settings=ServerSettings(
-            auth=AuthenticationConfig(provider="static-bearer", token=SecretStr("server-secret")),
+            auth=BearerAuthConfig(token=SecretStr("server-secret")),
             access=AccessControlConfig(mode="enforced"),
-            authorization_provider="external",
             dashboard=DashboardConfig(scopes=[DashboardScopeConfig(scope_id="scope-a", display_name="Scope A")]),
             database=SQLiteConfig(url=f"sqlite+aiosqlite:///{tmp_path / 'runtime.db'}"),
             mcp=McpConfig(enabled=False),
@@ -504,9 +530,8 @@ def test_enforced_mode_fails_closed_if_the_authorization_provider_disappears(tmp
 def test_server_factory_maps_static_token_to_bootstrap_principal() -> None:
     app = create_server_app(
         settings=ServerSettings(
-            auth=AuthenticationConfig(provider="static-bearer", token=SecretStr("server-secret")),
+            auth=BearerAuthConfig(token=SecretStr("server-secret")),
             access=AccessControlConfig(mode="enforced"),
-            authorization_provider="builtin",
             database=SQLiteConfig(),
             mcp=McpConfig(enabled=False),
         )

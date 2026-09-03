@@ -108,8 +108,10 @@ curl --fail \
   "$POWERCONTEXT_URL/v1/access/bindings/create"
 ```
 
-接收者可以读取和确认这个 Handoff 的历史、当前及未来 Revision；除非另有 scope role，否则不能在 scope 范围发现
-latest Handoff、读取其他 Handoff，也不能访问父 scope 的 Memory。用 `/v1/access/me` 确认部署建立的 Principal，用 `/v1/access/check`
+接收者可以读取和确认这个 Handoff 的历史、当前及未来 Revision。Continue 会展示所选 Revision 的不可变 manifest 中的
+citation，并检查这些被引用资源，不需要为每条 citation 再创建 Binding。这种 manifest 范围内的检查不会授权通用的
+Source、Memory 或 Artifact 接口；除非另有 scope 或 Artifact role，否则接收者仍不能发现其他 Handoff 或读取父 scope。
+它只能对已绑定的逻辑 Handoff 请求 `latest`。用 `/v1/access/me` 确认部署建立的 Principal，用 `/v1/access/check`
 检查一个由 `all` 或 `any` 组合的权限要求，
 用 `/v1/access/resources/list` 非发现式地列出已经可见的资源。创建操作按授权者与幂等键保证幂等；撤销时必须提交
 `binding_id` 和 `expected_version`。`/v1/access/bindings/replace` 会原子撤销一个不可变 Binding，并用相同 Resource 和 role

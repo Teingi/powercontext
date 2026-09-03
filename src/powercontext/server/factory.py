@@ -62,12 +62,12 @@ from powercontext.server.authz import (
     ResourceRef,
     access_control_for_mode,
 )
-from powercontext.server.authz.composition import open_builtin_access_control, open_casbin_access_control
+from powercontext.server.authz.composition import open_builtin_access_control
 from powercontext.server.context import current_principal, current_request_id
 from powercontext.server.mcp import mount_mcp
 from powercontext.server.metrics import CONTENT_TYPE_LATEST, HttpMetricsMiddleware, ServerMetrics
 from powercontext.server.middleware import AuthenticationMiddleware
-from powercontext.server.settings import ServerSettings
+from powercontext.server.settings import MissingAuthenticationProviderError, ServerSettings
 from powercontext.server.tracing import HttpTracingMiddleware, ServerTracing
 from powercontext.server.web import mount_web_ui
 
@@ -116,10 +116,12 @@ def create_server_app(
     """Build the Server process and mount MCP when configured."""
 
     resolved = ServerSettings() if settings is None else settings
-    static_principal, configured_authentication, configured_access_control = _resolve_security_providers(
-        resolved,
-        access_control=access_control,
-        authentication_provider=authentication_provider,
+    static_principal, configured_authentication, configured_access_control, legacy_static_admin = (
+        _resolve_security_providers(
+            resolved,
+            access_control=access_control,
+            authentication_provider=authentication_provider,
+        )
     )
     config = BuiltinConfig(
         runtime=resolved.runtime,
@@ -144,27 +146,17 @@ def create_server_app(
         async with AsyncExitStack() as resources:
             active_access_control = configured_access_control
             if active_access_control is None and resolved.access.mode == "enforced":
-                administrators = (
-                    (static_principal,)
-                    if resolved.auth.provider == "static-bearer" and resolved.access.static_preset
-                    else ()
-                )
-                opener = (
-                    open_casbin_access_control
-                    if resolved.authorization_provider == "casbin"
-                    else open_builtin_access_control
-                )
                 active_access_control = await resources.enter_async_context(
-                    opener(
+                    open_builtin_access_control(
                         resolved.database,
-                        bootstrap_administrators=administrators,
+                        bootstrap_administrators=(static_principal,) if legacy_static_admin else (),
                         deployment_id=resolved.access.deployment_id,
                     )
                 )
             scheduled_source_runner, scheduled_experience_runner = _scheduled_access_runners(
                 resolved,
                 active_access_control,
-                static_principal=static_principal,
+                legacy_static_principal=static_principal if legacy_static_admin else None,
             )
             runtime = await resources.enter_async_context(
                 open_builtin_runtime(
@@ -275,34 +267,32 @@ def _resolve_security_providers(
     *,
     access_control: AccessControlService | None,
     authentication_provider: AuthenticationProvider | None,
-) -> tuple[PrincipalRef, AuthenticationProvider | None, AccessControlService | None]:
+) -> tuple[PrincipalRef, AuthenticationProvider | None, AccessControlService | None, bool]:
     static_principal = PrincipalRef(
         type="service",
-        id=settings.auth.principal_id,
-        description=settings.auth.principal_description,
+        id="server-token",
+        description="PowerContext static bearer",
     )
     if settings.access.mode == "disabled":
         if access_control is not None or authentication_provider is not None:
             raise ValueError("disabled Access Mode cannot load security Providers")  # noqa: TRY003
-        return static_principal, None, None
-    if settings.authorization_provider == "external" and access_control is None:
-        raise ValueError("the external Authorization Provider must be injected")  # noqa: TRY003
+        return static_principal, None, None, False
     if authentication_provider is not None:
-        return static_principal, authentication_provider, access_control
-    if settings.auth.provider != "static-bearer" or settings.auth.token is None:
-        raise ValueError("the selected Authentication Provider must be injected")  # noqa: TRY003
+        return static_principal, authentication_provider, access_control, False
+    if settings.auth.token is None:
+        raise MissingAuthenticationProviderError
     authentication = StaticBearerAuthenticationProvider(
         settings.auth.token.get_secret_value(),
         static_principal,
     )
-    return static_principal, authentication, access_control
+    return static_principal, authentication, access_control, True
 
 
 def _scheduled_access_runners(
     settings: ServerSettings,
     access: AccessControlService | None,
     *,
-    static_principal: PrincipalRef,
+    legacy_static_principal: PrincipalRef | None,
 ) -> tuple[ScheduledSourceRunner | None, ScheduledExperienceRunner | None]:
     source_scheduled = settings.runtime.schedule_seconds is not None
     experience_scheduled = settings.runtime.experience_schedule_seconds is not None
@@ -310,7 +300,7 @@ def _scheduled_access_runners(
         return None, None
     if access is None:
         raise ValueError("scheduled processing in enforced mode requires an Authorization Provider")  # noqa: TRY003
-    principal = _scheduled_principal(settings, static_principal=static_principal)
+    principal = _scheduled_principal(settings, legacy_static_principal=legacy_static_principal)
 
     async def process_sources(scope_id: str, runtime: BuiltinRuntime) -> MemoryFlushResult:
         context = AccessAuditContext(transport="background", operation="process_source_window")
@@ -362,15 +352,19 @@ def _scheduled_access_runners(
     )
 
 
-def _scheduled_principal(settings: ServerSettings, *, static_principal: PrincipalRef) -> PrincipalRef:
+def _scheduled_principal(
+    settings: ServerSettings,
+    *,
+    legacy_static_principal: PrincipalRef | None,
+) -> PrincipalRef:
     if settings.access.background_principal_id is not None:
         return PrincipalRef(
             type="service",
             id=settings.access.background_principal_id,
             description=settings.access.background_principal_description,
         )
-    if settings.auth.provider == "static-bearer":
-        return static_principal
+    if legacy_static_principal is not None:
+        return legacy_static_principal
     raise ValueError("scheduled processing in enforced mode requires ACCESS_BACKGROUND_PRINCIPAL_ID")  # noqa: TRY003
 
 

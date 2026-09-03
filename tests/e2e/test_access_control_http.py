@@ -50,7 +50,7 @@ from powercontext.server.authz.composition import open_builtin_access_control
 from powercontext.server.factory import create_server_app
 from powercontext.server.settings import (
     AccessControlConfig,
-    AuthenticationConfig,
+    BearerAuthConfig,
     DashboardConfig,
     McpConfig,
     MetricsConfig,
@@ -67,9 +67,9 @@ class _DeterministicHandoffPipeline:
         citations = tuple(item.citation for item in request.evidence)
         return HandoffDraft(
             objective=request.objective,
-            state=(HandoffStatement(text="The exact Handoff is ready for its receiver.", citations=citations),),
+            state=(HandoffStatement(text="The logical Handoff is ready for its receiver.", citations=citations),),
             disposition="continuable",
-            next_action=HandoffStatement(text="Acknowledge only this committed Revision.", citations=citations),
+            next_action=HandoffStatement(text="Inspect the selected Revision and its evidence.", citations=citations),
         )
 
 
@@ -158,6 +158,10 @@ def test_logical_handoff_grant_and_revoke_cross_the_public_server_boundary(tmp_p
                     )
                 )
                 assert exact.selected_revision == first_committed.reference
+                assert exact.content is not None
+                assert exact.content.state[0].citations
+                assert exact.evidence_checks
+                assert all(check.status == "available" for check in exact.evidence_checks)
                 receipt = await receiver.acknowledge_handoff(
                     AcknowledgeHandoffRequest.model_validate({
                         "scope_id": "access-e2e",
@@ -179,6 +183,17 @@ def test_logical_handoff_grant_and_revoke_cross_the_public_server_boundary(tmp_p
                     ContinueHandoffRequest(scope_id="access-e2e", selection=HandoffSelection.LATEST)
                 )
                 assert latest.selected_revision == committed.reference
+                assert latest.evidence_checks
+                assert all(check.status == "available" for check in latest.evidence_checks)
+                later_exact = await receiver.continue_handoff(
+                    ContinueHandoffRequest(
+                        scope_id="access-e2e",
+                        selection=HandoffSelection.EXACT,
+                        revision=committed.reference,
+                    )
+                )
+                assert later_exact.selected_revision == committed.reference
+                assert all(check.status == "available" for check in later_exact.evidence_checks)
                 visible = await receiver.list_access_resources(
                     ListAccessResourcesRequest(
                         action=AccessAction.ARTIFACT_READ,
@@ -238,8 +253,7 @@ def test_scheduled_memory_processing_uses_the_static_service_principal_as_owner(
                     mode="enforced",
                     deployment_id="scheduled-access-e2e",
                 ),
-                auth=AuthenticationConfig(provider="static-bearer", token=SecretStr(token)),
-                authorization_provider="builtin",
+                auth=BearerAuthConfig(token=SecretStr(token)),
                 dashboard=DashboardConfig(enabled=False),
                 metrics=MetricsConfig(enabled=False),
                 mcp=McpConfig(enabled=False),
@@ -290,11 +304,8 @@ def _app(
             database=database,
             access=AccessControlConfig(
                 mode="enforced",
-                static_preset=False,
                 deployment_id=DEPLOYMENT_ID,
             ),
-            auth=AuthenticationConfig(provider="oidc"),
-            authorization_provider="external",
             dashboard=DashboardConfig(enabled=False),
             metrics=MetricsConfig(enabled=False),
             mcp=McpConfig(enabled=False),

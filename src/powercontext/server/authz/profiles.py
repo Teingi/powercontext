@@ -41,7 +41,7 @@ class ArtifactFamilyAccessProfile:
     additional_actions: frozenset[AccessAction]
     grantable_roles: frozenset[AccessRole]
     selector: Literal["forbidden", "memory_entry"]
-    transitivity: Literal["none", "independent_evidence"] = "none"
+    transitivity: Literal["none", "manifest"] = "none"
     mutation_semantics: frozenset[AccessAction] = frozenset()
 
     @property
@@ -66,7 +66,7 @@ ARTIFACT_FAMILY_PROFILES: dict[str, ArtifactFamilyAccessProfile] = {
         }),
         grantable_roles=frozenset({AccessRole.HANDOFF_VIEWER, AccessRole.HANDOFF_RECEIVER}),
         selector="forbidden",
-        transitivity="independent_evidence",
+        transitivity="manifest",
         mutation_semantics=frozenset({AccessAction.ARTIFACT_WRITE}),
     ),
     "memory": ArtifactFamilyAccessProfile(

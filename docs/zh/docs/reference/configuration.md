@@ -42,13 +42,9 @@ Server 配置使用 `POWERCONTEXT_SERVER_` 前缀。
 | `POWERCONTEXT_SERVER_WORKSPACE` | Server 启动目录 | 本机项目级 Agent Skill 目录的解析根目录 |
 | `POWERCONTEXT_SERVER_MCP_ENABLED` | `true` | 启用 Streamable HTTP MCP |
 | `POWERCONTEXT_SERVER_MCP_PATH` | `/mcp` | MCP 路径 |
-| `POWERCONTEXT_SERVER_AUTH_PROVIDER` | 未设置 | Authentication Provider：`static-bearer`、`oidc` 或 `trusted-header`；`enforced` 模式必须设置 |
-| `POWERCONTEXT_SERVER_AUTH_TOKEN` | 未设置 | 静态 Bearer token；仅可与 `AUTH_PROVIDER=static-bearer` 一起使用 |
-| `POWERCONTEXT_SERVER_AUTH_PRINCIPAL_ID` | `server-token` | 静态 token 所代表的部署内全局唯一 Principal ID |
-| `POWERCONTEXT_SERVER_AUTH_PRINCIPAL_DESCRIPTION` | `PowerContext static bearer` | 静态 Principal 的可选展示描述，不参与身份判定 |
-| `POWERCONTEXT_SERVER_ACCESS_MODE` | `disabled` | 唯一安全开关：`disabled` 或 `enforced` |
-| `POWERCONTEXT_SERVER_AUTHORIZATION_PROVIDER` | 未设置 | Authorization Provider：`builtin`、`casbin` 或 `external`；`enforced` 模式必须设置 |
-| `POWERCONTEXT_SERVER_ACCESS_STATIC_PRESET` | `true` | 为单 Principal 静态部署显式写入所需的内置 role |
+| `POWERCONTEXT_SERVER_AUTH_ENABLED` | `false` | 旧静态 Bearer 兼容开关；`true` 自动映射为 `ACCESS_MODE=enforced`，并要求设置 `AUTH_TOKEN` |
+| `POWERCONTEXT_SERVER_AUTH_TOKEN` | 未设置 | 旧静态 Bearer token；未注入 Authentication Provider 时作为兼容认证并映射为内置管理员 |
+| `POWERCONTEXT_SERVER_ACCESS_MODE` | `disabled` | 唯一正式 Access 开关：`disabled` 或 `enforced` |
 | `POWERCONTEXT_SERVER_ACCESS_DEPLOYMENT_ID` | `powercontext` | `server` Access Resource 使用的稳定部署标识 |
 | `POWERCONTEXT_SERVER_ACCESS_BACKGROUND_PRINCIPAL_ID` | 未设置 | 多用户 enforced 部署中供定时任务使用的显式 service Principal |
 | `POWERCONTEXT_SERVER_ACCESS_BACKGROUND_PRINCIPAL_DESCRIPTION` | 未设置 | 定时 service Principal 的可选展示描述 |
@@ -104,15 +100,16 @@ TLS 由上游终止或网络本身受控的场景下，
 显式设置 `POWERCONTEXT_SERVER_ALLOW_UNAUTHENTICATED_NON_LOOPBACK=true` 主动选择接受。通过网络暴露启用鉴权的
 Server 前必须配置 TLS。
 
-`POWERCONTEXT_SERVER_ACCESS_MODE` 是唯一开关。`disabled` 会拒绝 Authentication/Authorization Provider 配置，并在
-可信本地边界内跳过授权决策。`enforced` 必须同时设置 `AUTH_PROVIDER` 和 `AUTHORIZATION_PROVIDER`，启用统一策略执行点，
-并使用所选 Provider 的 Binding 与审计能力。
+`POWERCONTEXT_SERVER_ACCESS_MODE` 是唯一正式开关。`disabled` 在可信本地边界内跳过授权决策；`enforced` 启用统一策略执行点、
+Binding 和审计。Authorization 默认使用 builtin，实现替换通过 `create_server_app(access_control=...)` 注入；Authentication
+通过 `create_server_app(authentication_provider=...)` 注入。若没有注入 Authentication Provider，Server 只接受旧
+`AUTH_TOKEN` 作为静态 Bearer 兼容认证，并把固定的 `server-token` Principal 初始化为内置管理员。两者都没有时拒绝启动。
+旧 `AUTH_ENABLED=true + AUTH_TOKEN` 配置会自动映射为 `ACCESS_MODE=enforced`。
 
 Authentication 负责建立 Principal，Access Control 负责判断该 Principal 能做什么。Principal ID 是部署内全局唯一且不复用
 的标识；`description` 只用于展示，不参与身份判定。内置静态 token 始终只代表一个 service Principal，因此不能区分
-用户 A 和用户 B。使用内置 Authorization Provider 时，`ACCESS_STATIC_PRESET=true` 会为这个 Principal 显式写入 Server
-与各 scope 所需的 role。需要让不同用户或 group 获得不同权限时，应使用 `oidc` 或 `trusted-header`，并注入部署侧
-Authentication Provider 与合适的 Authorization Provider。
+用户 A 和用户 B。兼容静态 token 会为这个 Principal 显式写入 Server 与各 scope 所需的 role。需要让不同用户或 group
+获得不同权限时，应注入部署侧 Authentication Provider 与相应的 AccessControlService。
 
 定时 Source 处理和 Experience 孵化使用固定静态 Principal，或 `ACCESS_BACKGROUND_PRINCIPAL_ID` 指定的 service Principal。
 该 Principal 必须在每个被处理的 scope 上拥有 `scope.contribute`；新 Memory Entry 和 Candidate 会保留它作为直接 owner 或
@@ -179,7 +176,7 @@ powercontext --server-url http://powercontext.internal.example:8765 \
 示例中的非 loopback opt-in 与 Receiver 传输例外彼此独立：它表示操作者接受该监听器上的所有 Server route 在没有
 Server 级 Bearer token 时可达。部署条件允许时，应优先启用鉴权，或在仅绑定 loopback 的 Server 前终止 TLS。
 
-在 `AUTH_PROVIDER=static-bearer` 且 `enforced` 时，`/`、`/skills`、`/reviews`、`/handoff-reports` 的 HTML 外壳及其静态资源仍保持公开，以便
+使用兼容静态 Bearer 且 `enforced` 时，`/`、`/skills`、`/reviews`、`/handoff-reports` 的 HTML 外壳及其静态资源仍保持公开，以便
 浏览器渲染登录表单；数据请求仍受鉴权保护。在表单中输入 Server token 后，浏览器只把它保存在当前标签页的 session
 storage 中。如果连这些登录页也不能暴露，应同时关闭 Dashboard 和 Handoff Report。
 
