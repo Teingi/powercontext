@@ -65,9 +65,9 @@ class AccessConflictError(AccessControlError, RuntimeError):
         self.code = code
         messages = {
             "artifact-owner": "the logical Artifact already has a different owner",
+            "binding_cardinality_conflict": "the Access role already has the maximum active Bindings for this resource",
             "binding-version": "the Access Binding version is stale",
             "candidate-owner": "the Candidate is already locked to a different proposed owner",
-            "handoff_receiver_conflict": "the logical Handoff already has an active receiver",
             "idempotency-key": "the Access Binding idempotency key was reused with different input",
             "access_cursor_stale": "the Access cursor belongs to an older policy revision",
         }

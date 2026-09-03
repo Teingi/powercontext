@@ -32,21 +32,25 @@ from powercontext.builtin.runtime import DatabaseConfig
 from powercontext.server.authz import (
     AccessAction,
     AccessAuditContext,
+    AccessBinding,
+    AccessConflictError,
     AccessDeniedError,
     AccessResourceType,
     AccessRole,
+    BindingReplacement,
     CreateBinding,
     PrincipalRef,
+    ReplaceBinding,
     ResourceRef,
 )
 from powercontext.server.authz.composition import open_builtin_access_control
 from powercontext.server.authz.repository import (
     ACCESS_AUDIT_EVENTS_TABLE,
+    ACCESS_BINDING_LEASES_TABLE,
     ACCESS_BINDINGS_TABLE,
     ACCESS_CANDIDATE_OWNERS_TABLE,
     ACCESS_IDEMPOTENCY_TABLE,
     ACCESS_OWNERS_TABLE,
-    ACCESS_RECEIVER_LEASES_TABLE,
 )
 from powercontext.server.settings import ServerSettings
 
@@ -64,6 +68,11 @@ def test_configured_database_persists_exact_skill_grant_and_revocation(pytestcon
     deployment_id = f"configured-real-access-{suffix}"
     admin = PrincipalRef(type="service", id=f"{deployment_id}:admin")
     receiver = PrincipalRef(type="user", id=f"{deployment_id}:receiver")
+    competing_receiver = PrincipalRef(type="user", id=f"{deployment_id}:competing-receiver")
+    replacement_receivers = (
+        PrincipalRef(type="user", id=f"{deployment_id}:replacement-a"),
+        PrincipalRef(type="user", id=f"{deployment_id}:replacement-b"),
+    )
 
     async def scenario() -> None:
         exact = ResourceRef.artifact(
@@ -76,7 +85,13 @@ def test_configured_database_persists_exact_skill_grant_and_revocation(pytestcon
             family="skill",
             artifact_id=f"other-skill-{suffix}",
         )
+        handoff = ResourceRef.artifact(
+            scope_id,
+            family="handoff",
+            artifact_id=f"handoff-{suffix}",
+        )
         context = AccessAuditContext(transport="test", operation="configured-real-access")
+        persisted_receiver: PrincipalRef | None = None
         try:
             async with open_builtin_access_control(
                 settings.database,
@@ -93,6 +108,12 @@ def test_configured_database_persists_exact_skill_grant_and_revocation(pytestcon
                     other,
                     admin,
                     idempotency_key=f"owner-other-skill-{suffix}",
+                    context=context,
+                )
+                await access.establish_artifact_owner(
+                    handoff,
+                    admin,
+                    idempotency_key=f"owner-handoff-{suffix}",
                     context=context,
                 )
                 binding = await access.create_binding(
@@ -140,12 +161,91 @@ def test_configured_database_persists_exact_skill_grant_and_revocation(pytestcon
                         context=context,
                     )
                 ).total == 0
+
+                async def create_receiver(subject: PrincipalRef) -> AccessBinding:
+                    return await access.create_binding(
+                        admin,
+                        CreateBinding(
+                            subject=subject,
+                            resource=handoff,
+                            role=AccessRole.HANDOFF_RECEIVER,
+                            idempotency_key=f"handoff-receiver-{subject.id}",
+                        ),
+                        context=context,
+                    )
+
+                create_results = await asyncio.gather(
+                    create_receiver(receiver),
+                    create_receiver(competing_receiver),
+                    return_exceptions=True,
+                )
+                created = [result for result in create_results if isinstance(result, AccessBinding)]
+                create_conflicts = [result for result in create_results if isinstance(result, AccessConflictError)]
+                assert len(created) == 1
+                assert len(create_conflicts) == 1
+
+                original = created[0]
+
+                async def replace_receiver(subject: PrincipalRef) -> BindingReplacement:
+                    return await access.replace_binding(
+                        admin,
+                        ReplaceBinding(
+                            binding_id=original.binding_id,
+                            expected_version=original.version,
+                            subject=subject,
+                            idempotency_key=f"replace-handoff-receiver-{subject.id}",
+                        ),
+                        context=context,
+                    )
+
+                replace_results = await asyncio.gather(
+                    *(replace_receiver(subject) for subject in replacement_receivers),
+                    return_exceptions=True,
+                )
+                replacements = [result for result in replace_results if isinstance(result, BindingReplacement)]
+                replace_conflicts = [result for result in replace_results if isinstance(result, AccessConflictError)]
+                assert len(replacements) == 1
+                assert len(replace_conflicts) == 1
+                replacement = replacements[0]
+                assert (
+                    await access.replace_binding(
+                        admin,
+                        ReplaceBinding(
+                            binding_id=original.binding_id,
+                            expected_version=original.version,
+                            subject=replacement.current.subject,
+                            idempotency_key=replacement.current.idempotency_key,
+                        ),
+                        context=context,
+                    )
+                ) == replacement
+                assert isinstance(replacement.current.subject, PrincipalRef)
+                persisted_receiver = replacement.current.subject
+
+            assert persisted_receiver is not None
+            async with open_builtin_access_control(
+                settings.database,
+                deployment_id=deployment_id,
+            ) as reopened:
+                assert (
+                    await reopened.require(
+                        persisted_receiver,
+                        AccessAction.HANDOFF_ACKNOWLEDGE,
+                        handoff,
+                        context=context,
+                    )
+                ).allowed
         finally:
             remaining = await _purge_scope(
                 settings.database,
                 scope_id=scope_id,
                 deployment_id=deployment_id,
-                actor_ids=(admin.id, receiver.id),
+                actor_ids=(
+                    admin.id,
+                    receiver.id,
+                    competing_receiver.id,
+                    *(principal.id for principal in replacement_receivers),
+                ),
             )
             assert remaining == 0
 
@@ -169,8 +269,8 @@ async def _purge_scope(
             )
         )
         await connection.execute(
-            delete(ACCESS_RECEIVER_LEASES_TABLE).where(
-                ACCESS_RECEIVER_LEASES_TABLE.c.binding_id.in_(
+            delete(ACCESS_BINDING_LEASES_TABLE).where(
+                ACCESS_BINDING_LEASES_TABLE.c.binding_id.in_(
                     select(ACCESS_BINDINGS_TABLE.c.binding_id).where(
                         or_(
                             ACCESS_BINDINGS_TABLE.c.scope_id == scope_id,

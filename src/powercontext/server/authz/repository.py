@@ -48,12 +48,14 @@ from powercontext.limits import (
 )
 from powercontext.server.authz.errors import AccessConflictError, AccessInvalidRequestError
 from powercontext.server.authz.models import (
+    ROLE_CARDINALITIES,
     AccessAction,
     AccessAuditEvent,
     AccessBinding,
     AccessBindingState,
     AccessResourceType,
     AccessRole,
+    AccessRoleCardinality,
     AccessSubjectRef,
     ArtifactOwnerRelation,
     CandidateOwnerAttestation,
@@ -62,7 +64,7 @@ from powercontext.server.authz.models import (
     PrincipalRef,
     ResourceRef,
 )
-from powercontext.server.authz.service import BindingSearchRequest, HandoffReceiverReassignment, ReassignHandoffReceiver
+from powercontext.server.authz.service import BindingReplacement, BindingSearchRequest, ReplaceBinding
 
 ACCESS_METADATA = MetaData()
 
@@ -124,10 +126,11 @@ ACCESS_OWNERS_TABLE = Table(
     Column("idempotency_key", identity_string(255), nullable=False),
 )
 
-ACCESS_RECEIVER_LEASES_TABLE = Table(
-    "pc_access_handoff_receiver_leases",
+ACCESS_BINDING_LEASES_TABLE = Table(
+    "pc_access_binding_leases",
     ACCESS_METADATA,
     Column("resource_key_hash", identity_string(64), primary_key=True),
+    Column("role", identity_string(32), primary_key=True),
     Column("binding_id", identity_string(64), unique=True),
 )
 
@@ -199,7 +202,7 @@ ACCESS_TABLES = (
     ACCESS_BINDINGS_TABLE,
     ACCESS_OWNERS_TABLE,
     ACCESS_CANDIDATE_OWNERS_TABLE,
-    ACCESS_RECEIVER_LEASES_TABLE,
+    ACCESS_BINDING_LEASES_TABLE,
     ACCESS_IDEMPOTENCY_TABLE,
     ACCESS_AUDIT_EVENTS_TABLE,
 )
@@ -399,8 +402,8 @@ class RelationalAccessRepository:
                 if row is None:
                     raise AccessConflictError("idempotency-key")
                 return _decode_binding(row)
-            if binding.role is AccessRole.HANDOFF_RECEIVER:
-                await _claim_receiver_lease(connection, binding, now=binding.created_at)
+            if ROLE_CARDINALITIES[binding.role] is AccessRoleCardinality.ONE_PER_RESOURCE:
+                await _claim_singleton_binding_lease(connection, binding, now=binding.created_at)
             revision = await self._increment_policy_revision(connection)
             created = replace(binding, policy_revision=str(revision))
             try:
@@ -467,10 +470,10 @@ class RelationalAccessRepository:
             )
             if result.rowcount != 1:
                 raise AccessConflictError("binding-version")
-            if current.role is AccessRole.HANDOFF_RECEIVER:
+            if ROLE_CARDINALITIES[current.role] is AccessRoleCardinality.ONE_PER_RESOURCE:
                 await connection.execute(
-                    update(ACCESS_RECEIVER_LEASES_TABLE)
-                    .where(ACCESS_RECEIVER_LEASES_TABLE.c.binding_id == binding_id)
+                    update(ACCESS_BINDING_LEASES_TABLE)
+                    .where(ACCESS_BINDING_LEASES_TABLE.c.binding_id == binding_id)
                     .values(binding_id=None)
                 )
             await _record_idempotency(
@@ -483,14 +486,14 @@ class RelationalAccessRepository:
             )
         return revoked
 
-    async def reassign_handoff_receiver(
+    async def replace_binding(
         self,
-        request: ReassignHandoffReceiver,
+        request: ReplaceBinding,
         /,
         *,
         actor: PrincipalRef,
         changed_at: datetime,
-    ) -> HandoffReceiverReassignment:
+    ) -> BindingReplacement:
         payload_hash = _digest(
             "\0".join((
                 request.binding_id,
@@ -506,7 +509,7 @@ class RelationalAccessRepository:
                 connection,
                 actor=actor,
                 key=request.idempotency_key,
-                operation="handoff.receiver.reassign",
+                operation="binding.replace",
                 payload_hash=payload_hash,
             )
             if replay is not None:
@@ -514,30 +517,14 @@ class RelationalAccessRepository:
                 new_row = None if replay[1] is None else await _binding_by_id(connection, replay[1])
                 if old_row is None or new_row is None:
                     raise AccessConflictError("idempotency-key")
-                return HandoffReceiverReassignment(_decode_binding(old_row), _decode_binding(new_row))
+                return BindingReplacement(_decode_binding(old_row), _decode_binding(new_row))
             old_row = await _binding_by_id(connection, request.binding_id, for_update=True)
             if old_row is None:
                 raise AccessConflictError("binding-version")
             old = _decode_binding(old_row)
-            if (
-                old.role is not AccessRole.HANDOFF_RECEIVER
-                or old.version != request.expected_version
-                or old.state is not AccessBindingState.ACTIVE
-            ):
+            if old.version != request.expected_version or old.state is not AccessBindingState.ACTIVE:
                 raise AccessConflictError("binding-version")
-            lease = (
-                (
-                    await connection.execute(
-                        select(ACCESS_RECEIVER_LEASES_TABLE)
-                        .where(ACCESS_RECEIVER_LEASES_TABLE.c.resource_key_hash == _digest(old.resource.key))
-                        .with_for_update()
-                    )
-                )
-                .mappings()
-                .one_or_none()
-            )
-            if lease is None or lease["binding_id"] != old.binding_id:
-                raise AccessConflictError("handoff_receiver_conflict")
+            has_singleton_lease = await _lock_singleton_binding_lease(connection, old)
             revision = await self._increment_policy_revision(connection)
             revoked = replace(
                 old,
@@ -551,7 +538,7 @@ class RelationalAccessRepository:
                 binding_id=f"bind_{sha256(f'{request.idempotency_key}:{old.binding_id}'.encode()).hexdigest()[:32]}",
                 subject=request.subject,
                 resource=old.resource,
-                role=AccessRole.HANDOFF_RECEIVER,
+                role=old.role,
                 granted_by=actor,
                 reason=request.reason,
                 created_at=changed_at,
@@ -574,28 +561,24 @@ class RelationalAccessRepository:
                 raise AccessConflictError("binding-version")
             try:
                 await connection.execute(insert(ACCESS_BINDINGS_TABLE).values(_binding_row(created)))
-                lease_result = await connection.execute(
-                    update(ACCESS_RECEIVER_LEASES_TABLE)
-                    .where(
-                        ACCESS_RECEIVER_LEASES_TABLE.c.resource_key_hash == _digest(old.resource.key),
-                        ACCESS_RECEIVER_LEASES_TABLE.c.binding_id == old.binding_id,
-                    )
-                    .values(binding_id=created.binding_id)
+                await _transfer_singleton_binding_lease(
+                    connection,
+                    previous=old,
+                    current=created,
+                    required=has_singleton_lease,
                 )
-                if lease_result.rowcount != 1:
-                    raise AccessConflictError("handoff_receiver_conflict")
                 await _record_idempotency(
                     connection,
                     actor=actor,
                     key=request.idempotency_key,
-                    operation="handoff.receiver.reassign",
+                    operation="binding.replace",
                     payload_hash=payload_hash,
                     result_binding_id=old.binding_id,
                     secondary_binding_id=created.binding_id,
                 )
             except IntegrityError as error:
                 raise AccessConflictError("idempotency-key") from error
-        return HandoffReceiverReassignment(revoked, created)
+        return BindingReplacement(revoked, created)
 
     async def append_audit(self, event: AccessAuditEvent, /) -> AccessAuditEvent:
         async with self._database.transaction() as connection:
@@ -726,13 +709,16 @@ async def _record_idempotency(
     )
 
 
-async def _claim_receiver_lease(connection: Any, binding: AccessBinding, *, now: datetime) -> None:
+async def _claim_singleton_binding_lease(connection: Any, binding: AccessBinding, *, now: datetime) -> None:
     resource_hash = _digest(binding.resource.key)
     lease = (
         (
             await connection.execute(
-                select(ACCESS_RECEIVER_LEASES_TABLE)
-                .where(ACCESS_RECEIVER_LEASES_TABLE.c.resource_key_hash == resource_hash)
+                select(ACCESS_BINDING_LEASES_TABLE)
+                .where(
+                    ACCESS_BINDING_LEASES_TABLE.c.resource_key_hash == resource_hash,
+                    ACCESS_BINDING_LEASES_TABLE.c.role == binding.role.value,
+                )
                 .with_for_update()
             )
         )
@@ -742,31 +728,83 @@ async def _claim_receiver_lease(connection: Any, binding: AccessBinding, *, now:
     if lease is None:
         try:
             await connection.execute(
-                insert(ACCESS_RECEIVER_LEASES_TABLE).values(
+                insert(ACCESS_BINDING_LEASES_TABLE).values(
                     resource_key_hash=resource_hash,
+                    role=binding.role.value,
                     binding_id=binding.binding_id,
                 )
             )
         except IntegrityError as error:
-            raise AccessConflictError("handoff_receiver_conflict") from error
+            raise AccessConflictError("binding_cardinality_conflict") from error
         else:
             return
     prior_id = None if lease["binding_id"] is None else str(lease["binding_id"])
     prior_row = None if prior_id is None else await _binding_by_id(connection, prior_id, for_update=True)
+    if prior_id is not None and prior_row is None:
+        # A concurrent transaction may have claimed the lease while its new
+        # Binding is not yet visible in this transaction's snapshot. Treat a
+        # non-null lease without a visible Binding as occupied; reclaiming it
+        # here can admit two active singleton Bindings on OceanBase.
+        raise AccessConflictError("binding_cardinality_conflict")
     if prior_row is not None and _decode_binding(prior_row).active_at(now):
-        raise AccessConflictError("handoff_receiver_conflict")
+        raise AccessConflictError("binding_cardinality_conflict")
     result = await connection.execute(
-        update(ACCESS_RECEIVER_LEASES_TABLE)
+        update(ACCESS_BINDING_LEASES_TABLE)
         .where(
-            ACCESS_RECEIVER_LEASES_TABLE.c.resource_key_hash == resource_hash,
-            ACCESS_RECEIVER_LEASES_TABLE.c.binding_id.is_(None)
+            ACCESS_BINDING_LEASES_TABLE.c.resource_key_hash == resource_hash,
+            ACCESS_BINDING_LEASES_TABLE.c.role == binding.role.value,
+            ACCESS_BINDING_LEASES_TABLE.c.binding_id.is_(None)
             if prior_id is None
-            else ACCESS_RECEIVER_LEASES_TABLE.c.binding_id == prior_id,
+            else ACCESS_BINDING_LEASES_TABLE.c.binding_id == prior_id,
         )
         .values(binding_id=binding.binding_id)
     )
     if result.rowcount != 1:
-        raise AccessConflictError("handoff_receiver_conflict")
+        raise AccessConflictError("binding_cardinality_conflict")
+
+
+async def _lock_singleton_binding_lease(connection: Any, binding: AccessBinding) -> bool:
+    if ROLE_CARDINALITIES[binding.role] is not AccessRoleCardinality.ONE_PER_RESOURCE:
+        return False
+    lease = (
+        (
+            await connection.execute(
+                select(ACCESS_BINDING_LEASES_TABLE)
+                .where(
+                    ACCESS_BINDING_LEASES_TABLE.c.resource_key_hash == _digest(binding.resource.key),
+                    ACCESS_BINDING_LEASES_TABLE.c.role == binding.role.value,
+                )
+                .with_for_update()
+            )
+        )
+        .mappings()
+        .one_or_none()
+    )
+    if lease is None or lease["binding_id"] != binding.binding_id:
+        raise AccessConflictError("binding_cardinality_conflict")
+    return True
+
+
+async def _transfer_singleton_binding_lease(
+    connection: Any,
+    *,
+    previous: AccessBinding,
+    current: AccessBinding,
+    required: bool,
+) -> None:
+    if not required:
+        return
+    result = await connection.execute(
+        update(ACCESS_BINDING_LEASES_TABLE)
+        .where(
+            ACCESS_BINDING_LEASES_TABLE.c.resource_key_hash == _digest(previous.resource.key),
+            ACCESS_BINDING_LEASES_TABLE.c.role == previous.role.value,
+            ACCESS_BINDING_LEASES_TABLE.c.binding_id == previous.binding_id,
+        )
+        .values(binding_id=current.binding_id)
+    )
+    if result.rowcount != 1:
+        raise AccessConflictError("binding_cardinality_conflict")
 
 
 def _boundary_predicates(resource: ResourceRef, *, audit: bool = False) -> tuple[Any, ...]:

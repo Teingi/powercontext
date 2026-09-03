@@ -141,8 +141,9 @@ def test_source_cursor_initial_creation_avoids_savepoints_on_mysql_compatible_co
             def __init__(self) -> None:
                 self.executions = 0
 
-            async def execute(self, _statement: object) -> None:
+            async def execute(self, _statement: object) -> SimpleNamespace:
                 self.executions += 1
+                return SimpleNamespace(rowcount=1)
 
             def begin_nested(self) -> None:
                 raise AssertionError

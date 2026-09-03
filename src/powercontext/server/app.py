@@ -305,9 +305,8 @@ from powercontext.http import (
 from powercontext.http import (
     AccessAuditPage,
     AccessBindingPage,
-    AccessCheckBatchRequest,
-    AccessCheckBatchResponse,
     AccessCheckRequest,
+    AccessCheckResponse,
     AccessMeResponse,
     AccessProviderCapabilities,
     AccessResourcePage,
@@ -406,7 +405,6 @@ from powercontext.http import (
     PurgeHandoffReportActivitiesResponse,
     ReadinessResponse,
     ReadinessStatus,
-    ReassignHandoffReceiverRequest,
     ReconcileRemoteSkillsRequest,
     ReconcileRemoteSkillsResponse,
     RecordHandoffReportActivityRequest,
@@ -425,6 +423,7 @@ from powercontext.http import (
     RemoteSkillTargetEnrollment,
     RemoteSkillTargetStatus,
     RenameRemoteSkillTargetRequest,
+    ReplaceAccessBindingRequest,
     ResolveExternalSkillRequest,
     RetireMemoryEntryRequest,
     ReviseArtifactCandidateRequest,
@@ -460,6 +459,9 @@ from powercontext.http import (
     AccessBinding as TransportAccessBinding,
 )
 from powercontext.http import (
+    AccessBindingReplacement as TransportAccessBindingReplacement,
+)
+from powercontext.http import (
     AccessBindingState as TransportAccessBindingState,
 )
 from powercontext.http import (
@@ -481,6 +483,9 @@ from powercontext.http import (
     AccessRole as TransportAccessRole,
 )
 from powercontext.http import (
+    AccessRoleCardinality as TransportAccessRoleCardinality,
+)
+from powercontext.http import (
     AccessRoleDescriptor as TransportAccessRoleDescriptor,
 )
 from powercontext.http import (
@@ -500,9 +505,6 @@ from powercontext.http import (
 )
 from powercontext.http import (
     HandoffDraft as TransportHandoffDraft,
-)
-from powercontext.http import (
-    HandoffReceiverReassignment as TransportHandoffReceiverReassignment,
 )
 from powercontext.http import (
     HandoffResolution as TransportHandoffResolution,
@@ -536,7 +538,6 @@ from powercontext.http._generated.operations import (
     ATTACH_HANDOFF_REPORT_WORKSPACE,
     CAPTURE_CONTENT_SOURCE,
     CHECK_ACCESS,
-    CHECK_ACCESS_BATCH,
     COMMIT_CONNECTOR_CHECKPOINT,
     COMMIT_HANDOFF,
     CONTINUE_HANDOFF,
@@ -592,7 +593,6 @@ from powercontext.http._generated.operations import (
     PUBLISH_MANAGED_SKILL,
     PUBLISH_REMOTE_SKILL,
     PURGE_HANDOFF_REPORT_ACTIVITIES,
-    REASSIGN_HANDOFF_RECEIVER_BINDING,
     RECONCILE_REMOTE_SKILLS,
     RECORD_HANDOFF_REPORT_ACTIVITY,
     RECORD_REMOTE_SKILL_RECEIPT,
@@ -603,6 +603,7 @@ from powercontext.http._generated.operations import (
     REJECT_ARTIFACT_CANDIDATE,
     REMEMBER_MEMORY,
     RENAME_REMOTE_SKILL_TARGET,
+    REPLACE_ACCESS_BINDING,
     RESOLVE_EXTERNAL_SKILL,
     RETIRE_MEMORY_ENTRY,
     REVISE_ARTIFACT_CANDIDATE,
@@ -647,11 +648,11 @@ from powercontext.server.authz import (
     GroupRef,
     MemoryEntrySelector,
     PrincipalRef,
-    ReassignHandoffReceiver,
+    ReplaceBinding,
     ResourceRef,
     access_control_for_mode,
 )
-from powercontext.server.authz.models import ROLE_ACTIONS, ROLE_RESOURCE_TYPES, ROLE_SUBJECT_TYPES
+from powercontext.server.authz.models import ROLE_ACTIONS, ROLE_CARDINALITIES, ROLE_RESOURCE_TYPES, ROLE_SUBJECT_TYPES
 from powercontext.server.authz.profiles import ARTIFACT_FAMILY_PROFILES, artifact_family_profile
 from powercontext.server.context import (
     bind_request_id,
@@ -1100,13 +1101,12 @@ def create_app(
     _add_route(app, GET_STATS, get_stats)
     _add_route(app, GET_ACCESS_PRINCIPAL, get_access_principal)
     _add_route(app, CHECK_ACCESS, check_access)
-    _add_route(app, CHECK_ACCESS_BATCH, check_access_batch)
     _add_route(app, LIST_ACCESS_RESOURCES, list_access_resources)
     _add_route(app, LIST_ACCESS_ROLES, list_access_roles)
     _add_route(app, LIST_ACCESS_BINDINGS, list_access_bindings)
     _add_route(app, CREATE_ACCESS_BINDING, create_access_binding)
     _add_route(app, REVOKE_ACCESS_BINDING, revoke_access_binding)
-    _add_route(app, REASSIGN_HANDOFF_RECEIVER_BINDING, reassign_handoff_receiver_binding)
+    _add_route(app, REPLACE_ACCESS_BINDING, replace_access_binding)
     _add_route(app, LIST_ACCESS_AUDIT, list_access_audit)
     if handoff_report_enabled:
         _add_route(app, CREATE_HANDOFF_REPORT_PROJECT, create_handoff_report_project)
@@ -1299,26 +1299,26 @@ async def get_access_principal(request: Request) -> AccessMeResponse:
     )
 
 
-async def check_access(payload: AccessCheckRequest, request: Request) -> TransportAccessDecision:
+async def check_access(payload: AccessCheckRequest, request: Request) -> AccessCheckResponse:
     access = _require_access_control(request)
-    decision = await access.check(
-        _require_principal(),
-        AccessAction(payload.action.value),
-        _access_resource(payload.resource),
-        context=_access_audit_context(CHECK_ACCESS.operation_id),
+    requirements = tuple(
+        (AccessAction(requirement.action.value), _access_resource(requirement.resource))
+        for requirement in payload.requirements
     )
-    return _access_decision_response(decision)
-
-
-async def check_access_batch(payload: AccessCheckBatchRequest, request: Request) -> AccessCheckBatchResponse:
-    access = _require_access_control(request)
-    checks = tuple((AccessAction(check.action.value), _access_resource(check.resource)) for check in payload.checks)
     decisions = await access.check_batch(
         _require_principal(),
-        checks,
-        context=_access_audit_context(CHECK_ACCESS_BATCH.operation_id),
+        requirements,
+        context=_access_audit_context(CHECK_ACCESS.operation_id),
     )
-    return AccessCheckBatchResponse(decisions=[_access_decision_response(decision) for decision in decisions])
+    allowed = (
+        all(decision.allowed for decision in decisions)
+        if payload.match.value == "all"
+        else any(decision.allowed for decision in decisions)
+    )
+    return AccessCheckResponse(
+        allowed=allowed,
+        decisions=[_access_decision_response(decision) for decision in decisions],
+    )
 
 
 async def list_access_resources(payload: ListAccessResourcesRequest, request: Request) -> AccessResourcePage:
@@ -1467,6 +1467,7 @@ async def list_access_roles(payload: ListAccessRolesRequest, request: Request) -
             TransportAccessRoleDescriptor(
                 role=TransportAccessRole(role.value),
                 resource_type=TransportAccessResourceType(ROLE_RESOURCE_TYPES[role].value),
+                cardinality=TransportAccessRoleCardinality(ROLE_CARDINALITIES[role].value),
                 actions=[
                     TransportAccessAction(action.value)
                     for action in sorted(ROLE_ACTIONS[role], key=str)
@@ -1541,26 +1542,26 @@ async def revoke_access_binding(payload: RevokeAccessBindingRequest, request: Re
     return _access_binding_response(binding)
 
 
-async def reassign_handoff_receiver_binding(
-    payload: ReassignHandoffReceiverRequest,
+async def replace_access_binding(
+    payload: ReplaceAccessBindingRequest,
     request: Request,
-) -> TransportHandoffReceiverReassignment:
+) -> TransportAccessBindingReplacement:
     access = _require_access_control(request)
-    result = await access.reassign_handoff_receiver(
+    result = await access.replace_binding(
         _require_principal(),
-        ReassignHandoffReceiver(
+        ReplaceBinding(
             binding_id=payload.binding_id,
             expected_version=payload.expected_version,
-            subject=_access_principal(payload.subject),
+            subject=_access_subject(payload.replacement.subject),
             idempotency_key=payload.idempotency_key,
-            reason=payload.reason,
-            expires_at=payload.expires_at,
+            reason=payload.replacement.reason,
+            expires_at=payload.replacement.expires_at,
         ),
-        context=_access_audit_context(REASSIGN_HANDOFF_RECEIVER_BINDING.operation_id),
+        context=_access_audit_context(REPLACE_ACCESS_BINDING.operation_id),
     )
-    return TransportHandoffReceiverReassignment(
-        revoked_binding=_access_binding_response(result.revoked_binding),
-        created_binding=_access_binding_response(result.created_binding),
+    return TransportAccessBindingReplacement(
+        previous=_access_binding_response(result.previous),
+        current=_access_binding_response(result.current),
     )
 
 
@@ -2366,6 +2367,7 @@ async def download_skill_package(
 async def propose_skill_package(
     request: ProposeSkillPackageRequest,
     application: Annotated[ServerApplication, Depends(_require_application)],
+    http_request: Request,
 ) -> ArtifactCandidate:
     try:
         archive_bytes = base64.b64decode(request.archive_base64, validate=True)
@@ -2379,6 +2381,13 @@ async def propose_skill_package(
         )
     except ValueError as error:
         raise InvalidRuntimeRequestError("skill-package") from error
+    await _attest_candidate_owner(
+        http_request,
+        scope_id=request.scope_id,
+        candidate_id=candidate.candidate_id,
+        family=candidate.family,
+        target=candidate.target,
+    )
     return mapping.candidate_response(candidate)
 
 
@@ -3411,14 +3420,16 @@ def _skill_identity_write_access(
     payload: Mapping[str, Any],
     _deployment_id: str,
 ) -> tuple[tuple[AccessAction, ResourceRef], ...]:
-    return ((
-        AccessAction.ARTIFACT_WRITE,
-        ResourceRef.artifact(
-            _nested_request_value(payload, "scope_id"),
-            family="skill",
-            artifact_id=_nested_request_value(payload, "artifact_id"),
+    return (
+        (
+            AccessAction.ARTIFACT_WRITE,
+            ResourceRef.artifact(
+                _nested_request_value(payload, "scope_id"),
+                family="skill",
+                artifact_id=_nested_request_value(payload, "artifact_id"),
+            ),
         ),
-    ),)
+    )
 
 
 def _skill_usage_access(

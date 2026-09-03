@@ -75,6 +75,13 @@ class AccessRole(StrEnum):
     SERVER_ADMIN = "server.admin"
 
 
+class AccessRoleCardinality(StrEnum):
+    """Number of active assignments allowed for one role and resource."""
+
+    MANY_PER_RESOURCE = "many_per_resource"
+    ONE_PER_RESOURCE = "one_per_resource"
+
+
 class AccessBindingState(StrEnum):
     """Lifecycle state of an immutable role assignment."""
 
@@ -409,6 +416,13 @@ ROLE_RESOURCE_TYPES: dict[AccessRole, AccessResourceType] = {
 }
 
 
+ROLE_CARDINALITIES: dict[AccessRole, AccessRoleCardinality] = dict.fromkeys(
+    AccessRole, AccessRoleCardinality.MANY_PER_RESOURCE
+)
+ROLE_CARDINALITIES[AccessRole.HANDOFF_RECEIVER] = AccessRoleCardinality.ONE_PER_RESOURCE
+ROLE_CARDINALITIES[AccessRole.ARTIFACT_OWNER] = AccessRoleCardinality.ONE_PER_RESOURCE
+
+
 ROLE_SUBJECT_TYPES: dict[AccessRole, frozenset[str]] = {
     role: frozenset({"user", "service", "group"}) for role in AccessRole
 }
@@ -428,6 +442,7 @@ __all__ = (
     "DEFAULT_DEPLOYMENT_ID",
     "PUBLIC_ACCESS_ACTIONS",
     "ROLE_ACTIONS",
+    "ROLE_CARDINALITIES",
     "ROLE_CHILD_ACTIONS",
     "ROLE_RESOURCE_TYPES",
     "ROLE_SUBJECT_TYPES",
@@ -438,6 +453,7 @@ __all__ = (
     "AccessDecision",
     "AccessResourceType",
     "AccessRole",
+    "AccessRoleCardinality",
     "AccessSubjectRef",
     "ArtifactIdentity",
     "ArtifactOwnerRelation",

@@ -166,7 +166,12 @@ class AccessDecision(BaseModel):
     reason_code: Annotated[StrictStr, Field(max_length=64, min_length=1)]
 
 
-class AccessCheckRequest(BaseModel):
+class AccessRequirementMatch(StrEnum):
+    ALL = "all"
+    ANY = "any"
+
+
+class AccessCheckRequirement(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
     )
@@ -174,18 +179,20 @@ class AccessCheckRequest(BaseModel):
     resource: AccessResource
 
 
-class AccessCheckBatchRequest(BaseModel):
+class AccessCheckRequest(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
     )
-    checks: Annotated[list[AccessCheckRequest], Field(max_length=100, min_length=1)]
+    match: AccessRequirementMatch
+    requirements: Annotated[list[AccessCheckRequirement], Field(max_length=100, min_length=1)]
 
 
-class AccessCheckBatchResponse(BaseModel):
+class AccessCheckResponse(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
     )
-    decisions: Annotated[list[AccessDecision], Field(max_length=100)]
+    allowed: StrictBool
+    decisions: Annotated[list[AccessDecision], Field(max_length=100, min_length=1)]
 
 
 class ListAccessResourcesRequest(BaseModel):
@@ -223,6 +230,11 @@ class AccessRole(StrEnum):
     SERVER_ADMIN = "server.admin"
 
 
+class AccessRoleCardinality(StrEnum):
+    MANY_PER_RESOURCE = "many_per_resource"
+    ONE_PER_RESOURCE = "one_per_resource"
+
+
 class ListAccessRolesRequest(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
@@ -247,6 +259,7 @@ class AccessRoleDescriptor(BaseModel):
     )
     role: AccessRole
     resource_type: AccessResourceType
+    cardinality: AccessRoleCardinality
     actions: list[AccessAction]
     artifact_families: list[ArtifactFamily]
     assignable_subject_types: list[AssignableSubjectType]
@@ -326,24 +339,31 @@ class RevokeAccessBindingRequest(BaseModel):
     idempotency_key: Annotated[StrictStr, Field(max_length=255, min_length=1)]
 
 
-class ReassignHandoffReceiverRequest(BaseModel):
+class AccessBindingReplacementInput(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    subject: AccessSubject
+    reason: Annotated[StrictStr | None, Field(max_length=1024)] = None
+    expires_at: AwareDatetime | None = None
+
+
+class ReplaceAccessBindingRequest(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
     )
     binding_id: Annotated[StrictStr, Field(max_length=64, min_length=1)]
     expected_version: Annotated[StrictInt, Field(ge=1)]
-    subject: AccessPrincipal
-    expires_at: AwareDatetime | None = None
-    reason: Annotated[StrictStr | None, Field(max_length=1024)] = None
+    replacement: AccessBindingReplacementInput
     idempotency_key: Annotated[StrictStr, Field(max_length=255, min_length=1)]
 
 
-class HandoffReceiverReassignment(BaseModel):
+class AccessBindingReplacement(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
     )
-    revoked_binding: AccessBinding
-    created_binding: AccessBinding
+    previous: AccessBinding
+    current: AccessBinding
 
 
 class Result(StrEnum):

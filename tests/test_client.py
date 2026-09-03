@@ -32,11 +32,17 @@ from powercontext.client.settings import ClientSettings
 from powercontext.http import (
     AccessAction,
     AccessArtifactIdentity,
+    AccessBindingReplacementInput,
     AccessCheckRequest,
+    AccessCheckRequirement,
+    AccessPrincipal,
+    AccessRequirementMatch,
     AccessResource,
+    AccessSubject,
     ArtifactAccessResource,
     CaptureContentSourceRequest,
     GetHandoffReportRequest,
+    ReplaceAccessBindingRequest,
 )
 
 
@@ -48,28 +54,94 @@ def test_client_exposes_typed_access_check() -> None:
             requests.append(request)
             return httpx.Response(
                 200,
-                json={"allowed": True, "reason_code": "role-binding"},
+                json={
+                    "allowed": True,
+                    "decisions": [{"allowed": True, "reason_code": "role-binding"}],
+                },
             )
 
         async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as http_client:
             client = PowerContextClient("https://memory.example", http_client=http_client)
             decision = await client.check_access(
                 AccessCheckRequest(
-                    action=AccessAction.ARTIFACT_READ,
-                    resource=AccessResource(
-                        root=ArtifactAccessResource(
-                            type="artifact",
-                            scope_id="scope-a",
-                            identity=AccessArtifactIdentity(family="handoff", artifact_id="handoff-a"),
-                            selector=None,
+                    match=AccessRequirementMatch.ALL,
+                    requirements=[
+                        AccessCheckRequirement(
+                            action=AccessAction.ARTIFACT_READ,
+                            resource=AccessResource(
+                                root=ArtifactAccessResource(
+                                    type="artifact",
+                                    scope_id="scope-a",
+                                    identity=AccessArtifactIdentity(family="handoff", artifact_id="handoff-a"),
+                                    selector=None,
+                                )
+                            ),
                         )
-                    ),
+                    ],
                 )
             )
 
         assert decision.allowed is True
         assert requests[0].url.path == "/v1/access/check"
-        assert json.loads(requests[0].content)["resource"]["identity"]["artifact_id"] == "handoff-a"
+        payload = json.loads(requests[0].content)
+        assert payload["requirements"][0]["resource"]["identity"]["artifact_id"] == "handoff-a"
+
+    asyncio.run(scenario())
+
+
+def test_client_exposes_typed_access_binding_replacement() -> None:
+    async def scenario() -> None:
+        requests: list[httpx.Request] = []
+        previous = {
+            "binding_id": "binding-bob",
+            "subject": {"type": "user", "id": "bob", "description": None},
+            "resource": {"type": "scope", "scope_id": "scope-a"},
+            "role": "scope.viewer",
+            "granted_by": {"type": "service", "id": "admin", "description": None},
+            "reason": None,
+            "created_at": "2026-09-03T00:00:00Z",
+            "expires_at": None,
+            "state": "revoked",
+            "version": 2,
+            "policy_revision": "2",
+            "idempotency_key": "create-bob",
+            "revoked_at": "2026-09-03T01:00:00Z",
+            "revoked_by": {"type": "service", "id": "admin", "description": None},
+        }
+        current = previous | {
+            "binding_id": "binding-alice",
+            "subject": {"type": "user", "id": "alice", "description": None},
+            "reason": "transfer",
+            "created_at": "2026-09-03T01:00:00Z",
+            "state": "active",
+            "version": 1,
+            "idempotency_key": "replace-with-alice",
+            "revoked_at": None,
+            "revoked_by": None,
+        }
+
+        def respond(request: httpx.Request) -> httpx.Response:
+            requests.append(request)
+            return httpx.Response(200, json={"previous": previous, "current": current})
+
+        async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as http_client:
+            client = PowerContextClient("https://memory.example", http_client=http_client)
+            replacement = await client.replace_access_binding(
+                ReplaceAccessBindingRequest(
+                    binding_id="binding-bob",
+                    expected_version=1,
+                    replacement=AccessBindingReplacementInput(
+                        subject=AccessSubject(root=AccessPrincipal(type="user", id="alice")),
+                        reason="transfer",
+                    ),
+                    idempotency_key="replace-with-alice",
+                )
+            )
+
+        assert replacement.previous.state.value == "revoked"
+        assert replacement.current.subject.root.id == "alice"
+        assert requests[0].url.path == "/v1/access/bindings/replace"
+        assert json.loads(requests[0].content)["replacement"]["subject"]["id"] == "alice"
 
     asyncio.run(scenario())
 

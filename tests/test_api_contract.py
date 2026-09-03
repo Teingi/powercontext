@@ -161,6 +161,48 @@ def test_every_access_protected_operation_declares_the_unavailable_response() ->
             assert operation["responses"]["503"] == {"$ref": "#/components/responses/Unavailable"}
 
 
+def test_source_ingestion_operations_preserve_the_access_boundary() -> None:
+    contract = yaml.safe_load(CONTRACT_PATH.read_text())
+    expected = {
+        "/v1/source-definitions/register": {
+            "action": "server.admin",
+            "resource": {"type": "server"},
+        },
+        "/v1/connector-checkpoints/get": {
+            "action": "scope.contribute",
+            "resource": {"type": "scope", "scope-id-from": "binding.scope_id"},
+        },
+        "/v1/source-observations": {
+            "action": "scope.contribute",
+            "resource": {"type": "scope", "scope-id-from": "scope_id"},
+        },
+        "/v1/connector-checkpoints/commit": {
+            "action": "scope.contribute",
+            "resource": {"type": "scope", "scope-id-from": "binding.scope_id"},
+        },
+    }
+
+    for path, requirement in expected.items():
+        operation = contract["paths"][path]["post"]
+        assert operation["x-powercontext-access"] == requirement
+
+
+def test_access_contract_uses_compound_checks_and_generic_binding_replacement() -> None:
+    contract = yaml.safe_load(CONTRACT_PATH.read_text())
+    paths = contract["paths"]
+    schemas = contract["components"]["schemas"]
+
+    assert "/v1/access/check-batch" not in paths
+    assert "/v1/access/bindings/reassign-handoff-receiver" not in paths
+    assert paths["/v1/access/check"]["post"]["responses"]["200"]["content"]["application/json"]["schema"] == {
+        "$ref": "#/components/schemas/AccessCheckResponse"
+    }
+    assert schemas["AccessCheckRequest"]["required"] == ["match", "requirements"]
+    assert schemas["AccessRequirementMatch"]["enum"] == ["all", "any"]
+    assert paths["/v1/access/bindings/replace"]["post"]["operationId"] == "replace_access_binding"
+    assert schemas["AccessRoleCardinality"]["enum"] == ["many_per_resource", "one_per_resource"]
+
+
 def test_capabilities_report_semantics_without_runtime_tuning_values() -> None:
     contract = yaml.safe_load(CONTRACT_PATH.read_text())
     schemas = contract["components"]["schemas"]

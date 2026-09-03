@@ -878,16 +878,16 @@ The OpenAPI source of truth adds these operations:
 | Operation | Purpose | Authorization |
 | --- | --- | --- |
 | `GET /v1/access/me` | Return the current Principal and access-control capabilities | Authenticated Principal |
-| `POST /v1/access/check` | Check one action/resource for the current Principal | Current Principal only |
-| `POST /v1/access/check-batch` | Batch checks for the current Principal | Current Principal only |
+| `POST /v1/access/check` | Check one compound `all` or `any` requirement for the current Principal | Current Principal only |
 | `POST /v1/access/resources/list` | List resource identities available to the current Principal | Current Principal only |
 | `POST /v1/access/roles/list` | Return fixed roles and action vocabulary | Authenticated Principal |
 | `POST /v1/access/bindings/list` | List Bindings the caller may administer | `scope.delegate`, `scope.admin`, or `server.admin` |
 | `POST /v1/access/bindings/create` | Create a Family-compatible exact-resource or administrative Binding | Resource-specific administration action |
 | `POST /v1/access/bindings/revoke` | Revoke a Binding using CAS | Same administration boundary |
+| `POST /v1/access/bindings/replace` | Atomically revoke an immutable Binding and create its successor | Same administration boundary |
 | `POST /v1/access/audit/list` | Query security audit events | `scope.admin` or `server.admin` |
 
-`check`, `check-batch`, and `resources/list` do not accept a client-selected subject. They evaluate only the current
+`check` and `resources/list` do not accept a client-selected subject. They evaluate only the current
 authenticated Principal, preventing ordinary users from using the API as a personnel permission oracle.
 Administrator checks for another Principal, subject search, and directory integration are deferred.
 

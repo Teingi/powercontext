@@ -2436,7 +2436,7 @@ OPENAPI_SCHEMA: dict[str, JsonValue] = {
         "/v1/access/check": {
             "post": {
                 "tags": ["access"],
-                "summary": "Check one authorization decision",
+                "summary": "Check one compound authorization requirement",
                 "operationId": "check_access",
                 "requestBody": {
                     "content": {"application/json": {"schema": {"$ref": "#/components/schemas/AccessCheckRequest"}}},
@@ -2444,33 +2444,9 @@ OPENAPI_SCHEMA: dict[str, JsonValue] = {
                 },
                 "responses": {
                     "200": {
-                        "description": "A low-sensitivity allow or deny decision.",
-                        "content": {"application/json": {"schema": {"$ref": "#/components/schemas/AccessDecision"}}},
-                    },
-                    "401": {"$ref": "#/components/responses/Unauthorized"},
-                    "403": {"$ref": "#/components/responses/Forbidden"},
-                    "422": {"$ref": "#/components/responses/InvalidRequest"},
-                    "503": {"$ref": "#/components/responses/Unavailable"},
-                },
-                "x-powercontext-access": {"action": "access.self", "resource": {"type": "server"}},
-            }
-        },
-        "/v1/access/check-batch": {
-            "post": {
-                "tags": ["access"],
-                "summary": "Check a bounded batch of authorization decisions",
-                "operationId": "check_access_batch",
-                "requestBody": {
-                    "content": {
-                        "application/json": {"schema": {"$ref": "#/components/schemas/AccessCheckBatchRequest"}}
-                    },
-                    "required": True,
-                },
-                "responses": {
-                    "200": {
-                        "description": "Ordered low-sensitivity decisions matching the submitted checks.",
+                        "description": "The aggregate decision and ordered low-sensitivity requirement decisions.",
                         "content": {
-                            "application/json": {"schema": {"$ref": "#/components/schemas/AccessCheckBatchResponse"}}
+                            "application/json": {"schema": {"$ref": "#/components/schemas/AccessCheckResponse"}}
                         },
                     },
                     "401": {"$ref": "#/components/responses/Unauthorized"},
@@ -2605,22 +2581,33 @@ OPENAPI_SCHEMA: dict[str, JsonValue] = {
                 "x-powercontext-access": {"action": "access.self", "resource": {"type": "server"}},
             }
         },
-        "/v1/access/bindings/reassign-handoff-receiver": {
+        "/v1/access/bindings/replace": {
             "post": {
                 "tags": ["access"],
-                "summary": "Atomically reassign the single Handoff receiver",
-                "operationId": "reassign_handoff_receiver_binding",
+                "summary": "Atomically replace an immutable Access Binding",
+                "operationId": "replace_access_binding",
                 "requestBody": {
                     "content": {
-                        "application/json": {"schema": {"$ref": "#/components/schemas/ReassignHandoffReceiverRequest"}}
+                        "application/json": {"schema": {"$ref": "#/components/schemas/ReplaceAccessBindingRequest"}}
                     },
                     "required": True,
                 },
                 "responses": {
                     "200": {
-                        "description": "The revoked previous receiver and active replacement Binding.",
+                        "description": "The "
+                        "revoked "
+                        "previous "
+                        "Binding "
+                        "and "
+                        "active "
+                        "replacement "
+                        "with the "
+                        "same "
+                        "resource "
+                        "and "
+                        "role.",
                         "content": {
-                            "application/json": {"schema": {"$ref": "#/components/schemas/HandoffReceiverReassignment"}}
+                            "application/json": {"schema": {"$ref": "#/components/schemas/AccessBindingReplacement"}}
                         },
                     },
                     "401": {"$ref": "#/components/responses/Unauthorized"},
@@ -2839,7 +2826,8 @@ OPENAPI_SCHEMA: dict[str, JsonValue] = {
                 "type": "object",
                 "required": ["allowed", "reason_code"],
             },
-            "AccessCheckRequest": {
+            "AccessRequirementMatch": {"type": "string", "enum": ["all", "any"]},
+            "AccessCheckRequirement": {
                 "properties": {
                     "action": {"$ref": "#/components/schemas/AccessAction"},
                     "resource": {"$ref": "#/components/schemas/AccessResource"},
@@ -2848,30 +2836,33 @@ OPENAPI_SCHEMA: dict[str, JsonValue] = {
                 "type": "object",
                 "required": ["action", "resource"],
             },
-            "AccessCheckBatchRequest": {
+            "AccessCheckRequest": {
                 "properties": {
-                    "checks": {
-                        "items": {"$ref": "#/components/schemas/AccessCheckRequest"},
+                    "match": {"$ref": "#/components/schemas/AccessRequirementMatch"},
+                    "requirements": {
+                        "items": {"$ref": "#/components/schemas/AccessCheckRequirement"},
                         "type": "array",
                         "maxItems": 100,
                         "minItems": 1,
-                    }
+                    },
                 },
                 "additionalProperties": False,
                 "type": "object",
-                "required": ["checks"],
+                "required": ["match", "requirements"],
             },
-            "AccessCheckBatchResponse": {
+            "AccessCheckResponse": {
                 "properties": {
+                    "allowed": {"type": "boolean"},
                     "decisions": {
                         "items": {"$ref": "#/components/schemas/AccessDecision"},
                         "type": "array",
                         "maxItems": 100,
-                    }
+                        "minItems": 1,
+                    },
                 },
                 "additionalProperties": False,
                 "type": "object",
-                "required": ["decisions"],
+                "required": ["allowed", "decisions"],
             },
             "ListAccessResourcesRequest": {
                 "properties": {
@@ -2916,6 +2907,7 @@ OPENAPI_SCHEMA: dict[str, JsonValue] = {
                     "server.admin",
                 ],
             },
+            "AccessRoleCardinality": {"type": "string", "enum": ["many_per_resource", "one_per_resource"]},
             "ListAccessRolesRequest": {
                 "properties": {
                     "resource_type": {"allOf": [{"$ref": "#/components/schemas/AccessResourceType"}], "nullable": True},
@@ -2928,6 +2920,7 @@ OPENAPI_SCHEMA: dict[str, JsonValue] = {
                 "properties": {
                     "role": {"$ref": "#/components/schemas/AccessRole"},
                     "resource_type": {"$ref": "#/components/schemas/AccessResourceType"},
+                    "cardinality": {"$ref": "#/components/schemas/AccessRoleCardinality"},
                     "actions": {"items": {"$ref": "#/components/schemas/AccessAction"}, "type": "array"},
                     "artifact_families": {
                         "items": {"type": "string", "maxLength": 128, "minLength": 1},
@@ -2944,6 +2937,7 @@ OPENAPI_SCHEMA: dict[str, JsonValue] = {
                 "required": [
                     "role",
                     "resource_type",
+                    "cardinality",
                     "actions",
                     "artifact_families",
                     "assignable_subject_types",
@@ -3048,27 +3042,35 @@ OPENAPI_SCHEMA: dict[str, JsonValue] = {
                 "type": "object",
                 "required": ["binding_id", "expected_version", "idempotency_key"],
             },
-            "ReassignHandoffReceiverRequest": {
+            "AccessBindingReplacementInput": {
+                "properties": {
+                    "subject": {"$ref": "#/components/schemas/AccessSubject"},
+                    "reason": {"type": "string", "maxLength": 1024, "nullable": True},
+                    "expires_at": {"type": "string", "format": "date-time", "nullable": True},
+                },
+                "additionalProperties": False,
+                "type": "object",
+                "required": ["subject"],
+            },
+            "ReplaceAccessBindingRequest": {
                 "properties": {
                     "binding_id": {"type": "string", "maxLength": 64, "minLength": 1},
                     "expected_version": {"type": "integer", "minimum": 1.0},
-                    "subject": {"$ref": "#/components/schemas/AccessPrincipal"},
-                    "expires_at": {"type": "string", "format": "date-time", "nullable": True},
-                    "reason": {"type": "string", "maxLength": 1024, "nullable": True},
+                    "replacement": {"$ref": "#/components/schemas/AccessBindingReplacementInput"},
                     "idempotency_key": {"type": "string", "maxLength": 255, "minLength": 1},
                 },
                 "additionalProperties": False,
                 "type": "object",
-                "required": ["binding_id", "expected_version", "subject", "idempotency_key"],
+                "required": ["binding_id", "expected_version", "replacement", "idempotency_key"],
             },
-            "HandoffReceiverReassignment": {
+            "AccessBindingReplacement": {
                 "properties": {
-                    "revoked_binding": {"$ref": "#/components/schemas/AccessBinding"},
-                    "created_binding": {"$ref": "#/components/schemas/AccessBinding"},
+                    "previous": {"$ref": "#/components/schemas/AccessBinding"},
+                    "current": {"$ref": "#/components/schemas/AccessBinding"},
                 },
                 "additionalProperties": False,
                 "type": "object",
-                "required": ["revoked_binding", "created_binding"],
+                "required": ["previous", "current"],
             },
             "ListAccessAuditRequest": {
                 "properties": {

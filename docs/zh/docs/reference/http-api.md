@@ -109,9 +109,12 @@ curl --fail \
 ```
 
 接收者可以读取和确认这个 Handoff 的历史、当前及未来 Revision；除非另有 scope role，否则不能在 scope 范围发现
-latest Handoff、读取其他 Handoff，也不能访问父 scope 的 Memory。用 `/v1/access/me` 确认部署建立的 Principal，用 `/v1/access/check` 检查一个决策，
+latest Handoff、读取其他 Handoff，也不能访问父 scope 的 Memory。用 `/v1/access/me` 确认部署建立的 Principal，用 `/v1/access/check`
+检查一个由 `all` 或 `any` 组合的权限要求，
 用 `/v1/access/resources/list` 非发现式地列出已经可见的资源。创建操作按授权者与幂等键保证幂等；撤销时必须提交
-`binding_id` 和 `expected_version`。Server 管理员可通过 `/v1/access/audit/list` 查看关系变更与决策事件。认证层确认代办执行时，
+`binding_id` 和 `expected_version`。`/v1/access/bindings/replace` 会原子撤销一个不可变 Binding，并用相同 Resource 和 role
+创建后继 Binding；角色描述通过 `many_per_resource` 或 `one_per_resource` 声明活动 Binding 数量约束。Server 管理员可通过
+`/v1/access/audit/list` 查看关系变更与决策事件。认证层确认代办执行时，
 每条审计事件会把 effective `principal` 与可信 `actor` 记录为两个独立的 opaque identity。
 
 Access wire contract 只使用 `server`、`scope` 和 `artifact` 三种 Resource Kind。Artifact Resource 使用逻辑 identity
@@ -123,6 +126,13 @@ Managed Skill 的导出和安装不使用单独的分享权限。`/v1/skills/pub
 逻辑 Skill identity 上的 `artifact.read`；接收者自行决定是否以及如何安装一个精确 Revision。请求只提交不透明的
 `target_id`；公共响应和错误不返回 host path、Agent home、credential 或 locator。详细 Dashboard publication status
 另由 `server.observe` 保护。
+
+标准 Skill 生命周期复用同一 Access 边界：Library 列表要求 `scope.read`，生命周期变更要求 `artifact.write`，
+package manifest/download 要求 `artifact.read`，package proposal 要求 `scope.contribute`，替换已有 Skill 时还要求
+`artifact.write`；usage capture 同时要求 `scope.contribute` 与 `artifact.read`。远端 target 管理要求
+`scope.admin`，发布精确 Revision 还要求该 Skill 的 `artifact.read`。注册接口由一次性 enrollment code 保护，
+Receiver 的 reconcile/download/receipt 使用单独签发的 `TargetBearerAuth` 凭据，而不是用户 Principal。
+Dashboard 数据接口会在 scope 查询、package 检查、target 查询或文件系统操作之前执行对应 Access 检查。
 
 内置静态 token 只代表一个本地管理员，无法表达不同的 A/B 用户。真正的多用户部署必须把每个调用者认证为不同的
 Principal，并注入 Authorization Provider。HTTP 与 MCP 使用同一个策略执行点；MCP tool 可见不等于有权限。
@@ -137,7 +147,7 @@ Principal，并注入 Authorization Provider。HTTP 与 MCP 使用同一个策�
 | 工作连续性 | `/v1/work/*` | 创建 Work Contract、准备或确认 Handoff、记录 Outcome |
 | 底层 Handoff | `/v1/handoff/*` | activate、prepare、finalize、commit 或 continue Handoff |
 | Memory | `/v1/memory/*` | flush、remember、search、list、get、revise、retire 和查看变更 |
-| Experience 与 Skill | `/v1/experience/*`、`/v1/skill/*`、`/v1/skills/*` | propose、generate、读取 Artifact Revision 和导出可读的 managed Skill |
+| Experience 与 Skill | `/v1/experience/*`、`/v1/skill/*`、`/v1/skills/*` | propose、review、打包、治理、分发并读取 managed Skill Revision |
 | 审核 | `/v1/artifact-candidates/*` | 列出、检查、修订、批准或拒绝 pending Candidate |
 | 外部 Skill | `/v1/external-skills/*` | 扫描已配置 target，解析或导入 package |
 | Handoff Report | `/v1/handoff-reports/*` | 管理 Project、Workstream、activity、report 和 workspace binding |

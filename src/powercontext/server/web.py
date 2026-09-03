@@ -287,6 +287,11 @@ class _DashboardSkillProjectionRoutes:
         request: DashboardSkillUnpublishRequest,
         http_request: Request,
     ) -> DashboardSkillProjection | JSONResponse:
+        await _authorize_dashboard_skill(
+            http_request,
+            request,
+            operation="dashboard_skill_projection_unpublish",
+        )
         resolved = await _dashboard_managed_skill(http_request, request, self._scope_ids)
         if isinstance(resolved, JSONResponse):
             return resolved
@@ -303,22 +308,28 @@ class _DashboardSkillProjectionRoutes:
                 409,
                 "skill_projection_conflict",
                 "The Agent Skill publication changed or cannot be removed safely.",
-                details={"state": error.status.state.value, "reason": error.status.reason},
+                details={
+                    "state": error.status.state.value,
+                    "reason_code": _projection_reason_code(error.status.state),
+                },
             )
-        except (OSError, UnicodeError, ValueError) as error:
+        except (OSError, UnicodeError, ValueError):
             return _web_error(
                 422,
                 "skill_projection_failed",
                 "The approved managed Skill could not be unpublished from the configured Agent target.",
-                details={"reason": str(error)},
+                details={"reason_code": "projection_failed"},
             )
         # The publication removal already succeeded; keep registry bookkeeping best-effort for
         # the same reason as the publish path above.
         try:
             await application.external_skills.for_scope(request.scope_id).scan()
-        except Exception as error:
+        except Exception:
             log_safely(
-                logger, logging.WARNING, "PowerContext external Skill scan failed after unpublication", exc_info=error
+                logger,
+                logging.WARNING,
+                "PowerContext external Skill scan failed after unpublication",
+                extra={"error_code": "external_skill_scan_failed"},
             )
         return await _skill_projection_response(application, request.scope_id, skill, self._targets)
 
@@ -425,6 +436,12 @@ def mount_web_ui(  # noqa: C901
         request: DashboardSkillLibraryRequest,
         http_request: Request,
     ) -> list[DashboardManagedSkill] | JSONResponse:
+        await _authorize_dashboard_scope(
+            http_request,
+            request.scope_id,
+            AccessAction.SCOPE_READ,
+            operation="dashboard_skills_library",
+        )
         if request.scope_id not in dashboard_scope_ids:
             return _web_error(404, "dashboard_scope_not_found", "The Dashboard scope was not found.")
         application = http_request.app.state.application
@@ -466,6 +483,13 @@ def mount_web_ui(  # noqa: C901
         request: DashboardSkillLifecycleRequest,
         http_request: Request,
     ) -> ArtifactGovernance | JSONResponse:
+        await _authorize_dashboard_skill_identity(
+            http_request,
+            scope_id=request.scope_id,
+            artifact_id=request.artifact_id,
+            action=AccessAction.ARTIFACT_WRITE,
+            operation="dashboard_skill_lifecycle",
+        )
         if request.scope_id not in dashboard_scope_ids:
             return _web_error(404, "dashboard_scope_not_found", "The Dashboard scope was not found.")
         application = http_request.app.state.application
@@ -478,18 +502,24 @@ def mount_web_ui(  # noqa: C901
                 request.lifecycle_state,
                 request.replacement_artifact_id,
             )
-        except ValueError as error:
+        except ValueError:
             return _web_error(
                 422,
                 "skill_lifecycle_invalid",
                 "The requested Skill lifecycle transition is not allowed.",
-                details={"reason": str(error)},
+                details={"reason_code": "invalid_transition"},
             )
 
     async def get_package_manifest(
         request: DashboardSkillPackageRequest,
         http_request: Request,
     ) -> SkillPackageManifest | JSONResponse:
+        await _authorize_dashboard_scope(
+            http_request,
+            request.scope_id,
+            AccessAction.SCOPE_REVIEW,
+            operation="dashboard_skill_package_manifest",
+        )
         resolved = await _dashboard_package(http_request, request, dashboard_scope_ids)
         if isinstance(resolved, JSONResponse):
             return resolved
@@ -499,6 +529,12 @@ def mount_web_ui(  # noqa: C901
         request: DashboardSkillPackageFileRequest,
         http_request: Request,
     ) -> DashboardSkillPackageFilePreview | JSONResponse:
+        await _authorize_dashboard_scope(
+            http_request,
+            request.scope_id,
+            AccessAction.SCOPE_REVIEW,
+            operation="dashboard_skill_package_preview",
+        )
         resolved = await _dashboard_package(http_request, request, dashboard_scope_ids)
         if isinstance(resolved, JSONResponse):
             return resolved
@@ -673,25 +709,71 @@ async def _authorize_dashboard_skill(
     *,
     operation: str,
 ) -> None:
+    await _authorize_dashboard_skill_identity(
+        request,
+        scope_id=selection.scope_id,
+        artifact_id=selection.artifact.artifact_id,
+        action=AccessAction.ARTIFACT_READ,
+        operation=operation,
+    )
+
+
+async def _authorize_dashboard_skill_identity(
+    request: Request,
+    *,
+    scope_id: str,
+    artifact_id: str,
+    action: AccessAction,
+    operation: str,
+) -> None:
     access = access_control_for_mode(
         request.app.state.access_control,
         mode=request.app.state.access_mode,
     )
     if access is None:
         return
+    principal = current_principal()
+    context = _dashboard_access_context(operation)
+    await access.bootstrap_static_scope(principal, scope_id, context=context)
     resource = ResourceRef.artifact(
-        selection.scope_id,
-        family=selection.artifact.family,
-        artifact_id=selection.artifact.artifact_id,
+        scope_id,
+        family="skill",
+        artifact_id=artifact_id,
     )
     checks = [
         (AccessAction.SERVER_OBSERVE, ResourceRef.server(access.deployment_id)),
-        (AccessAction.ARTIFACT_READ, resource),
+        (action, resource),
     ]
     await access.require_all(
-        current_principal(),
+        principal,
         checks,
-        context=_dashboard_access_context(operation),
+        context=context,
+    )
+
+
+async def _authorize_dashboard_scope(
+    request: Request,
+    scope_id: str,
+    action: AccessAction,
+    *,
+    operation: str,
+) -> None:
+    access = access_control_for_mode(
+        request.app.state.access_control,
+        mode=request.app.state.access_mode,
+    )
+    if access is None:
+        return
+    principal = current_principal()
+    context = _dashboard_access_context(operation)
+    await access.bootstrap_static_scope(principal, scope_id, context=context)
+    await access.require_all(
+        principal,
+        (
+            (AccessAction.SERVER_OBSERVE, ResourceRef.server(access.deployment_id)),
+            (action, ResourceRef.scope(scope_id)),
+        ),
+        context=context,
     )
 
 
@@ -721,8 +803,13 @@ async def _skill_projection_response(
         registrations = await application.external_skills.for_scope(scope_id).list(
             ListExternalSkillsRequest(include_unavailable=True)
         )
-    except Exception as error:
-        log_safely(logger, logging.WARNING, "PowerContext external Skill registry discovery failed", exc_info=error)
+    except Exception:
+        log_safely(
+            logger,
+            logging.WARNING,
+            "PowerContext external Skill registry discovery failed",
+            extra={"error_code": "external_skill_registry_discovery_failed"},
+        )
         registrations = ()
     targets = []
     package = await application.skill.for_scope(scope_id).package(skill.as_ref())

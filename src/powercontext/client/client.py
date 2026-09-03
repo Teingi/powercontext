@@ -29,10 +29,9 @@ from powercontext.http import (
     AccessAuditPage,
     AccessBinding,
     AccessBindingPage,
-    AccessCheckBatchRequest,
-    AccessCheckBatchResponse,
+    AccessBindingReplacement,
     AccessCheckRequest,
-    AccessDecision,
+    AccessCheckResponse,
     AccessMeResponse,
     AccessResourcePage,
     AccessRolePage,
@@ -142,6 +141,7 @@ from powercontext.http import (
     RemoteSkillTargetCredential,
     RemoteSkillTargetEnrollment,
     RenameRemoteSkillTargetRequest,
+    ReplaceAccessBindingRequest,
     ResolveExternalSkillRequest,
     RetireMemoryEntryRequest,
     ReviseArtifactCandidateRequest,
@@ -176,7 +176,6 @@ from powercontext.http._generated.operations import (
     ATTACH_HANDOFF_REPORT_WORKSPACE,
     CAPTURE_CONTENT_SOURCE,
     CHECK_ACCESS,
-    CHECK_ACCESS_BATCH,
     COMMIT_CONNECTOR_CHECKPOINT,
     COMMIT_HANDOFF,
     CONTINUE_HANDOFF,
@@ -241,6 +240,7 @@ from powercontext.http._generated.operations import (
     REJECT_ARTIFACT_CANDIDATE,
     REMEMBER_MEMORY,
     RENAME_REMOTE_SKILL_TARGET,
+    REPLACE_ACCESS_BINDING,
     RESOLVE_EXTERNAL_SKILL,
     RETIRE_MEMORY_ENTRY,
     REVISE_ARTIFACT_CANDIDATE,
@@ -515,15 +515,10 @@ class PowerContextClient:
 
         return await self._request(GET_ACCESS_PRINCIPAL)
 
-    async def check_access(self, request: AccessCheckRequest) -> AccessDecision:
-        """Evaluate one action and resource for the current Principal."""
+    async def check_access(self, request: AccessCheckRequest) -> AccessCheckResponse:
+        """Evaluate one compound requirement for the current Principal."""
 
         return await self._request(CHECK_ACCESS, request)
-
-    async def check_access_batch(self, request: AccessCheckBatchRequest) -> AccessCheckBatchResponse:
-        """Evaluate a bounded ordered batch for the current Principal."""
-
-        return await self._request(CHECK_ACCESS_BATCH, request)
 
     async def list_access_resources(self, request: ListAccessResourcesRequest) -> AccessResourcePage:
         """List only relationships already visible to the current Principal."""
@@ -549,6 +544,11 @@ class PowerContextClient:
         """Revoke one Access Binding using compare-and-swap."""
 
         return await self._request(REVOKE_ACCESS_BINDING, request)
+
+    async def replace_access_binding(self, request: ReplaceAccessBindingRequest) -> AccessBindingReplacement:
+        """Atomically replace an immutable Access Binding."""
+
+        return await self._request(REPLACE_ACCESS_BINDING, request)
 
     async def list_access_audit(self, request: ListAccessAuditRequest) -> AccessAuditPage:
         """List data-minimized authorization and relationship audit events."""
@@ -710,6 +710,7 @@ class PowerContextClient:
         """Publish one exact managed Skill to an opaque configured target."""
 
         return await self._request(PUBLISH_MANAGED_SKILL, request)
+
     async def list_managed_skills(self, request: ListManagedSkillsRequest) -> ListManagedSkillsResponse:
         """List or search current governed managed Skill heads."""
 

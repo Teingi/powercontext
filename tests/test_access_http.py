@@ -226,8 +226,13 @@ def test_access_audit_persists_the_trusted_actor_separately_from_the_subject() -
                     "/v1/access/check",
                     headers=_auth("delegated-token"),
                     json={
-                        "action": "scope.read",
-                        "resource": {"type": "scope", "scope_id": "scope-a"},
+                        "match": "all",
+                        "requirements": [
+                            {
+                                "action": "scope.read",
+                                "resource": {"type": "scope", "scope_id": "scope-a"},
+                            }
+                        ],
                     },
                 )
                 assert checked.status_code == 200
@@ -251,6 +256,221 @@ def test_access_audit_persists_the_trusted_actor_separately_from_the_subject() -
                 "id": "admin",
                 "description": "deployment administrator",
             }
+
+    asyncio.run(scenario())
+
+
+def test_compound_access_check_supports_all_and_any_without_a_batch_route() -> None:
+    async def scenario() -> None:
+        async with SQLiteProfile.open(SQLiteConfig(), tables=ACCESS_TABLES) as profile:
+            repository = RelationalAccessRepository(profile.database)
+            await _seed_admin(repository)
+            service = AccessControlService(
+                BuiltinAuthorizationProvider(repository),
+                relationships=repository,
+                audit=repository,
+            )
+            app = _app(service, principal=ADMIN, token="admin-token")  # noqa: S106 - test credential.
+            requirements = [
+                {
+                    "action": "server.admin",
+                    "resource": {"type": "server", "deployment_id": "powercontext"},
+                },
+                {
+                    "action": "scope.read",
+                    "resource": {"type": "scope", "scope_id": "scope-a"},
+                },
+            ]
+            async with _client(app) as client:
+                all_required = await client.post(
+                    "/v1/access/check",
+                    headers=_auth("admin-token"),
+                    json={"match": "all", "requirements": requirements},
+                )
+                any_required = await client.post(
+                    "/v1/access/check",
+                    headers=_auth("admin-token"),
+                    json={"match": "any", "requirements": requirements},
+                )
+                removed_batch = await client.post(
+                    "/v1/access/check-batch",
+                    headers=_auth("admin-token"),
+                    json={"checks": []},
+                )
+
+            assert all_required.status_code == 200
+            assert all_required.json()["allowed"] is False
+            assert [decision["allowed"] for decision in all_required.json()["decisions"]] == [True, False]
+            assert any_required.status_code == 200
+            assert any_required.json()["allowed"] is True
+            assert any_required.json()["decisions"] == all_required.json()["decisions"]
+            assert removed_batch.status_code == 404
+
+    asyncio.run(scenario())
+
+
+def test_access_binding_replace_is_generic_and_atomic() -> None:
+    async def scenario() -> None:
+        async with SQLiteProfile.open(SQLiteConfig(), tables=ACCESS_TABLES) as profile:
+            repository = RelationalAccessRepository(profile.database)
+            await _seed_admin(repository)
+            service = AccessControlService(
+                BuiltinAuthorizationProvider(repository),
+                relationships=repository,
+                audit=repository,
+            )
+            original = await service.create_binding(
+                ADMIN,
+                CreateBinding(
+                    subject=BOB,
+                    resource=ResourceRef.scope("scope-a"),
+                    role=AccessRole.SCOPE_VIEWER,
+                    idempotency_key="scope-viewer-bob",
+                ),
+                context=AUDIT,
+            )
+            app = _app(service, principal=ADMIN, token="admin-token")  # noqa: S106 - test credential.
+            async with _client(app) as client:
+                response = await client.post(
+                    "/v1/access/bindings/replace",
+                    headers=_auth("admin-token"),
+                    json={
+                        "binding_id": original.binding_id,
+                        "expected_version": 1,
+                        "replacement": {
+                            "subject": {"type": "user", "id": "alice"},
+                            "reason": "transfer scope visibility",
+                            "expires_at": None,
+                        },
+                        "idempotency_key": "replace-scope-viewer-with-alice",
+                    },
+                )
+                removed_special_case = await client.post(
+                    "/v1/access/bindings/reassign-handoff-receiver",
+                    headers=_auth("admin-token"),
+                    json={},
+                )
+
+            assert response.status_code == 200, response.json()
+            assert response.json()["previous"]["state"] == "revoked"
+            assert response.json()["previous"]["version"] == 2
+            assert response.json()["current"]["subject"]["id"] == "alice"
+            assert response.json()["current"]["resource"] == {
+                "type": "scope",
+                "scope_id": "scope-a",
+            }
+            assert response.json()["current"]["role"] == "scope.viewer"
+            assert removed_special_case.status_code == 404
+
+    asyncio.run(scenario())
+
+
+def test_connector_checkpoint_routes_enforce_the_nested_scope_boundary() -> None:
+    async def scenario() -> None:
+        async with SQLiteProfile.open(SQLiteConfig(), tables=ACCESS_TABLES) as profile:
+            repository = RelationalAccessRepository(profile.database)
+            await _seed_admin(repository)
+            service = AccessControlService(
+                BuiltinAuthorizationProvider(repository),
+                relationships=repository,
+                audit=repository,
+            )
+            await service.create_binding(
+                ADMIN,
+                CreateBinding(
+                    subject=BOB,
+                    resource=ResourceRef.scope("scope-a"),
+                    role=AccessRole.SCOPE_CONTRIBUTOR,
+                    idempotency_key="connector-worker-scope-a",
+                ),
+                context=AUDIT,
+            )
+            binding = {
+                "scope_id": "scope-a",
+                "binding_id": "connector-a",
+                "connector_name": "test-connector",
+                "connector_version": "1",
+            }
+            requests = (
+                ("/v1/connector-checkpoints/get", {"binding": binding}),
+                (
+                    "/v1/connector-checkpoints/commit",
+                    {"binding": binding, "expected": None, "checkpoint": {"cursor": 1}},
+                ),
+            )
+
+            contributor_app = _app(service, principal=BOB, token="bob-token")  # noqa: S106 - test credential.
+            denied_app = _app(service, principal=ALICE, token="alice-token")  # noqa: S106 - test credential.
+            async with _client(contributor_app) as contributor, _client(denied_app) as denied:
+                for path, payload in requests:
+                    authorized = await contributor.post(path, headers=_auth("bob-token"), json=payload)
+                    unauthorized = await denied.post(path, headers=_auth("alice-token"), json=payload)
+                    assert authorized.status_code == 503
+                    assert authorized.json()["error"]["code"] == "runtime_not_ready"
+                    assert unauthorized.status_code == 403
+
+    asyncio.run(scenario())
+
+
+def test_standard_skill_lifecycle_routes_enforce_access_before_runtime() -> None:
+    async def scenario() -> None:
+        async with SQLiteProfile.open(SQLiteConfig(), tables=ACCESS_TABLES) as profile:
+            repository = RelationalAccessRepository(profile.database)
+            await _seed_admin(repository)
+            service = AccessControlService(
+                BuiltinAuthorizationProvider(repository),
+                relationships=repository,
+                audit=repository,
+            )
+            await service.establish_artifact_owner(
+                ResourceRef.artifact("scope-a", family="skill", artifact_id="skill-a"),
+                ADMIN,
+                idempotency_key="owner-skill-a-lifecycle",
+                context=AUDIT,
+            )
+            app = _app(service, principal=BOB, token="bob-token")  # noqa: S106 - test credential.
+            artifact = {"family": "skill", "artifact_id": "skill-a", "revision": 1}
+            requests = (
+                ("/v1/skill/library", {"scope_id": "scope-a"}),
+                (
+                    "/v1/skill/lifecycle",
+                    {
+                        "scope_id": "scope-a",
+                        "artifact_id": "skill-a",
+                        "expected_generation": 0,
+                        "lifecycle_state": "active",
+                    },
+                ),
+                (
+                    "/v1/skill/usage",
+                    {
+                        "scope_id": "scope-a",
+                        "observation_id": "usage-a",
+                        "skill_ref": artifact,
+                        "package_digest": f"sha256:{'a' * 64}",
+                        "target_id": "codex-project",
+                        "selected": True,
+                        "invoked": "true",
+                        "validation": "passed",
+                        "outcome": "success",
+                    },
+                ),
+                ("/v1/skill/remote/targets", {"scope_id": "scope-a"}),
+                (
+                    "/v1/skill/remote/publication/publish",
+                    {
+                        "scope_id": "scope-a",
+                        "target_id": "target-a",
+                        "artifact": artifact,
+                        "expected_generation": 0,
+                    },
+                ),
+            )
+            async with _client(app) as client:
+                for path, payload in requests:
+                    response = await client.post(path, headers=_auth("bob-token"), json=payload)
+                    assert response.status_code == 403, (path, response.json())
+                    assert response.json()["error"]["code"] == "forbidden"
 
     asyncio.run(scenario())
 
@@ -372,6 +592,11 @@ def test_access_api_and_handoff_pep_enforce_exact_receiver_visibility() -> None:
                     "artifact.viewer",
                 }
                 assert all(item["artifact_families"] == ["skill"] for item in roles.json()["items"])
+                role_cardinalities = {item["role"]: item["cardinality"] for item in roles.json()["items"]}
+                assert role_cardinalities == {
+                    "artifact.owner": "one_per_resource",
+                    "artifact.viewer": "many_per_resource",
+                }
                 created = await admin.post(
                     "/v1/access/bindings/create",
                     headers=_auth("admin-token"),
@@ -402,10 +627,14 @@ def test_access_api_and_handoff_pep_enforce_exact_receiver_visibility() -> None:
                 decision = await bob.post(
                     "/v1/access/check",
                     headers=_auth("bob-token"),
-                    json={"action": "handoff.acknowledge", "resource": exact},
+                    json={
+                        "match": "all",
+                        "requirements": [{"action": "handoff.acknowledge", "resource": exact}],
+                    },
                 )
                 assert decision.status_code == 200
                 assert decision.json()["allowed"] is True
+                assert decision.json()["decisions"][0]["allowed"] is True
 
                 resources = await bob.post(
                     "/v1/access/resources/list",
@@ -701,6 +930,16 @@ def test_dashboard_scope_discovery_uses_the_same_principal_and_filters_before_re
                 ),
                 context=AUDIT,
             )
+            await service.create_binding(
+                ADMIN,
+                CreateBinding(
+                    subject=BOB,
+                    resource=ResourceRef.server(),
+                    role=AccessRole.SERVER_OBSERVER,
+                    idempotency_key="bob-dashboard-observer",
+                ),
+                context=AUDIT,
+            )
             app = _app(service, principal=BOB, token="bob-token")  # noqa: S106 - test credential.
             mount_web_ui(
                 app,
@@ -710,9 +949,22 @@ def test_dashboard_scope_discovery_uses_the_same_principal_and_filters_before_re
             )
             async with _client(app) as client:
                 response = await client.get("/dashboard/scopes", headers=_auth("bob-token"))
+                visible_library = await client.post(
+                    "/dashboard/skills/library",
+                    headers=_auth("bob-token"),
+                    json={"scope_id": "scope-visible"},
+                )
+                hidden_library = await client.post(
+                    "/dashboard/skills/library",
+                    headers=_auth("bob-token"),
+                    json={"scope_id": "scope-hidden"},
+                )
                 assert response.status_code == 200
                 assert response.json() == [{"scope_id": "scope-visible", "display_name": "Visible"}]
                 assert "scope-hidden" not in response.text
+                assert visible_library.status_code == 503
+                assert visible_library.json()["error"]["code"] == "runtime_not_ready"
+                assert hidden_library.status_code == 403
 
     asyncio.run(scenario())
 

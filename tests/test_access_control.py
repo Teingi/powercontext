@@ -16,11 +16,14 @@ from __future__ import annotations
 
 import asyncio
 from datetime import UTC, datetime
+from hashlib import sha256
 
 import pytest
+from sqlalchemy import insert
 
 from powercontext.builtin.persistence.sqlite import SQLiteConfig, SQLiteProfile
 from powercontext.server.authz import (
+    ROLE_CARDINALITIES,
     AccessAction,
     AccessAuditContext,
     AccessBinding,
@@ -32,17 +35,22 @@ from powercontext.server.authz import (
     AccessProviderCapabilities,
     AccessResourceType,
     AccessRole,
+    AccessRoleCardinality,
     AccessUnavailableError,
     BuiltinAuthorizationProvider,
     CreateBinding,
     GroupRef,
     MemoryEntrySelector,
     PrincipalRef,
-    ReassignHandoffReceiver,
+    ReplaceBinding,
     ResourceRef,
 )
 from powercontext.server.authz.composition import open_builtin_access_control
-from powercontext.server.authz.repository import ACCESS_TABLES, RelationalAccessRepository
+from powercontext.server.authz.repository import (
+    ACCESS_BINDING_LEASES_TABLE,
+    ACCESS_TABLES,
+    RelationalAccessRepository,
+)
 
 ADMIN = PrincipalRef(type="service", id="admin", description="deployment administrator")
 ALICE = PrincipalRef(type="user", id="alice", description="artifact owner")
@@ -168,7 +176,7 @@ def test_group_binding_is_inherited_from_trusted_authentication_context() -> Non
     asyncio.run(scenario())
 
 
-def test_only_one_handoff_receiver_and_reassignment_is_atomic() -> None:
+def test_singleton_binding_replacement_is_atomic() -> None:
     async def scenario() -> None:
         async with open_builtin_access_control(SQLiteConfig(), bootstrap_administrators=(ADMIN,)) as service:
             handoff = ResourceRef.artifact("scope-a", family="handoff", artifact_id="handoff")
@@ -185,7 +193,7 @@ def test_only_one_handoff_receiver_and_reassignment_is_atomic() -> None:
                 ),
                 context=AUDIT,
             )
-            with pytest.raises(AccessConflictError, match="receiver"):
+            with pytest.raises(AccessConflictError, match="maximum active Bindings"):
                 await service.create_binding(
                     ADMIN,
                     CreateBinding(
@@ -197,25 +205,26 @@ def test_only_one_handoff_receiver_and_reassignment_is_atomic() -> None:
                     context=AUDIT,
                 )
 
-            changed = await service.reassign_handoff_receiver(
-                ADMIN,
-                ReassignHandoffReceiver(
-                    binding_id=first.binding_id,
-                    expected_version=1,
-                    subject=ALICE,
-                    idempotency_key="reassign-to-alice",
-                ),
-                context=AUDIT,
+            request = ReplaceBinding(
+                binding_id=first.binding_id,
+                expected_version=1,
+                subject=ALICE,
+                idempotency_key="reassign-to-alice",
             )
-            assert changed.revoked_binding.state is AccessBindingState.REVOKED
-            assert changed.created_binding.subject == ALICE
+            changed = await service.replace_binding(ADMIN, request, context=AUDIT)
+            replayed = await service.replace_binding(ADMIN, request, context=AUDIT)
+            assert changed.previous.state is AccessBindingState.REVOKED
+            assert changed.current.subject == ALICE
+            assert changed.current.resource == handoff
+            assert changed.current.role is AccessRole.HANDOFF_RECEIVER
+            assert replayed == changed
             with pytest.raises(AccessDeniedError):
                 await service.require(BOB, AccessAction.HANDOFF_ACKNOWLEDGE, handoff, context=AUDIT)
             assert (await service.require(ALICE, AccessAction.HANDOFF_ACKNOWLEDGE, handoff, context=AUDIT)).allowed
 
             await service.revoke_binding(
                 ADMIN,
-                changed.created_binding.binding_id,
+                changed.current.binding_id,
                 expected_version=1,
                 idempotency_key="revoke-alice-receiver",
                 context=AUDIT,
@@ -231,6 +240,88 @@ def test_only_one_handoff_receiver_and_reassignment_is_atomic() -> None:
                 context=AUDIT,
             )
             assert replacement.subject == BOB
+
+    asyncio.run(scenario())
+
+
+def test_singleton_binding_fails_closed_when_a_claimed_lease_binding_is_not_visible() -> None:
+    async def scenario() -> None:
+        async with SQLiteProfile.open(SQLiteConfig(), tables=ACCESS_TABLES) as profile:
+            repository = RelationalAccessRepository(profile.database)
+            await _seed_server_admin(repository)
+            service = AccessControlService(
+                BuiltinAuthorizationProvider(repository),
+                relationships=repository,
+                audit=repository,
+            )
+            handoff = ResourceRef.artifact("scope-a", family="handoff", artifact_id="concurrent-handoff")
+            await service.establish_artifact_owner(
+                handoff,
+                ALICE,
+                idempotency_key="owner-concurrent-handoff",
+                context=AUDIT,
+            )
+            async with profile.database.transaction() as connection:
+                await connection.execute(
+                    insert(ACCESS_BINDING_LEASES_TABLE).values(
+                        resource_key_hash=sha256(handoff.key.encode()).hexdigest(),
+                        role=AccessRole.HANDOFF_RECEIVER.value,
+                        binding_id="not-yet-visible-binding",
+                    )
+                )
+
+            with pytest.raises(AccessConflictError, match="maximum active Bindings"):
+                await service.create_binding(
+                    ADMIN,
+                    CreateBinding(
+                        subject=BOB,
+                        resource=handoff,
+                        role=AccessRole.HANDOFF_RECEIVER,
+                        idempotency_key="concurrent-handoff-receiver",
+                    ),
+                    context=AUDIT,
+                )
+
+    asyncio.run(scenario())
+
+
+def test_access_role_cardinalities_are_explicit() -> None:
+    assert ROLE_CARDINALITIES[AccessRole.HANDOFF_RECEIVER] is AccessRoleCardinality.ONE_PER_RESOURCE
+    assert ROLE_CARDINALITIES[AccessRole.ARTIFACT_OWNER] is AccessRoleCardinality.ONE_PER_RESOURCE
+    assert ROLE_CARDINALITIES[AccessRole.ARTIFACT_VIEWER] is AccessRoleCardinality.MANY_PER_RESOURCE
+
+
+def test_many_binding_can_be_replaced_without_domain_specific_behavior() -> None:
+    async def scenario() -> None:
+        async with open_builtin_access_control(SQLiteConfig(), bootstrap_administrators=(ADMIN,)) as service:
+            skill = ResourceRef.artifact("scope-a", family="skill", artifact_id="skill-a")
+            await service.establish_artifact_owner(skill, ALICE, idempotency_key="owner-replaced-skill", context=AUDIT)
+            original = await service.create_binding(
+                ADMIN,
+                CreateBinding(
+                    subject=BOB,
+                    resource=skill,
+                    role=AccessRole.ARTIFACT_VIEWER,
+                    idempotency_key="viewer-bob",
+                ),
+                context=AUDIT,
+            )
+
+            changed = await service.replace_binding(
+                ADMIN,
+                ReplaceBinding(
+                    binding_id=original.binding_id,
+                    expected_version=1,
+                    subject=ALICE,
+                    idempotency_key="replace-viewer-with-alice",
+                ),
+                context=AUDIT,
+            )
+
+            assert changed.previous.state is AccessBindingState.REVOKED
+            assert changed.current.subject == ALICE
+            assert changed.current.resource == skill
+            assert changed.current.role is AccessRole.ARTIFACT_VIEWER
 
     asyncio.run(scenario())
 

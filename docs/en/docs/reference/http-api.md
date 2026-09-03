@@ -119,11 +119,13 @@ curl --fail \
 The receiver can read and acknowledge the Handoff's history, current Revision, and future Revisions. It cannot use
 scope-wide latest-Handoff discovery, read another Handoff, or access Memory in the parent scope unless a separate
 scope role allows it. Use `/v1/access/me` to
-verify which Principal the deployment established, `/v1/access/check` for one decision, and
+verify which Principal the deployment established, `/v1/access/check` for one compound `all` or `any` requirement, and
 `/v1/access/resources/list` for a non-discovering list of already visible resources. Creation is idempotent per
-grantor and key; revocation uses `binding_id` plus `expected_version`. Relationship and decision events are available
-to Server administrators through `/v1/access/audit/list`. When authentication establishes delegated execution, each
-audit event keeps the effective `principal` and the trusted `actor` as separate opaque identities.
+grantor and key; revocation uses `binding_id` plus `expected_version`. An atomic `/v1/access/bindings/replace`
+revokes one immutable Binding and creates its successor with the same Resource and role. Role descriptors expose
+whether they allow `many_per_resource` or `one_per_resource` active Bindings. Relationship and decision events are
+available to Server administrators through `/v1/access/audit/list`. When authentication establishes delegated execution,
+each audit event keeps the effective `principal` and the trusted `actor` as separate opaque identities.
 
 The Access wire contract has only three Resource Kinds: `server`, `scope`, and `artifact`. An Artifact Resource uses
 the logical identity `{family, artifact_id}` and deliberately contains no Revision. Memory can narrow a grant with a
@@ -136,6 +138,15 @@ Managed Skill export and installation do not have separate sharing permissions. 
 the receiving Principal decides whether and how to install an exact Revision. Requests submit only an opaque
 `target_id`; public responses and errors omit host paths, Agent homes, credentials, and locators. Detailed Dashboard
 publication status is separately protected by `server.observe`.
+
+The standard Skill lifecycle uses the same Access boundary. Library listing requires `scope.read`; lifecycle changes
+require `artifact.write`; package manifest/download requires `artifact.read`; package proposals require
+`scope.contribute` and, when replacing an existing Skill, `artifact.write`; usage capture requires both
+`scope.contribute` and `artifact.read`. Remote target administration requires `scope.admin`, while publishing an exact
+Revision also requires `artifact.read` for that Skill. The enrollment endpoint is protected by its one-time code, and
+Receiver reconcile/download/receipt endpoints use the separately issued `TargetBearerAuth` credential instead of a
+user Principal. Dashboard data routes apply the corresponding Access checks before scope lookup, package inspection,
+target lookup, or filesystem work.
 
 The built-in static token represents one local administrator and cannot model different A/B users. A real multi-user
 deployment must authenticate each caller to a different Principal and inject an Authorization Provider. HTTP and MCP
@@ -151,7 +162,7 @@ use the same policy enforcement point; MCP tool visibility is not permission.
 | Work continuity | `/v1/work/*` | Create work contracts, prepare or acknowledge Handoffs, and record outcomes |
 | Low-level Handoff | `/v1/handoff/*` | Activate, prepare, finalize, commit, or continue a Handoff |
 | Memory | `/v1/memory/*` | Flush, remember, search, list, get, revise, retire, and inspect changes |
-| Experience and Skill | `/v1/experience/*`, `/v1/skill/*`, `/v1/skills/*` | Propose, generate, read Artifact revisions, and export readable managed Skills |
+| Experience and Skill | `/v1/experience/*`, `/v1/skill/*`, `/v1/skills/*` | Propose, review, package, govern, distribute, and read managed Skill revisions |
 | Review | `/v1/artifact-candidates/*` | List, inspect, revise, approve, or reject pending Candidates |
 | External Skills | `/v1/external-skills/*` | Scan configured targets and resolve or import packages |
 | Handoff Reports | `/v1/handoff-reports/*` | Manage Projects, Workstreams, activities, reports, and workspace bindings |

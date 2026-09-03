@@ -192,12 +192,12 @@ class CreateBinding:
 
 
 @dataclass(frozen=True, slots=True)
-class ReassignHandoffReceiver:
-    """Atomic compare-and-swap receiver reassignment."""
+class ReplaceBinding:
+    """Atomic compare-and-swap replacement of one immutable Binding."""
 
     binding_id: str
     expected_version: int
-    subject: PrincipalRef
+    subject: AccessSubjectRef
     idempotency_key: str
     reason: str | None = None
     expires_at: datetime | None = None
@@ -211,11 +211,11 @@ class ReassignHandoffReceiver:
 
 
 @dataclass(frozen=True, slots=True)
-class HandoffReceiverReassignment:
-    """Both sides of one atomic receiver reassignment."""
+class BindingReplacement:
+    """The revoked Binding and its active replacement."""
 
-    revoked_binding: AccessBinding
-    created_binding: AccessBinding
+    previous: AccessBinding
+    current: AccessBinding
 
 
 class AuthorizationProvider(Protocol):
@@ -272,14 +272,14 @@ class RelationshipWriter(Protocol):
         revoked_by: PrincipalRef,
     ) -> AccessBinding: ...
 
-    async def reassign_handoff_receiver(
+    async def replace_binding(
         self,
-        request: ReassignHandoffReceiver,
+        request: ReplaceBinding,
         /,
         *,
         actor: PrincipalRef,
         changed_at: datetime,
-    ) -> HandoffReceiverReassignment: ...
+    ) -> BindingReplacement: ...
 
 
 class RelationshipStore(RelationshipReader, RelationshipWriter, Protocol):
@@ -906,13 +906,13 @@ class AccessControlService:
         )
         return revoked
 
-    async def reassign_handoff_receiver(
+    async def replace_binding(
         self,
         principal: PrincipalRef | None,
-        request: ReassignHandoffReceiver,
+        request: ReplaceBinding,
         *,
         context: AccessAuditContext,
-    ) -> HandoffReceiverReassignment:
+    ) -> BindingReplacement:
         actor = _required_principal(principal)
         current = await _access_call(self._relationship_reader().get_binding(request.binding_id))
         if current is None:
@@ -925,8 +925,9 @@ class AccessControlService:
             if decision.allowed:
                 raise AccessBindingNotFoundError
             raise AccessDeniedError
-        if current.role is not AccessRole.HANDOFF_RECEIVER or current.resource.family != "handoff":
-            raise AccessInvalidRequestError("binding-role")
+        validate_binding_subject(current.resource, current.role, request.subject.type)
+        if isinstance(request.subject, GroupRef) and not self.provider_capabilities.group_subjects:
+            raise AccessInvalidRequestError("group-subjects-unavailable")
         if request.expires_at is not None and request.expires_at <= self._clock():
             raise AccessInvalidRequestError("binding-expired")
         await self.require_any(
@@ -935,7 +936,7 @@ class AccessControlService:
             context=context,
         )
         changed = await _access_call(
-            self._relationship_writer().reassign_handoff_receiver(
+            self._relationship_writer().replace_binding(
                 request,
                 actor=actor,
                 changed_at=self._clock(),
@@ -943,13 +944,13 @@ class AccessControlService:
         )
         await _access_call(
             self._record_relationship(
-                changed.revoked_binding,
+                changed.previous,
                 principal=actor,
                 context=context,
                 expected_version=request.expected_version,
             )
         )
-        await _access_call(self._record_relationship(changed.created_binding, principal=actor, context=context))
+        await _access_call(self._record_relationship(changed.current, principal=actor, context=context))
         return changed
 
     def _relationship_reader(self) -> RelationshipReader:
@@ -1433,14 +1434,14 @@ __all__ = (
     "AuthorizationProvider",
     "AuthorizedResourceFilter",
     "AuthorizedResourcePage",
+    "BindingReplacement",
     "BindingSearchRequest",
     "BuiltinAuthorizationProvider",
     "CreateBinding",
-    "HandoffReceiverReassignment",
-    "ReassignHandoffReceiver",
     "RelationshipReader",
     "RelationshipStore",
     "RelationshipWriter",
+    "ReplaceBinding",
     "ResourceSearchRequest",
     "access_control_for_mode",
 )

@@ -530,12 +530,6 @@ const OPERATIONS = {
 		location: "body",
 		scope: false
 	},
-	check_access_batch: {
-		method: "POST",
-		path: "/v1/access/check-batch",
-		location: "body",
-		scope: false
-	},
 	list_access_resources: {
 		method: "POST",
 		path: "/v1/access/resources/list",
@@ -566,9 +560,9 @@ const OPERATIONS = {
 		location: "body",
 		scope: false
 	},
-	reassign_handoff_receiver_binding: {
+	replace_access_binding: {
 		method: "POST",
-		path: "/v1/access/bindings/reassign-handoff-receiver",
+		path: "/v1/access/bindings/replace",
 		location: "body",
 		scope: false
 	},

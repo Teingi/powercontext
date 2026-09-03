@@ -822,16 +822,16 @@ OpenAPI source of truth 增加以下 operation：
 | Operation | Purpose | Authorization |
 | --- | --- | --- |
 | `GET /v1/access/me` | 返回当前 Principal 和 access-control capability | authenticated Principal |
-| `POST /v1/access/check` | 检查当前 Principal 的一个 action/resource | current Principal only |
-| `POST /v1/access/check-batch` | 批量检查当前 Principal | current Principal only |
+| `POST /v1/access/check` | 检查当前 Principal 的一个 `all` 或 `any` 复合权限要求 | current Principal only |
 | `POST /v1/access/resources/list` | 列出当前 Principal 可访问的资源 identity | current Principal only |
 | `POST /v1/access/roles/list` | 返回固定角色及 action vocabulary | authenticated Principal |
 | `POST /v1/access/bindings/list` | 列出调用方可管理的 Binding | `scope.delegate`, `scope.admin`, or `server.admin` |
 | `POST /v1/access/bindings/create` | 创建 Family-compatible exact-resource 或管理级 Binding | resource-specific administration action |
 | `POST /v1/access/bindings/revoke` | CAS revoke 一个 Binding | same administration boundary |
+| `POST /v1/access/bindings/replace` | 原子撤销不可变 Binding 并创建其后继 Binding | same administration boundary |
 | `POST /v1/access/audit/list` | 查询安全审计事件 | `scope.admin` or `server.admin` |
 
-`check`、`check-batch` 和 `resources/list` 不接受 client-specified subject，只检查当前 authenticated Principal，防止普通
+`check` 和 `resources/list` 不接受 client-specified subject，只检查当前 authenticated Principal，防止普通
 用户把 API 当作人员权限枚举器。管理员代查其他 Principal、subject search 和 directory integration 留给后续 RFC。
 
 `bindings/create` 必须接收 recipient subject，因为分享需要指定 B；调用方仍然只能在自己拥有管理权限的 resource 上创建
