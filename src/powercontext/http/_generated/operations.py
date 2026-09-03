@@ -26,8 +26,10 @@ from powercontext.http._generated.models import (
     Capabilities,
     CaptureContentSourceRequest,
     CaptureContentSourceResponse,
+    CommitConnectorCheckpointRequest,
     CommitHandoffRequest,
     CommittedHandoff,
+    ConnectorCheckpointState,
     ContinueHandoffRequest,
     CreateAccessBindingRequest,
     CreateHandoffReportProjectRequest,
@@ -42,6 +44,7 @@ from powercontext.http._generated.models import (
     GenerateExperienceRequest,
     GenerateSkillRequest,
     GetArtifactCandidateRequest,
+    GetConnectorCheckpointRequest,
     GetExperienceRequest,
     GetHandoffReportProjectRequest,
     GetHandoffReportRequest,
@@ -98,6 +101,7 @@ from powercontext.http._generated.models import (
     RecordHandoffReportActivityRequest,
     RecordTaskOutcomeRequest,
     RegisterHandoffReportWorkstreamRequest,
+    RegisterSourceDefinitionRequest,
     RejectArtifactCandidateRequest,
     RememberMemoryRequest,
     ResolveExternalSkillRequest,
@@ -111,7 +115,10 @@ from powercontext.http._generated.models import (
     SearchMemoryRequest,
     SearchMemoryResponse,
     SkillArtifact,
+    SourceDefinitionManifest,
+    SourceObservationReceipt,
     StoredHandoffReportActivity,
+    SubmitSourceObservationRequest,
     UpdateHandoffReportProjectRequest,
     UpdateHandoffReportWorkstreamRequest,
     WorkSourceReceipt,
@@ -237,6 +244,97 @@ CAPTURE_CONTENT_SOURCE = Operation[CaptureContentSourceRequest, CaptureContentSo
     },
     access=AccessRequirement(
         action="scope.contribute", resource="scope", scope_id_field="scope_id", resolver="request"
+    ),
+)
+
+REGISTER_SOURCE_DEFINITION = Operation[RegisterSourceDefinitionRequest, SourceDefinitionManifest](
+    method="POST",
+    path="/v1/source-definitions/register",
+    operation_id="register_source_definition",
+    request_type=RegisterSourceDefinitionRequest,
+    request_location="body",
+    response_type=SourceDefinitionManifest,
+    success_status=200,
+    summary="Register a worker-owned Source Definition manifest",
+    tags=("source-ingestion",),
+    responses={
+        200: {"description": "The exact manifest is registered or was already registered identically."},
+        409: {"$ref": "#/components/responses/Conflict"},
+        401: {"$ref": "#/components/responses/Unauthorized"},
+        403: {"$ref": "#/components/responses/Forbidden"},
+        422: {"$ref": "#/components/responses/InvalidRequest"},
+        503: {"$ref": "#/components/responses/Unavailable"},
+    },
+    access=AccessRequirement(action="server.admin", resource="server", scope_id_field=None, resolver="static"),
+)
+
+GET_CONNECTOR_CHECKPOINT = Operation[GetConnectorCheckpointRequest, ConnectorCheckpointState](
+    method="POST",
+    path="/v1/connector-checkpoints/get",
+    operation_id="get_connector_checkpoint",
+    request_type=GetConnectorCheckpointRequest,
+    request_location="body",
+    response_type=ConnectorCheckpointState,
+    success_status=200,
+    summary="Read a Connector binding checkpoint",
+    tags=("source-ingestion",),
+    responses={
+        200: {"description": "The current opaque checkpoint, including a normal null initial value."},
+        401: {"$ref": "#/components/responses/Unauthorized"},
+        403: {"$ref": "#/components/responses/Forbidden"},
+        409: {"$ref": "#/components/responses/Conflict"},
+        422: {"$ref": "#/components/responses/InvalidRequest"},
+        503: {"$ref": "#/components/responses/Unavailable"},
+    },
+    access=AccessRequirement(
+        action="scope.contribute", resource="scope", scope_id_field="binding.scope_id", resolver="request"
+    ),
+)
+
+SUBMIT_SOURCE_OBSERVATION = Operation[SubmitSourceObservationRequest, SourceObservationReceipt](
+    method="POST",
+    path="/v1/source-observations",
+    operation_id="submit_source_observation",
+    request_type=SubmitSourceObservationRequest,
+    request_location="body",
+    response_type=SourceObservationReceipt,
+    success_status=202,
+    summary="Submit a worker-materialized Source observation",
+    tags=("source-ingestion",),
+    responses={
+        202: {"description": "The observation is durably accepted and can be referenced exactly."},
+        401: {"$ref": "#/components/responses/Unauthorized"},
+        403: {"$ref": "#/components/responses/Forbidden"},
+        409: {"$ref": "#/components/responses/Conflict"},
+        404: {"$ref": "#/components/responses/NotFound"},
+        422: {"$ref": "#/components/responses/InvalidRequest"},
+        503: {"$ref": "#/components/responses/Unavailable"},
+    },
+    access=AccessRequirement(
+        action="scope.contribute", resource="scope", scope_id_field="scope_id", resolver="request"
+    ),
+)
+
+COMMIT_CONNECTOR_CHECKPOINT = Operation[CommitConnectorCheckpointRequest, ConnectorCheckpointState](
+    method="POST",
+    path="/v1/connector-checkpoints/commit",
+    operation_id="commit_connector_checkpoint",
+    request_type=CommitConnectorCheckpointRequest,
+    request_location="body",
+    response_type=ConnectorCheckpointState,
+    success_status=200,
+    summary="Commit a Connector binding checkpoint",
+    tags=("source-ingestion",),
+    responses={
+        200: {"description": "The new opaque checkpoint is durable."},
+        401: {"$ref": "#/components/responses/Unauthorized"},
+        403: {"$ref": "#/components/responses/Forbidden"},
+        409: {"$ref": "#/components/responses/Conflict"},
+        422: {"$ref": "#/components/responses/InvalidRequest"},
+        503: {"$ref": "#/components/responses/Unavailable"},
+    },
+    access=AccessRequirement(
+        action="scope.contribute", resource="scope", scope_id_field="binding.scope_id", resolver="request"
     ),
 )
 

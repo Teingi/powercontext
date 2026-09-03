@@ -24,12 +24,14 @@ from powercontext.client.errors import (
     UnauthorizedResponseError,
     UnavailableResponseError,
 )
+from powercontext.client.ingestion import RemoteConnectorWorker
 
 __all__ = [
     "ClientError",
     "ForbiddenResponseError",
     "InvalidResponseError",
     "PowerContextClient",
+    "RemoteConnectorWorker",
     "ServerResponseError",
     "TransportError",
     "UnauthorizedResponseError",
