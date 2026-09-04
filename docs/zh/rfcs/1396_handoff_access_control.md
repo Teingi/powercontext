@@ -54,15 +54,16 @@ PowerContext Server 策略执行点（PEP）
 │   ├── family=memory
 │   ├── family=experience
 │   ├── family=skill
-│   └── family=prompt
+│   └── family=prompt（保留但禁用）
 ```
 
 - `server`：当前 PowerContext deployment；
 - `scope`：一个精确 Workstream scope；
 - `artifact`：一个由 Artifact Family Access Profile 解释的逻辑 Artifact identity 或 Family-owned 逻辑 selector。
 
-`artifact` Resource Kind 首版注册 `handoff`、`memory`、`experience`、`skill` 和 `prompt` 五个 Artifact Family Access
-Profile。`ArtifactReference.family` 是唯一的 Profile discriminator；客户端不再提交第二个可能与它冲突的内容类型。
+`artifact` Resource Kind 当前启用 `handoff`、`memory`、`experience` 和 `skill` 四个 Artifact Family Access Profile。
+`prompt` vocabulary 已保留，但在 PowerContext 实现 Prompt lifecycle 前保持禁用。`ArtifactReference.family` 是唯一的
+Profile discriminator；客户端不再提交第二个可能与它冲突的内容类型。
 
 用户 A 可以选择两种协作方式：
 
@@ -71,13 +72,13 @@ Profile。`ArtifactReference.family` 是唯一的 Profile discriminator；客户
 
 第二种方式是首版的最小权限路径。B 可以读取被分享逻辑资源的已有及未来版本，并只能执行对应 Artifact Family Access
 Profile 明确授予的 action。Handoff receiver 可以通过 Handoff resolver 检查所选 Revision 明确引用的 evidence，并对该
-Revision 留下 Receipt；逻辑 Memory、Artifact 或 Prompt grant 不自动开放同一 scope、聚合搜索/列表、其他逻辑资源或
+Revision 留下 Receipt；逻辑 Memory 或 Artifact grant 不自动开放同一 scope、聚合搜索/列表、其他逻辑资源或
 lineage 中引用的资源。Skill 的读取、发布到一个 target，以及宿主最终加载或执行是彼此独立的授权边界。`accepted` Receipt、Artifact
 approval、Prompt read 或 Skill publication 都不会授予工具、网络、文件系统、模型 Provider 或凭据权限。
 
 PowerContext 定义稳定的授权 request/decision、内置角色、Access API 和 OpenAPI extension，但不绑定一个策略引擎。
-首版提供内置 Role Binding Store；Casbin、OpenFGA 和兼容 OpenID AuthZEN Authorization API 的 Policy Decision
-Point（PDP）可以通过 adapter 接入。
+当前实现提供内置 Role Binding Store、可写的 embedded Casbin adapter，以及兼容 OpenID AuthZEN Authorization API 的
+decision-only PDP adapter。OpenFGA、OPA 和 Cerbos 仍是未来可接入的 adapter。
 
 # Motivation
 
@@ -90,7 +91,6 @@ Memory Entry Version、approved Experience/managed Skill Revision 和 host-local
 - 团队成员可以查看 Handoff Report，但不能审批 Experience 或 Skill；
 - B 可以读取一条被分享 Memory Entry 的各版本，但不能搜索整个 scope 或读取其他 Entry；
 - B 可以读取一个 approved Experience 或 managed Skill 的各 Revision，但不能评审 Candidate；
-- B 可以使用一个逻辑 Prompt，但不能把它静默提升为宿主的 system/developer instruction；
 - 发布者可以发布选定的 managed Skill Revision，但不能借此修改源资源或获得宿主执行权限；
 - 有效 Handoff Binding 覆盖后续 Revision，而被撤销的接收方之后不能读取任何 Revision；
 - HTTP、MCP 和 Dashboard 对同一个 Principal 得到相同判定。
@@ -138,7 +138,7 @@ Protected Resource
 │   ├── family=memory
 │   ├── family=experience
 │   ├── family=skill
-│   └── family=prompt
+│   └── family=prompt（保留但禁用）
 ```
 
 每一种 Artifact Family Access Profile 必须固定回答以下问题：
@@ -162,12 +162,12 @@ vocabulary、Server-owned resolver、Provider conformance vector 和生成的 tr
 资源可读、进入上下文和获得外部执行能力是三个不同平面：
 
 ```text
-Access Plane:      Principal 可以跨版本读取或使用哪个逻辑 resource
+Access Plane:      Principal 可以跨版本读取、写入或分享哪个逻辑 resource
 Context Plane:     哪些已授权内容经显式选择进入有界 PreparedContext
 Execution Plane:   宿主是否安装、加载或执行 Skill/Prompt，以及能使用哪些工具和凭据
 ```
 
-一个 allow decision 不能跨平面传播。逻辑 Memory、Artifact 或 Prompt grant 不会让内容自动进入普通 scope recall；接收方
+一个 allow decision 不能跨平面传播。逻辑 Memory 或 Artifact grant 不会让内容自动进入普通 scope recall；接收方
 先在 “Shared with me” 视图发现资源，再显式读取、附加到当前任务或 fork 到自己可贡献的 scope。共享内容继续视为
 `untrusted_history` 或不可信 instruction，Context builder 和宿主仍执行各自的预算、优先级、approval 与 sandbox policy。
 
@@ -203,7 +203,6 @@ Execution Plane:   宿主是否安装、加载或执行 Skill/Prompt，以及能
 {
   "subject": {
     "type": "user",
-    "issuer": "https://id.example.com/",
     "id": "00u-bob"
   },
   "resource": {
@@ -211,7 +210,7 @@ Execution Plane:   宿主是否安装、加载或执行 Skill/Prompt，以及能
     "scope_id": "project:payments",
     "identity": {
       "family": "handoff",
-      "artifact_id": "project:payments"
+      "artifact_id": "handoff"
     },
     "selector": null
   },
@@ -255,9 +254,9 @@ Evidence 的最小权限不是逐条复制 Source 或 Memory，也不是让外�
 1. A 选择一个已持久化版本来标识可授权资源；Server 把 Memory 归一化为逻辑 `entry_id` selector，把其他 Artifact
    归一化为 `{family, artifact_id}`，Revision 不进入 Binding。
 2. Server 先检查 A 是否可以在该资源所属 scope 创建对应 Binding，再验证资源存在且处于可分享状态。
-3. B 通过 `access/resources/list` 发现逻辑 resource，并使用自己的 Principal 读取它的已有或未来版本，或显式使用它。
-4. B 若要修改或长期维护内容，需要在自己拥有 `scope.contribute` 的 scope 中显式 fork 或提出新 Candidate；原资源和
-   Binding 不被修改。
+3. B 通过 `access/resources/list` 发现逻辑 resource，并使用自己的 Principal 读取它的已有或未来版本。
+4. B 若要创建派生内容，需要在自己拥有 `scope.contribute` 的 scope 中提出新的 Artifact；新逻辑 identity 归 B 所有，
+   原资源和 Binding 不被修改。
 
 首版逻辑 grant 的行为如下：
 
@@ -265,24 +264,30 @@ Evidence 的最小权限不是逐条复制 Source 或 Memory，也不是让外�
 | --- | --- | --- |
 | `artifact.viewer` on `family=memory` selector | exact get 同一 `entry_id` 的任一版本 | search、list、changes、revise、retire、其他 entry |
 | `artifact.viewer` | exact get 同一 Experience 或 managed Skill identity 的任一 approved Revision | Candidate read/review、publication、其他 Artifact、lineage body |
-| `artifact.viewer` on `family=prompt` | exact get 同一 Prompt identity 的任一 approved Revision | render/use、其他 Prompt、自动注入 |
-| `prompt.user` | `artifact.viewer` 加显式 render/use | 改变 instruction priority、自动启用工具或读取凭据 |
 
-普通用户输入仍是 Source evidence，不因包含文字 “prompt” 就成为 Prompt Artifact。可复用、参数化的任务模板可以由后续
-Prompt Artifact lifecycle 定义；Memory extraction、Experience/Skill generation 和 Handoff generation 使用的内部 prompt
-属于 Server implementation/configuration，由 `server.admin` 管理，不通过 `family=prompt` Artifact Binding 分享。如果一个
-内容描述 Agent 何时使用、如何执行和如何验证一项能力，它应建模为 managed Skill，而不是重复创建 Prompt Artifact。
+保留的 `prompt` Profile 在 `enabled=false` 时不能创建 Binding，`prompt.user` 也不会作为 enabled Family 的可用角色返回。
+Memory extraction、Experience/Skill generation 和 Handoff generation 使用的内部 prompt 属于 Server
+implementation/configuration，不是可分享的 Prompt Artifact。
 
 除 Handoff 的 manifest 范围 evidence resolver 外，逻辑资源响应可以返回 schema 已定义的 lineage/citation identity，但
 grant 不向引用目标传递。调用通用 Source、Memory 或 Artifact get operation 仍需对目标资源独立判定；Provider 不得因为
 “A references B” 自动创建 `can_read` 继承。
 
-## 分享是对一个演进 identity 的只读访问，不是共同编辑
+## Viewer Binding 只读，owner 管理演进 identity
 
-Artifact Binding 只授予读取、显式使用或向 Server-configured target 执行受控发布 operation 的权限，不转移原资源的
-content authority。授权 owner 创建的后续 Revision 会通过逻辑 Binding 对接收方可见，但 Binding 本身不能授权接收方
-revise、retire、replace、提交下一 Revision，或原地覆盖共享内容。即使接收方另外拥有原 scope
-的 `scope.contribute` 或更高权限，其写入能力也来自该独立的 scope role，而不是这次分享。
+在 enforced mode 下，每个 enabled 逻辑 Artifact 只有一个 direct owner。Server 在首次创建 Handoff 或 Memory identity
+时建立 owner；Experience/Skill Candidate 创建时记录 proposer 为 proposed owner，批准后再正式建立 ownership。
+Ownership 是 Server-managed relation，不是公共 `artifact.owner` Binding，并跨所有已有及未来 Revision 覆盖同一逻辑
+identity。
+
+Owner 拥有 `artifact.read`、`artifact.write` 和 `artifact.share`；Handoff owner 还拥有
+`handoff.evidence.inspect`。创建下一 Revision、revise/retire Memory、替换已有 Experience/Skill target 或修改 managed
+Skill lifecycle 时必须检查 `artifact.write`。Scope role 可以授权 contribution 或 review，但不会让持有者自动成为已有
+Artifact 的 owner。
+
+Viewer/receiver Binding 对被绑定内容保持只读。Owner 创建的后续 Revision 会通过逻辑 Binding 对接收方可见，但 Binding
+不能授权接收方 revise、retire、replace 或提交下一 Revision。接收方若要创建派生内容，需要对目标 scope 拥有
+`scope.contribute`，并创建 ownership 与源资源相互独立的新 identity 或 Candidate。
 
 接收方产生的状态必须与共享原件分离：
 
@@ -293,14 +298,14 @@ revise、retire、replace、提交下一 Revision，或原地覆盖共享内容�
 | 发布 managed Skill | 写入 Server 配置目标的 projection/state，不修改源 Skill Revision |
 | fork、import 或 copy | 必须对目标 scope 拥有 `scope.contribute`；创建新的 identity 或 Candidate，并保留到原资源的 lineage |
 
-产品界面应使用“查看”“使用”“确认接收”“请求变更”“复制到我的 scope”或“发布到配置目标”等动作，不应把逻辑 share
+产品界面应使用“查看”“确认接收”“请求变更”“复制到我的 scope”或“发布到配置目标”等动作，不应把逻辑 share
 呈现为“编辑共享内容”。持续共同维护需要单独授予 scope role；对于需要 Review 的 Artifact Family，贡献者仍通过 Candidate
 和 Review lifecycle 产生新 Revision，而不是原地改写 approved Revision。撤销分享会阻止后续访问，但不能删除接收方已经
 看到的内容，也不能自动撤销此前经独立授权创建的 Receipt、projection 或 fork。
 
 ## 跨 Scope 发布 Artifact
 
-`POST /v1/artifact-publications` 会把一个精确的 source Artifact Revision 复制成由目标 Scope 独立拥有的新 Artifact。
+`POST /v1/artifact-publications` 会把一个精确的 source Artifact Revision 复制成目标 Scope 中的独立新 Artifact。
 因此业务请求包含精确 `ArtifactAddress`，但 Access Resource 仍是没有 Revision 的逻辑 `{family, artifact_id}` identity。
 Server 在读取或复制内容之前必须同时检查：
 
@@ -309,9 +314,11 @@ source 逻辑 Artifact 上的 artifact.share
 目标 Scope 上的 scope.admin
 ```
 
-这样授权可以覆盖 source 的历史和后续 Revision，同时每次 publication 仍保留精确 provenance。Binding 本身不会复制
-内容，publication 也不会授予 host path、工具、网络、credential 或后续 target mutation 权限。具体 Artifact Family
-能否完整复制仍由 Runtime 决定；不支持的 complete-state copy 会在授权后失败，但不会放宽 Access 模型。
+这样授权可以覆盖 source 的历史和后续 Revision，同时每次 publication 仍保留精确 provenance。复制成功后，Server 在
+返回成功前把执行 publication 的 Principal 建立为新 target identity 的 direct owner；target 不继承 source 的 Binding
+或 owner。相同 publication 重试会幂等修复缺失的 target owner relation，冲突 owner 则 fail closed。Binding 本身不会
+复制内容，publication 也不会授予 host path、工具、网络或 credential。具体 Artifact Family 能否完整复制仍由 Runtime
+决定；不支持的 complete-state copy 会在授权后失败，但不会放宽 Access 模型。
 
 ## B 真正接手 Workstream
 
@@ -333,18 +340,18 @@ PowerContext 权限只控制 PowerContext 资源和 operation。修改 Git 仓�
 
 对固定团队，可以把用户或外部 group 绑定为 scope role，而不是为每个 Revision 创建 Binding：
 
-- `scope.viewer`：读取当前 scope 的 Handoff、Memory、approved Artifact、Prompt、Source 和只读投影，并显式使用 approved
-  Prompt；
-- `scope.contributor`：在 viewer 基础上写入工作 evidence、Memory contribution、Handoff 和 Outcome，并提出 Artifact/Prompt
+- `scope.viewer`：读取当前 scope 的 Handoff、Memory、approved Artifact、Source 和只读投影；
+- `scope.contributor`：在 viewer 基础上写入工作 evidence、Memory contribution、Handoff 和 Outcome，并提出 Artifact
   Candidate；
 - `scope.reviewer`：在 viewer 基础上评审 Artifact Candidate；
 - `scope.delegator`：在 viewer 基础上把逻辑 Handoff 分享给接收方；
-- `scope.admin`：管理该 scope 的全部角色和策略。
+- `scope.admin`：管理该 scope 的角色和策略，并可授权 Artifact 分享，但它本身不是内容 read/write role。
 
-`scope.delegate` 在本 RFC 中继续只允许为 `family=handoff` Artifact 创建 viewer/receiver Binding。首版其他 Artifact
-Family 的逻辑 Binding 只能由 `scope.admin` 创建，不能因为已有 Handoff delegator 就静默扩大分享边界。后续可以增加
-资源级 delegation action，但必须作为显式 wire-contract 变更。发布 target 由 `server.admin` 通过 deployment configuration
-管理，不创建 Access Binding。
+`scope.delegate` 只允许为 `family=handoff` Artifact 创建 viewer/receiver Binding。Artifact direct owner 也可通过
+`artifact.share` 创建或撤销其 resource Binding。其他 enabled Family 的 resource Binding 可由 owner、`scope.admin` 或
+`server.admin` 管理；已有 Handoff delegator 不会因此获得更宽的分享边界。`server.admin` 管理 server/scope policy，但
+不会隐式获得 `server.observe`、`scope.read` 或 `artifact.write`；legacy static Principal 为兼容性会另外得到 observer 和
+per-scope working role。
 
 固定角色是 wire-contract vocabulary，不要求外部 PDP 使用相同内部存储。外部系统可以把企业角色、团队或关系映射为
 这些 action。
@@ -385,8 +392,8 @@ A、相应 grant administrator 或 scope admin 可以撤销其管理边界内的
 - 在 HTTP、MCP 和 Dashboard 前建立同一个 Server PEP；
 - 从认证凭据建立不可由请求覆盖的 Principal；
 - 支持 scope 级 RBAC 和逻辑 Handoff receiver Binding；
-- 定义稳定 Resource Kind 和 Artifact Family Access Profile contract，并规范 Handoff、Memory、Experience、Skill 和 Prompt
-  的逻辑资源授权；
+- 定义稳定 Resource Kind 和 Artifact Family Access Profile contract，规范 Handoff、Memory、Experience 和 Skill 的逻辑
+  资源授权，并保留 disabled Prompt vocabulary；
 - 允许安全解引用已授权 Handoff 所选 Revision 引用的 evidence，而不开放整个 scope；
 - 区分资源读取、上下文选择、Skill 发布与宿主执行权限；
 - 提供可替换的判定接口和可选的关系写入接口；
@@ -407,7 +414,7 @@ A、相应 grant administrator 或 scope admin 可以撤销其管理边界内的
 - 成员会动态变化的 Memory collection 或 Artifact catalog 订阅分享；
 - Prompt Artifact 的内容 schema、变量语言、Review lifecycle 或宿主 instruction-priority policy；
 - per-target publication delegation 或通用 `execution_target` Resource；
-- remote managed Skill projection 或 Receiver distribution contract；
+- 由独立 lifecycle RFC 定义的 remote managed Skill Receiver distribution contract；
 - External Skill 的跨主机 locator、自动安装或 package distribution contract。
 
 ## Trust model and invariants
@@ -417,7 +424,7 @@ A、相应 grant administrator 或 scope admin 可以撤销其管理边界内的
 1. `scope_id` 是业务分区值，不是授权证明。
 2. Principal 只来自认证 middleware 或可信 internal bridge context。
 3. 请求 body 中的 `receiver`、`subject`、`actor`、role text 或 Handoff 自然语言不能替换当前 Principal。
-4. Handoff、Memory、Artifact 和 Prompt 内容是 `untrusted_history` 或不可信 instruction，不能授予 action。
+4. Handoff、Memory 和 Artifact 内容是 `untrusted_history` 或不可信 instruction，不能授予 action。
 5. `is_internal_bridge()` 只能跳过重复 transport authentication，不能跳过 authorization。
 6. 每个受保护的 operation 在访问 Repository 或 application service 前完成判定。
 7. 逻辑 Handoff grant 允许对同一 Artifact 的已有和未来 Revision 使用 exact/latest selection，但不开放其他 Handoff 或
@@ -428,15 +435,16 @@ A、相应 grant administrator 或 scope admin 可以撤销其管理边界内的
     Artifact grant 只含 `{family, artifact_id}`。业务请求可以选择正整数 Revision 或 version，但这些字段永远不进入 Access
     Resource 或 Binding。Server 只从 `identity.family` 派生 Access Profile；独立 content profile、未知 Family 或
     selector mismatch 必须拒绝。
-11. 读取 Memory、Artifact 或 Prompt 不自动授予其 lineage/citation target，也不自动进入 PreparedContext。
+11. 读取 Memory 或 Artifact 不自动授予其 lineage/citation target，也不自动进入 PreparedContext。
 12. Logical-resource Binding 本身不授予 revise、retire、replace、提交下一 Revision 或其他修改共享内容的 operation；
     Receipt、feedback、projection 和 fork 是独立资源或 operation，必须分别授权，并且不能修改原资源的 identity、content
     或 Revision。
-13. `prompt.use` 不改变宿主 instruction priority；Skill publication 不授予宿主加载、执行、工具、网络、文件系统或 secret
-    权限。
-14. Skill publish 必须允许逻辑 `family=skill` Artifact 的 `artifact.read`，且授权发生在解析
-    `target_id` 或任何 host/filesystem inspection 前；`target_id` 不是授权资源，首版只解析已配置的 host-local target。
-15. Public error、log、metric 和 trace 不包含 credential、Handoff/Memory/Artifact/Prompt 正文、Source body、target locator
+13. 每个 enabled 逻辑 Artifact 只有一条 immutable direct owner relation。公共 Binding 不能创建、替换或转移
+    `artifact.owner`；owner 缺失时，Artifact authorization 必须 fail closed。
+14. Host-local Skill projection 必须在解析 `target_id` 或检查文件系统前同时通过 `server.observe` 和 `artifact.read`；remote
+    target 管理要求 `scope.admin`，remote publication 还要求 `artifact.read`。这些 operation 都不授予宿主执行、工具、
+    网络、文件系统或 secret 权限。
+15. Public error、log、metric 和 trace 不包含 credential、Handoff/Memory/Artifact 正文、Source body、target locator
     或 PDP 原始响应。
 
 ## Principal model
@@ -446,7 +454,6 @@ A、相应 grant administrator 或 scope admin 可以撤销其管理边界内的
 ```json
 {
   "type": "user",
-  "issuer": "https://id.example.com/",
   "id": "00u-bob"
 }
 ```
@@ -455,13 +462,14 @@ A、相应 grant administrator 或 scope admin 可以撤销其管理边界内的
 
 | Field | Semantics |
 | --- | --- |
-| `type` | `user`、`service` 或后续注册的 Principal type |
-| `issuer` | 建立该 identity 的可信 issuer；本地凭据使用 deployment-specific issuer |
-| `id` | issuer 内稳定 opaque subject，不使用显示名或 email |
+| `type` | `user` 或 `service` |
+| `id` | deployment 范围内稳定的 opaque subject，不使用显示名或 email |
+| `description` | 可选显示信息，不参与 identity equality 或 policy key |
 
-Agent 名称、host、session ID 和模型名称属于 provenance，不默认成为 Principal。若企业 token 明确证明 on-behalf-of actor，
-认证 adapter 可以在可信 request context 中附加 `actor`；PDP 可以同时约束 subject 和 actor。客户端不能通过 JSON body
-声明该 actor。
+需要 issuer namespace 时，由 Authentication Provider 把它归一化进 deployment-wide opaque `id`；`issuer` 不是公共
+`PrincipalRef` 字段。Agent 名称、host、session ID 和模型名称属于 provenance，不默认成为 Principal。若企业 token 明确
+证明 on-behalf-of actor，认证 adapter 可以在可信 request context 中附加 `actor`；PDP 可以同时约束 subject 和 actor。
+客户端不能通过 JSON body 声明该 actor。
 
 现有 Handoff Receipt 的 `receiver` 字段继续作为记录内容。Server 另外记录产生 Receipt 的 authenticated Principal，
 两者不一致时拒绝 `accepted` 或在非 accepted Receipt 中明确标记 mismatch；绝不能把自由文本 `receiver` 当作 Principal。
@@ -512,8 +520,8 @@ citation 中，不进入 Access Resource：
 
 `ArtifactResourceRef.identity.family` 是唯一的 Artifact Family Access Profile discriminator。请求不包含独立 `profile`
 字段；Server 从已验证的逻辑 identity 派生 Profile，避免 `profile=prompt` 与 `family=skill` 等不一致组合。
-每个 Family 声明 selector 为 required、forbidden 或某个固定 discriminated union variant。首版 `memory` 要求
-`memory_entry` selector，`handoff`、`experience`、`skill` 和 `prompt` 禁止 selector。
+每个 Family 声明 selector 为 required、forbidden 或某个固定 discriminated union variant。当前 `memory` 要求
+`memory_entry` selector；`handoff`、`experience`、`skill` 和 disabled `prompt` Profile 禁止 selector。
 
 Family registry 是 Server-owned 固定 contract，不是管理员可编辑的 policy DSL。每个注册项至少包含：
 
@@ -523,21 +531,26 @@ Family registry 是 Server-owned 固定 contract，不是管理员可编辑的 p
 | `share_unit` | `artifact` 或一个明确的 Family-owned 逻辑 selector type |
 | `shareable_states` | 允许创建 Binding 的 lifecycle state |
 | `base_action` | 首版统一为 `artifact.read` |
-| `additional_actions` | Family 特有的 use、acknowledge 或 publish action |
+| `additional_actions` | Family 特有的读取侧或 acknowledge action |
 | `grantable_roles` | 与该 Family 兼容的固定逻辑资源 roles |
+| `mutation_semantics` | 由 `artifact.write` 表达的 owner-only mutation |
 | `parent_implications` | scope role 可以单向蕴含哪些 child action |
 | `transitivity` | lineage、citation 或其他关联资源是否需要独立判定；未声明时为 none |
 | `resolver` | 逻辑授权后如何解析所选业务版本，以及返回什么安全 identity |
 
-首版 registry 为：
+当前 registry 为：
 
-| Artifact Family | Share unit | Shareable state | Actions | Grantable resource roles |
-| --- | --- | --- | --- | --- |
-| `handoff` | 逻辑 Artifact | 至少一个 committed Revision | `artifact.read`, `handoff.evidence.inspect`, `handoff.acknowledge` | `handoff.viewer`, `handoff.receiver` |
-| `memory` | 逻辑 `memory_entry` selector | Entry 存在 | `artifact.read` | `artifact.viewer` |
-| `experience` | 逻辑 Artifact | 至少一个 approved Revision | `artifact.read` | `artifact.viewer` |
-| `skill` | 逻辑 Artifact | 至少一个 approved Revision | `artifact.read` | `artifact.viewer` |
-| `prompt` | 逻辑 Artifact | 至少一个 approved Revision | `artifact.read`, `prompt.use` | `artifact.viewer`, `prompt.user` |
+| Artifact Family | Enabled | Share unit | Shareable state | Family actions | Grantable resource roles |
+| --- | --- | --- | --- | --- | --- |
+| `handoff` | yes | 逻辑 Artifact | 至少一个 committed Revision | `artifact.read`, `handoff.evidence.inspect`, `handoff.acknowledge` | `handoff.viewer`, `handoff.receiver` |
+| `memory` | yes | 逻辑 `memory_entry` selector | active 或 retired Entry 存在 | `artifact.read` | `artifact.viewer` |
+| `experience` | yes | 逻辑 Artifact | 至少一个 approved Revision | `artifact.read` | `artifact.viewer` |
+| `skill` | yes | 逻辑 Artifact | 至少一个 approved Revision | `artifact.read` | `artifact.viewer` |
+| `prompt` | no | 逻辑 Artifact | reserved | 保留 `artifact.read`, `prompt.use` vocabulary | none |
+
+每个 enabled row 还允许 direct owner 执行 `artifact.write`，并允许 owner 或 administrator 通过
+`artifact.share` 管理分享。两者都不会变成 viewer action，也不能作为独立 resource Binding 授予。角色发现会把
+`artifact.owner` 报告为 one-per-resource、system-managed role；owner relation 只能由 Server 业务流程建立。
 
 Prepared Handoff 没有持久化 identity，不能创建 Access Binding。跨用户最小权限分享必须先 commit；pending/rejected
 Candidate 同样不能创建 Artifact Binding。普通新 Family 即使只复用 `artifact.read`，也必须先显式注册为 shareable；
@@ -551,6 +564,17 @@ Candidate 同样不能创建 Artifact Binding。普通新 Family 即使只复用
 Adapter 负责把结构化 ResourceRef 映射成外部 PDP object ID。映射必须 canonical、可逆或稳定，并避免把 email、token、
 资源正文、发布 target locator 或其他 PII 写入 Casbin policy、OpenFGA tuple 或 audit key。
 
+### Artifact ownership
+
+Server 把 ownership 与普通 `AccessBinding` 分开保存。`ArtifactOwnerRelation` 包含逻辑 resource、唯一
+`PrincipalRef`、可信创建时间、policy revision 和 idempotency key，刻意不包含 Artifact Revision。Owner relation
+不可变；只有相同 owner 和 key 的重复建立才是幂等操作，不同 owner 返回 conflict。本 RFC 不定义 ownership transfer。
+
+在 enforced mode 下，owner relation 建立前的 Artifact authorization 以 `artifact_owner_pending` fail closed。新 Memory
+Entry 和首次 Handoff commit 由创建者拥有。新 Experience/Skill Candidate 记录 Server-side proposed-owner attestation，
+批准后再建立 ownership；以已有 identity 为 target 的 Candidate 必须保留原 owner。跨 Scope publication 的新 target
+identity 归 publisher 所有。
+
 ## Action vocabulary
 
 首版 action 是稳定、小写、点分隔的字符串：
@@ -560,25 +584,27 @@ Adapter 负责把结构化 ResourceRef 映射成外部 PDP object ID。映射必
 | `server.observe` | server | 读取服务级运行状态和观测数据 |
 | `server.admin` | server | 管理 deployment access configuration 和 publication target configuration |
 | `scope.read` | scope | 读取该 Workstream 的通用只读资源、approved content 和投影 |
-| `scope.contribute` | scope | 写入 Source、Memory contribution、Handoff/Outcome，并提出 Artifact/Prompt Candidate |
+| `scope.contribute` | scope | 创建 Source、新 Memory/Handoff 内容、Outcome 和 Artifact Candidate |
 | `scope.review` | scope | 评审该 scope 的 Artifact Candidate |
 | `scope.delegate` | scope | 为逻辑 Handoff 创建 viewer 或 receiver Binding |
 | `scope.admin` | scope | 管理该 scope 的角色、Binding 和 policy |
 | `artifact.read` | logical artifact | 读取 Family Profile 定义的 identity 或 selector 的已有和未来版本 |
+| `artifact.write` | logical artifact | 通过 Family lifecycle 修改由 owner 控制的逻辑 identity |
+| `artifact.share` | logical artifact | 管理 viewer/receiver Binding，或从逻辑 source identity 发布一个精确 Revision |
 | `handoff.evidence.inspect` | `family=handoff` artifact | 通过 Handoff resolver 解引用所选 Revision 的 citation manifest |
 | `handoff.acknowledge` | `family=handoff` artifact | 对所选 Revision 创建 Handoff Receipt |
-| `prompt.use` | `family=prompt` artifact | 显式 render 或附加一个已授权 Prompt；不决定宿主 instruction priority |
+| `prompt.use` | `family=prompt` artifact | 保留 action；Prompt Profile 禁用时不可使用 |
 
-`artifact.read` 的含义在所有 Family 中保持固定：只读取 Binding 标识的逻辑 identity 或 selector 的各版本。它不自动
-包含 Handoff evidence、Prompt use、lineage body 或任何 mutation。Managed Skill publication 是把所选可读 Revision
-投影到 Server-configured target 的受控 operation。只有确实具有不同安全效果的 Family operation 才新增 semantic action。
+`artifact.read` 的含义在所有 enabled Family 中保持固定：只读取 Binding 标识的逻辑 identity 或 selector 的各版本。它
+不自动包含 Handoff evidence、lineage body、write 或 share。只有确实具有不同安全效果的 Family operation 才新增
+semantic action。
 
 业务 operation 检查 action，不检查 role name。这样可以调整外部角色或关系模型，而不改 application code。
 
-`scope.read` 可以通过策略蕴含 scope 下所有已注册 Family 的 `artifact.read`、Handoff 的 `handoff.evidence.inspect` 和
-Prompt 的 `prompt.use`；`scope.contribute` 可以蕴含 acknowledge、prepare、commit、Memory contribution、Artifact/Prompt
-Candidate proposal 和 Outcome 写入。反向蕴含不成立：任何 resource viewer/user role 都不能得到 `scope.read` 或
-`scope.contribute`。
+内置 parent implication 刻意保持收敛：`scope.viewer`、`scope.reviewer` 和 `scope.delegator` 对 child 蕴含
+`artifact.read` 与 Handoff evidence inspect；`scope.contributor` 还蕴含 Handoff acknowledge。`scope.admin` 和
+`server.admin` 蕴含 `artifact.share`，`server.admin` 还蕴含 `scope.admin`。管理权限不会隐式授予内容 read/write；反向
+蕴含也不成立，resource viewer 或 owner 不会获得 scope role。
 
 ## Built-in roles
 
@@ -587,18 +613,23 @@ Candidate proposal 和 Outcome 写入。反向蕴含不成立：任何 resource 
 | `handoff.viewer` | `artifact.read`, `handoff.evidence.inspect` on one logical `family=handoff` Artifact |
 | `handoff.receiver` | viewer actions plus `handoff.acknowledge` on one logical Handoff |
 | `artifact.viewer` | `artifact.read` on one compatible logical Artifact or selector |
-| `prompt.user` | `artifact.read`, `prompt.use` on one logical `family=prompt` Artifact |
+| `prompt.user` | reserved role；`family=prompt` disabled 时不可使用 |
+| `artifact.owner` | 对一个逻辑 Artifact 执行 `artifact.read`、`artifact.write`、`artifact.share` 和 Handoff evidence inspect；system-managed |
 | `scope.viewer` | `scope.read` |
 | `scope.contributor` | `scope.read`, `scope.contribute` |
 | `scope.reviewer` | `scope.read`, `scope.review` |
 | `scope.delegator` | `scope.read`, `scope.delegate` |
-| `scope.admin` | all scope and child Artifact Family actions, including delegation and Binding administration |
+| `scope.admin` | `scope.admin`；只对 child Artifact 蕴含 `artifact.share` |
 | `server.observer` | `server.observe` |
-| `server.admin` | all server, scope, and Artifact Family actions |
+| `server.admin` | `server.admin`；蕴含 `scope.admin` 和 `artifact.share`，但不蕴含 read/write |
 
-所有 resource role 对其绑定内容都是只读的。`handoff.receiver` 只额外允许创建独立 Receipt；发布可读 Skill 只向 Server
-配置的 target 写 projection。两种 operation 都不能修改源 Handoff 或 Skill Revision。原资源的 mutation 必须由独立的
-scope role 和对应领域 lifecycle 授权。
+`handoff.receiver` 和 `artifact.owner` 的 cardinality 是 `one_per_resource`，其他 role 均为
+`many_per_resource`。Owner 为 system-managed；receiver/owner subject 必须是 user 或 service。其他公共 role schema 也
+允许 group subject，但 built-in/Casbin composition 当前报告 `group_subjects=false`，在配置可信 group resolver 前拒绝创建
+group Binding。
+
+所有可通过公共 API 授予的 resource role 对其绑定内容都是只读的；`handoff.receiver` 只额外允许创建独立 Receipt。
+修改原资源必须同时满足 system-managed owner relation 和对应领域 lifecycle。
 
 首版不允许通过公共 API 创建新 role 或修改 role-to-action mapping。固定角色让 OpenAPI、Dashboard 和 adapter
 conformance test 拥有稳定语义；企业 PDP 可以在外部把自定义组织角色映射为这些 action。
@@ -607,19 +638,18 @@ conformance test 拥有稳定语义；企业 PDP 可以在外部把自定义组�
 逻辑 Handoff。创建 scope role 需要 `scope.admin`；创建 `server.admin` 需要现有 `server.admin` 和 deployment policy
 允许。任何 Principal 都不能授予自己高于调用方管理边界的权限。
 
-首版只有 `scope.admin` 可以在所管理的 scope 中创建 `artifact.viewer` 或 `prompt.user` Binding。
-`artifact.viewer` 只能绑定到 Family registry 声明兼容的逻辑 Artifact 或 selector；`prompt.user` 只能绑定 approved
-`family=prompt` Artifact。Role 与 Artifact Family Access Profile 或 Resource Kind
-不匹配时返回 422，
-授权不足时返回 403；Server 不能把不匹配的 role text 原样交给外部 RelationshipWriter。
+Artifact owner 或 `scope.admin` 可以创建兼容的 viewer Binding；`server.admin` 继承该管理边界。`artifact.viewer` 只能
+绑定到 enabled Family Profile 声明兼容的逻辑 Artifact 或 selector。公共 `artifact.owner` Binding 和 disabled
+`family=prompt` 的所有 Binding 都必须拒绝。Role 与 Artifact Family Access Profile 或 Resource Kind 不匹配时返回
+422，授权不足时返回 403；Server 不能把不匹配的 role text 原样交给外部 RelationshipWriter。
 
 | Resource or Artifact Family Profile | Grantable resource roles | Binding administrator |
 | --- | --- | --- |
-| `artifact` with `family=handoff` | `handoff.viewer`, `handoff.receiver` | `scope.delegate`, `scope.admin`, or `server.admin` |
-| `artifact` with `family=memory` and `memory_entry` selector | `artifact.viewer` | `scope.admin` or `server.admin` |
-| `artifact` with `family=experience` | `artifact.viewer` | `scope.admin` or `server.admin` |
-| `artifact` with `family=skill` | `artifact.viewer` | `scope.admin` or `server.admin` |
-| `artifact` with `family=prompt` | `artifact.viewer`, `prompt.user` | `scope.admin` or `server.admin` |
+| `artifact` with `family=handoff` | `handoff.viewer`, `handoff.receiver` | owner、`scope.delegate`、`scope.admin` 或 `server.admin` |
+| `artifact` with `family=memory` and `memory_entry` selector | `artifact.viewer` | owner、`scope.admin` 或 `server.admin` |
+| `artifact` with `family=experience` | `artifact.viewer` | owner、`scope.admin` 或 `server.admin` |
+| `artifact` with `family=skill` | `artifact.viewer` | owner、`scope.admin` 或 `server.admin` |
+| disabled `family=prompt` | none | none |
 
 ## Authorization request and decision
 
@@ -649,7 +679,6 @@ class AuthorizationProvider(Protocol):
 {
   "subject": {
     "type": "user",
-    "issuer": "https://id.example.com/",
     "id": "00u-bob"
   },
   "action": {"name": "artifact.read"},
@@ -658,13 +687,14 @@ class AuthorizationProvider(Protocol):
     "scope_id": "project:payments",
     "identity": {
       "family": "handoff",
-      "artifact_id": "project:payments"
+      "artifact_id": "handoff"
     },
     "selector": null
   },
   "context": {
     "request_id": "pc-01K...",
-    "transport": "mcp"
+    "transport": "mcp",
+    "operation": "continue_handoff"
   }
 }
 ```
@@ -674,7 +704,7 @@ class AuthorizationProvider(Protocol):
 ```json
 {
   "allowed": true,
-  "reason_code": "role_binding",
+  "reason_code": "role-binding",
   "policy_revision": "42"
 }
 ```
@@ -688,26 +718,34 @@ class AuthorizationProvider(Protocol):
 `check_batch` 或语义等价的 point checks，并且只有全部 decision 都为 allow 才能调用 Repository、application service、
 target adapter 或 filesystem。它不提供 client-authored Boolean policy DSL。
 
-例如 managed Skill 发布解析为：
+例如跨 Scope Artifact publication 解析为两个有序 requirement：
 
 ```json
 {
-  "combination": "all",
+  "match": "all",
   "requirements": [
     {
-      "action": {"name": "artifact.read"},
+      "action": "artifact.share",
       "resource": {
         "type": "artifact",
         "scope_id": "project:payments",
         "identity": {"family": "skill", "artifact_id": "retry-runbook"},
         "selector": null
       }
+    },
+    {
+      "action": "scope.admin",
+      "resource": {
+        "type": "scope",
+        "scope_id": "team:runbooks"
+      }
     }
   ]
 }
 ```
 
-业务请求中的 Revision 和 `target_id` 不进入 Access Resource。只有 decision allow 后，Server 才解析这些业务参数。
+Source Revision 保留在业务 request 和 publication provenance 中，不进入 Access Resource。Host-local/remote Skill
+projection 同样把 `target_id` 保留为 operation parameter，而不是 Access Resource。
 
 “scope role 或 resource role” 这类替代关系不需要 `any` 表达式。PEP 请求 child-resource action，Provider 根据可信 parent
 relation 判断 scope role 是否蕴含该 action；逻辑 Binding 则直接作用于 child resource。这样不同 Provider 不必实现任意
@@ -745,9 +783,10 @@ class RelationshipWriter(Protocol):
     ) -> AccessBinding: ...
 ```
 
-内置 Provider、Casbin adapter 和 OpenFGA adapter 可以同时提供 `AuthorizationProvider` 与 `RelationshipWriter`。
-OPA、Cerbos 或通用 AuthZEN adapter 可以只提供 decision；此时 PowerContext 的 Binding mutation endpoint 明确返回
-`relationship_management_unavailable`，管理员通过外部系统配置关系。Server 不能声称 grant 成功后再只写本地影子记录。
+内置 Provider 和已包含的 Casbin adapter 都基于 canonical relational Access repository，同时实现
+`AuthorizationProvider` 与 `RelationshipWriter`。已包含的 AuthZEN adapter 只提供 decision；此时 PowerContext 的
+Binding mutation endpoint 明确返回 `relationship_management_unavailable`，管理员通过外部系统配置关系。未来的
+OpenFGA、OPA 或 Cerbos adapter 必须如实声明所实现 capability。Server 不能声称 grant 成功后再只写本地影子记录。
 
 ## Access Binding model
 
@@ -771,6 +810,9 @@ OPA、Cerbos 或通用 AuthZEN adapter 可以只提供 decision；此时 PowerCo
 Role、subject 或 resource 变化必须 revoke old + create new。相同 grantor、idempotency key 和相同 payload 的重试返回
 原 Binding；同 key 不同 payload 返回 409。过期不删除记录，判定时视为 deny。
 
+Artifact ownership 不是 `AccessBinding`。它保存在单独的 one-per-resource owner relation 中，没有 expiration，也不能
+通过 `/v1/access/bindings/*` 创建或转移。
+
 内置 Binding Repository 属于 Server access-control component，不加入 Runtime 的 `context`、`source`、`memory`、
 `artifact`、`handoff` 或 `work` application object。它可以与 Server 使用相同数据库部署，但拥有独立 schema、
 migration 和 API。
@@ -785,11 +827,11 @@ OpenAPI source of truth 增加以下 operation：
 | `POST /v1/access/check` | 检查当前 Principal 的一个 `all` 或 `any` 复合权限要求 | current Principal only |
 | `POST /v1/access/resources/list` | 列出当前 Principal 可访问的资源 identity | current Principal only |
 | `POST /v1/access/roles/list` | 返回固定角色及 action vocabulary | authenticated Principal |
-| `POST /v1/access/bindings/list` | 列出调用方可管理的 Binding | `scope.delegate`, `scope.admin`, or `server.admin` |
+| `POST /v1/access/bindings/list` | 列出调用方可管理的 Binding | 按 resource 检查 owner `artifact.share`、`scope.delegate`、`scope.admin` 或 `server.admin` |
 | `POST /v1/access/bindings/create` | 创建 Family-compatible logical-resource 或管理级 Binding | resource-specific administration action |
 | `POST /v1/access/bindings/revoke` | CAS revoke 一个 Binding | same administration boundary |
 | `POST /v1/access/bindings/replace` | 原子撤销不可变 Binding 并创建其后继 Binding | same administration boundary |
-| `POST /v1/access/audit/list` | 查询安全审计事件 | `scope.admin` or `server.admin` |
+| `POST /v1/access/audit/list` | 查询 server/scope 边界内的安全审计事件 | `scope.admin` or `server.admin` |
 
 `check` 和 `resources/list` 不接受 client-specified subject，只检查当前 authenticated Principal，防止普通
 用户把 API 当作人员权限枚举器。管理员代查其他 Principal、subject search 和 directory integration 留给后续 RFC。
@@ -799,10 +841,9 @@ OpenAPI source of truth 增加以下 operation：
 administration check，最后才读取 Repository，确认 Artifact 存在、属于声明的 parent 且处于可授权状态。
 不存在与不可见的资源对未授权调用方返回相同 403；只有管理判定通过后才能返回 404 或 family-specific conflict。
 
-Access API 不负责创建、修改、fork、render 或发布业务资源。Memory、Artifact、Prompt 和 managed Skill publication 的
-业务 operation 继续使用各自 contract；Binding 只表达谁能对已存在资源执行哪些 action。Publisher-safe target selection
-属于 Skill publication contract；target configuration 和 operator status 属于 Server operation。三者都不进入 Access API，
-也不创建 target Binding。
+Access API 不负责创建、修改、fork 或发布业务资源。Memory、Artifact、跨 Scope publication 和 managed Skill projection
+继续使用各自 contract；target configuration 与 operator status 属于 Server 或 scope operation。它们都不进入 Access
+API，也不创建 target Binding。Binding 只表达谁能对已存在资源执行哪些 action。
 
 公共 `check` 可以用 HTTP 200 返回 `allowed=false`。业务 operation 的相同拒绝返回 403，并且不调用 application
 service。Access API 只用于解释和 UI preflight，不能替代业务请求时的实时 enforcement。
@@ -814,14 +855,15 @@ service。Access API 只用于解释和 UI preflight，不能替代业务请求�
 | Operation | Required authorization |
 | --- | --- |
 | `prepare_handoff`, `finalize_handoff`, `handoff_current_work` | `scope.contribute` on request `scope_id` |
-| `commit_handoff` | `scope.contribute` on request `scope_id` |
+| first `commit_handoff` | `scope.contribute` on request `scope_id`；成功后建立 caller 为 owner |
+| later `commit_handoff` with `base` | `scope.contribute` on request `scope_id` and `artifact.write` on logical Handoff |
 | `continue_handoff(selection=latest)` | `artifact.read` and `handoff.evidence.inspect` on logical `family=handoff` Artifact, directly or through parent `scope.read` |
 | `continue_handoff(selection=exact)` | `artifact.read` and `handoff.evidence.inspect` on logical `family=handoff` Artifact, directly or through parent `scope.read` |
 | `continue_handoff(selection=prepared)` | `scope.read` on request `scope_id` |
 | `acknowledge_handoff` with exact receipt | `scope.contribute` or `handoff.acknowledge` on the logical Handoff selected by the exact Revision |
 | `record_task_outcome` | `scope.contribute` on request `scope_id` |
-| aggregated Handoff Report queries | scope-level read; logical Handoff grant is insufficient |
-| Handoff Report administration | `scope.admin` or appropriate server administration action |
+| Handoff Report with exact Scope selection | 每个 selected Scope 上的 `scope.read`；logical Handoff grant 不足 |
+| Handoff Report with non-exact selection | `server.observe` |
 
 receiver 调用 Continue 时，Server 在读取 Revision 前先建立逻辑 Handoff ArtifactResourceRef。`selection=exact` 从请求的
 精确 `ArtifactReference` 派生逻辑 identity；`selection=latest` 使用该 scope 注册的逻辑 Handoff identity。授权通过后才
@@ -838,31 +880,31 @@ Family operation 映射如下。表中的 “scope or logical resource” 由 Pr
 | --- | --- |
 | Memory search/list/changes | `scope.read` on request `scope_id`；logical Memory Entry grant 不足 |
 | exact Memory get | `artifact.read` on logical `family=memory` Artifact plus `memory_entry.entry_id`, directly or through parent `scope.read` |
-| Memory flush/remember/revise/retire | `scope.contribute`; logical viewer grant 不足 |
+| create Memory Entry | `scope.contribute`；成功后建立 caller 为 owner |
+| flush Memory | `scope.contribute` plus `artifact.write` on every existing entry that may change；新 Entry 归 caller 所有 |
+| revise/retire one Memory Entry | `artifact.write` on logical `memory_entry` selector |
 | approved Experience/managed Skill exact get | `artifact.read` on the logical Artifact identity derived from the exact request, directly or through parent `scope.read` |
-| Experience/Skill propose or generate | `scope.contribute` |
+| Experience/Skill propose/generate new identity | `scope.contribute`；Server 记录 caller 为 proposed owner |
+| Experience/Skill proposal targeting existing identity | `scope.contribute` plus `artifact.write` on that identity |
 | Candidate list/get | `scope.read`; logical Artifact grant 不暴露 Candidate |
 | Candidate revise/approve/reject | `scope.review` |
-| approved Prompt exact get | `artifact.read` on logical `family=prompt` Artifact, directly or through parent `scope.read` |
-| approved Prompt render/use | `prompt.use`, directly or through parent `scope.read` |
-| Prompt propose/revise | Prompt lifecycle 定义的 Candidate operation plus `scope.contribute` |
-| list enabled publication targets for an exact managed Skill | `artifact.read` on the logical `family=skill` Artifact |
-| publish managed Skill | `artifact.read` on the logical `family=skill` Artifact |
+| managed Skill lifecycle mutation | `artifact.write` on logical Skill |
+| host-local Skill projection status/publish/unpublish | `server.observe` and `artifact.read` on logical Skill |
+| remote Skill target administration | `scope.admin` |
+| publish Skill Revision to remote target | `scope.admin` and `artifact.read` on logical Skill |
+| cross-Scope Artifact publication | `artifact.share` on logical source and `scope.admin` on target Scope |
 
 Exact get resolver 必须从已验证业务 request 派生完整逻辑 identity，并在授权时丢弃 Revision 字段。缺少 scope 和 Family
-的 Memory `entry_id`、Artifact `artifact_id` 或 Prompt name 不能单独作为授权 key。Search、aggregated projection 和
+的 Memory `entry_id` 或 Artifact `artifact_id` 不能单独作为授权 key。Search、aggregated projection 和
 Candidate Inbox 仍是 collection operation，不能通过一个逻辑 grant 进入。
 
-Prompt Family Access Profile 只规范 authorization vocabulary 和 resolver contract。部署只有在注册 `family=prompt` 的
-immutable approved Artifact lifecycle，并提供与本节一致的 exact get/use operation 后，才能报告该 Family enabled。
-不支持 Prompt domain operation 的版本仍可实现其他 Family，但不能接受 `family=prompt` Binding 或在 `roles/list` 中声称
-`prompt.user` 可用。
+Prompt Family Access Profile 只保留 authorization vocabulary。当前部署报告 `prompt.enabled=false`，拒绝
+`family=prompt` Binding，也不会把 `prompt.user` 作为 enabled Family 的可用 role 返回。
 
-`target_id` 是 Server 配置的发布 operation parameter，不是授权 key 或 Resource。只有 `server.admin` 可以配置、修改或
-移除 target；详细 target status 由 `server.observe` 或 `server.admin` 保护。Operator status response 只能返回 target ID、
-Agent kind、capability、desired/applied exact Revision、稳定 state 和安全 reason code，不能返回 host path、Agent home、
-credential 或原始 OS error。在发布和 publisher target-list 请求中，Server 必须先允许逻辑 Skill 的 `artifact.read`，再
-解析 `target_id` 或读取 target registry；独立的 operator status 请求则先判定 server-level action。
+`target_id` 是 operation parameter，不是授权 key 或 Resource。Host-local target inspection 要求 `server.observe` 加逻辑
+Skill read。Remote distribution lifecycle 使用 scope-owned target：管理它们要求 `scope.admin`，设置 desired publication
+还要求逻辑 Skill read。Receiver-only reconcile、download 和 receipt operation 使用独立 Target credential，不走用户
+Principal Access。Public status 不返回 host path、Agent home、credential 或原始 OS error。
 
 ## OpenAPI access metadata
 
@@ -984,7 +1026,7 @@ Audit 不包含：
 
 - Bearer token、cookie、client secret 或 PDP credential；
 - Handoff objective/state/next action；
-- Source、Memory、Artifact、Prompt、PreparedContext 或 citation body；
+- Source、Memory、Artifact、PreparedContext 或 citation body；
 - publication target locator、host path、credential reference 或原始 Receiver/OS error；
 - 任意 exception fields、configured PDP URL 或 provider 原始 response；
 - email、display name 或不必要的目录属性。
@@ -1006,9 +1048,9 @@ Binding 已成功而客户端丢失响应时，同一 idempotency key 返回原 
 保证时，adapter 必须先执行安全的 canonical relationship lookup，或声明不支持 self-service mutation。
 
 所有 Artifact Family 分享遵循相同的 “persist/approve first, bind second” 原则。Binding create 失败不回滚或重建业务
-Revision；客户端只重试同一个 idempotent Binding mutation。Skill publish 则是一次受逻辑 Skill read decision 保护的 projection
-operation，不创建内容 Revision，也不创建 target Binding 或改变 target authorization state。Target apply 失败保留可重试的
-desired/applied 状态和安全 reason，不把本地路径或底层错误写入公共 audit。
+Revision；客户端只重试同一个 idempotent Binding mutation。Skill projection 由逻辑 Skill read 加适用的 server/scope
+管理边界保护，不创建 source content Revision 或 Access Binding。Target apply 失败保留可重试的 desired/applied 状态和
+安全 reason，不把本地路径或底层错误写入公共 audit。
 
 Receipt 创建仍使用现有 exact-selection 和 evidence rules。授权判定发生在 Receipt transaction 前；授权在判定后立即
 被并发撤销时，Provider 和 Binding Store 应在同一 deployment 中使用 policy revision 或 transaction fence 防止明显
@@ -1024,9 +1066,9 @@ conformance test 的参考语义；它不提供用户密码、目录或自定义
 
 ### Casbin adapter
 
-Casbin adapter 可以使用带 domain 的 RBAC：
+已包含的 Casbin adapter 使用 canonical Access relationship 和 Casbin enforcement semantics：
 
-- subject 映射为 issuer-scoped opaque ID；
+- subject 映射为 deployment-wide opaque Principal 或 group ID；
 - domain 对 server resource 映射为 deployment access namespace，对 scope/artifact resource 映射为 canonical scope
   resource namespace；
 - object 映射为 canonical server key、scope key 或包含 Family/selector 的 canonical Artifact key；
@@ -1037,63 +1079,18 @@ Casbin domain 是 adapter policy namespace，不把 `scope_id` 变成认证或 t
 ResourceRef 建立 domain。生成列表 filter 时，逻辑 object policy 产生 canonical key，scope/server role assignment 产生
 对应 parent constraint；Casbin adapter 不需要枚举业务 Repository。
 
-### OpenFGA adapter
+### Future OpenFGA adapter
 
-OpenFGA 适合表达用户、group、scope 和逻辑 child resource 的关系。所有 Artifact Family 使用一个 `artifact` object type；
-object ID 包含 canonical scope、Family、Artifact ID 和 selector，不包含 Revision。Server 在 tuple write 前用 Family registry 校验 relation compatibility。
-这样新增只读 Family 不需要新增 OpenFGA type：
+当前实现不包含 OpenFGA adapter。未来可以把相同 canonical server、scope、Artifact、owner、viewer 和 receiver relation
+映射为 tuple，但必须保持上面的精确 role table：管理权限不得蕴含内容 read/write，Artifact object ID 不包含 Revision，
+安全列表也不能在授权前枚举业务 Repository。Adapter 还必须显式使用 authorization model ID，并如实声明 relationship、
+group 和 resource-filter capability。
 
-```text
-type user
+### AuthZEN adapter 和 future OPA/Cerbos adapter
 
-type server
-  relations
-    define observer: [user]
-    define admin: [user]
-    define can_observe: observer or admin
-    define can_admin: admin
-
-type scope
-  relations
-    define parent: [server]
-    define viewer: [user]
-    define contributor: [user]
-    define reviewer: [user]
-    define delegator: [user]
-    define admin: [user]
-    define can_read: viewer or contributor or reviewer or delegator or admin or admin from parent
-    define can_contribute: contributor or admin or admin from parent
-    define can_review: reviewer or admin or admin from parent
-    define can_delegate: delegator or admin or admin from parent
-    define can_admin: admin or admin from parent
-
-type artifact
-  relations
-    define parent: [scope]
-    define viewer: [user]
-    define handoff_viewer: [user]
-    define handoff_receiver: [user]
-    define prompt_user: [user]
-    define can_read: viewer or handoff_viewer or handoff_receiver or prompt_user or can_read from parent
-    define can_read_handoff_evidence: handoff_viewer or handoff_receiver or can_read from parent
-    define can_acknowledge_handoff: handoff_receiver or can_contribute from parent
-    define can_use_prompt: prompt_user or can_read from parent
-```
-
-Adapter 把 `server.observe` 映射到 `server#can_observe`，把 `server.admin` 映射到 `server#can_admin`。`admin from parent`
-继续使 deployment `server.admin` 单向蕴含 scope administration 和 child Artifact Family action；`server.observer` 不获得
-这些权限。
-
-Adapter 使用固定 authorization model ID 执行 Check、ListObjects 和 tuple write。Tuple 只保存 opaque ID，不保存 email
-或 Handoff 文本。Model migration 在 deployment configuration 中显式切换，不自动使用“latest model”。
-列表中，逻辑 resource relation 可以通过 ListObjects 产生 canonical key；scope/server role 直接产生可信 parent constraint，
-不要求为每一个没有逻辑 Binding 的业务 Artifact 预先写入 object tuple。
-
-### AuthZEN, OPA, and Cerbos adapters
-
-AuthZEN adapter 把 `AccessRequest` 映射为 Authorization API 的 subject、action、resource、context，把 decision 映射回
-`AccessDecision`。OPA adapter 可以把相同结构作为 input document；Cerbos adapter 可以映射为 principal、resource
-和 actions。
+已包含的 AuthZEN adapter 把 point/batch `AccessRequest` 映射为 Authorization API 的 subject、action、resource、context，
+只把有界 decision 和可选 policy revision 映射回 `AccessDecision`。它只提供 decision，不支持安全 resource filtering
+或 relationship management。OPA/Cerbos 是未来 adapter，不是当前 deployment option。
 
 这些 adapter 的 decision interoperability 不代表 policy administration interoperability。若组织在 GitOps、IAM 或
 独立管理面维护 policy，PowerContext 只消费判定和安全 resource filter，不写 policy。部署必须明确
@@ -1102,7 +1099,7 @@ AuthZEN adapter 把 `AccessRequest` 映射为 Authorization API 的 subject、ac
 
 ## Configuration and compatibility
 
-Server 提供两种显式 mode：
+`POWERCONTEXT_SERVER_ACCESS_MODE` 是唯一正式 Access 开关，支持两种值：
 
 | Mode | Behavior |
 | --- | --- |
@@ -1112,15 +1109,21 @@ Server 提供两种显式 mode：
 升级不能因为配置了外部身份但漏配 PDP 而回退到 `disabled`。Mode 必须显式，capabilities 和 readiness 报告当前 mode 与
 是否支持 relationship management、batch check 和 `safe_resource_filtering`。
 
+`POWERCONTEXT_SERVER_AUTH_TOKEN` 只用于兼容认证。在 `enforced` mode 且没有注入 Authentication Provider 时，它认证固定
+`service/server-token` Principal；内置 Access service 为该 Principal 初始化相互独立的 `server.observer`、
+`server.admin` 和 per-scope working role。它无法区分多个用户。Legacy
+`POWERCONTEXT_SERVER_AUTH_ENABLED=true` 加 `POWERCONTEXT_SERVER_AUTH_TOKEN=...` 会映射到
+`ACCESS_MODE=enforced`。未启用 enforced mode 的 token 会被拒绝；enforced deployment 若既没有 injected
+Authentication Provider，也没有兼容 token，则启动失败。
+
 `disabled` 只适用于调用方已经信任整个进程和 catalog 的本地场景。文档不能把它描述为多用户安全配置。远程、多用户或
 共享 Dashboard 部署应使用 `enforced`。
 
-`access/me` 和 readiness 还必须报告启用的 Resource Kind，以及 `artifact_families` capability map。每个 Family 条目至少
-包含 `enabled`、`share_unit`、可用 action 和 grantable role；例如未实现 Prompt lifecycle 时 `prompt.enabled=false`。
-`operation_capabilities.skill_publication` 单独报告 host-local managed Skill 发布及其 publisher-safe target selection 是否
-可用；只有 Skill Family、两个 domain operation 和至少一个 enabled host-local target 都可用时才能为 true。它不是
-Resource Kind 或可绑定 profile。Provider 不支持 `safe_resource_filtering`、多 requirement check 或 relationship mutation
-时，相应 capability 必须为 false；Server 不能接受随后无法 enforce 或撤销的 Binding。
+`access/me` 报告 Principal、mode、Resource Kind、Provider capability 和 `artifact_families` capability list。每个 Family
+条目包含 `enabled`、`share_unit`、action vocabulary 和 grantable role。Disabled Prompt 仍报告保留 action，但没有
+grantable role。Readiness 另行报告稳定 Access mode、provider state、Resource Kind 和 Family enabled/disabled state。
+Provider 不支持安全过滤、多 requirement check、relationship mutation、group 或 multi-principal 时，对应 capability 必须
+为 false；Server 不能接受随后无法 enforce 或撤销的 Binding。
 
 ```json
 {
@@ -1128,7 +1131,10 @@ Resource Kind 或可绑定 profile。Provider 不支持 `safe_resource_filtering
   "provider_capabilities": {
     "safe_resource_filtering": true,
     "multi_requirement_check": true,
-    "relationship_management": true
+    "relationship_management": true,
+    "group_subjects": false,
+    "multi_principal": false,
+    "max_direct_resource_keys": 10000
   },
   "artifact_families": [
     {
@@ -1141,37 +1147,35 @@ Resource Kind 或可绑定 profile。Provider 不支持 `safe_resource_filtering
     {
       "family": "prompt",
       "enabled": false,
-      "share_unit": "revision",
-      "actions": [],
+      "share_unit": "artifact",
+      "actions": ["artifact.read", "prompt.use"],
       "grantable_roles": []
     }
-  ],
-  "operation_capabilities": {
-    "skill_publication": {"enabled": true}
-  }
+  ]
 }
 ```
 
 现有 OpenAPI operation 首次增加 authorization metadata 不改变 request/response domain schema，但会增加 403 response
 并改变未授权行为。Generated Client 把 401、403 和 503 映射为稳定、不同的 exception；不能把 403 当作空结果。
 
-## Implementation slices
+## Implementation status
 
-实现按以下可独立验证的 slice 推进：
+当前实现交付以下可独立验证的 slice：
 
 1. **Contract and Principal**：OpenAPI Access model、operation metadata、generated `Operation.access`、可信 request
    Principal 和 stable errors。
 2. **Built-in PEP/PDP**：固定角色、Binding Store、`_add_route()` authorization wrapper、point/batch check、audit。
 3. **Handoff logical receiver**：commit 后创建 Binding、exact/latest Continue、citation-manifest resolver、exact acknowledge、
    future-Revision visibility、revoke 和 expiration。
-4. **Artifact Family Access Profiles**：统一 ArtifactResourceRef、Family registry、Memory selector、logical read/use resolver、
-   角色兼容性与非传递 lineage。
-5. **Skill publication**：Server-configured host-local target registry、publisher-safe selection、operator status、同一
-   exact 业务发布使用逻辑 Skill 授权，以及脱敏失败状态。
+4. **Artifact Family Access Profiles and ownership**：统一 ArtifactResourceRef、Family registry、Memory selector、
+   system-managed logical ownership、read/write/share resolver、角色兼容性与非传递 lineage。
+5. **Publication and distribution**：跨 Scope publication、host-local Skill projection 和 remote Skill distribution，分别
+   使用对应逻辑 Artifact 与管理权限。
 6. **Safe listing and UI**：authorized resource listing、Handoff inbox、“Shared with me”、Dashboard permission projection、
    授权后分页。
 7. **MCP parity**：Principal 通过 internal bridge 传播、tool discovery UX 和调用时 enforcement。
-8. **External adapters**：先完成 Casbin 或 OpenFGA 之一，再用同一 conformance suite 验证 AuthZEN-compatible PDP。
+8. **Provider adapters**：内置及 embedded Casbin relationship-capable profile，加 decision-only AuthZEN adapter；OpenFGA、
+   OPA 和 Cerbos 留给后续。
 9. **Migration**：legacy static admin、configuration validation、Family capability、readiness、operator documentation。
 
 每个 slice 都保持 Server 可运行，不能先发布只隐藏 Dashboard 按钮或只保护 HTTP、不保护 MCP 的中间状态。
@@ -1195,35 +1199,35 @@ RFC 实现完成需要通过以下 observable scenarios：
 - MCP internal bridge 使用原 Principal 并执行与 HTTP 相同的 deny；
 - Dashboard 隐藏控制失效或被绕过时，API 仍拒绝请求；
 - 显式 `enforced` mode 下，legacy static token 只在没有注入 Authentication Provider 时映射为 local admin；
-- `server.observer` 可以读取受保护的服务和 publication status，但不能修改 access 或 target configuration；
-  `server.admin` 可以执行两类 operation，且 Built-in、Casbin 和 OpenFGA 的结果一致；
-- Built-in、Casbin/OpenFGA 和 AuthZEN adapter 对同一 conformance vector 返回相同结果；
+- `server.observer` 可以读取受保护的服务状态，但不能修改 access 或 target configuration；`server.admin` 可以管理这些
+  resource，但不会隐式获得 content read/write；
+- Built-in 和 Casbin provider 对同一 canonical relationship 返回相同 decision；AuthZEN adapter 正确映射 point/batch
+  decision，并对 malformed/unavailable response fail closed；
 - 请求不能提交独立的 content profile，也不能在 Access Resource 中提交 Revision；未知/disabled Family、缺失或多余 selector，以及
   Family-role mismatch 返回 422 且不写 Binding；
-- `artifact.viewer` 在 Experience、Skill、Prompt 和 `memory_entry` selector 上始终只映射为 `artifact.read`，不会因 Family
+- `artifact.viewer` 在 Experience、Skill 和 `memory_entry` selector 上始终只映射为 `artifact.read`，不会因 Family
   不同隐式增加 use、publish、acknowledge 或 mutation action；
 - `artifact.viewer` 可以通过 `family=memory` 和 `entry_id` selector get 被授权 Memory Entry 的历史及未来版本，但不能
   search/list/revise/retire 或读取其他 Entry；
 - logical Artifact viewer 可以读取一个 Experience/managed Skill 的 approved Revision，但不能看到 Candidate、其他 Artifact
   或解引用 lineage body；
-- `artifact.viewer` 只能读取 Prompt，`prompt.user` 可以显式 use；两者都不能改变宿主 instruction priority 或自动进入
-  普通 recall；
+- `family=prompt` 报告 disabled、拒绝 Binding，且不把 `prompt.user` 作为 enabled Family 的可用 role；
 - logical-resource role 即使知道 expected version，也不能 revise、retire、replace 或提交共享原件的下一 Revision；
+- enabled Artifact 缺少 owner relation 时 fail closed；首次创建或批准建立唯一 immutable owner，公共 Binding API 不能
+  分配或转移 `artifact.owner`；
+- Artifact owner 无需单独 viewer Binding 即可跨 Revision read/write/share 其逻辑 identity；scope/server administration
+  不会隐式获得 owner write；
 - acknowledge 创建的 Receipt 和 publish 创建的 target projection 不改变源资源的 identity、content、Revision 或 digest；
 - fork、import 或 copy 在没有目标 scope 的 `scope.contribute` 时被拒绝；授权后创建新的 identity 或 Candidate，并保持原资源
   不变；
-- managed Skill publish 只有在逻辑 Skill 的 `artifact.read` allow 时执行；deny/unavailable 都不得解析 `target_id`、
-  检查 host path 或写 projection；授权通过后，unknown 或 disabled target 仍必须
-  拒绝发布；
-- publisher target-list 只有在逻辑 Skill 的 `artifact.read` allow 后才能读取 registry，并且只返回 enabled
-  target 的 safe identity/capability；详细 status 仍要求 `server.observe` 或 `server.admin`；
-- 首版拒绝 remote Receiver target，并且不得尝试读取 remote credential 或建立网络连接；
-- 拥有 `artifact.read` 的 Principal 可以把已授权逻辑 Skill 的所选精确 Revision 发布到 deployment 中任一 enabled target；
-  首版没有 target Binding 或 per-target delegation；
+- host-local managed Skill projection 必须同时拥有 `server.observe` 和逻辑 Skill `artifact.read`，并在 target 解析或
+  filesystem inspection 前完成判定；remote target administration 要求 `scope.admin`，发布 Revision 还要求逻辑 Skill
+  read；
+- 跨 Scope publication 要求逻辑 source `artifact.share` 加 target `scope.admin`，保留精确 source Revision provenance，
+  并把 publisher 建立为新 target identity 的 owner；
 - `resources/list` 的 total、cursor 和 rows 只描述当前 Principal 对所选 Resource Kind 和 Artifact Family 有权发现的集合；
-- 不支持 Prompt lifecycle 的部署拒绝 `family=prompt` Binding；没有可用发布 operation 的部署准确报告
-  `operation_capabilities.skill_publication.enabled=false`；
-- Access Audit 不包含 token、Handoff/Memory/Artifact/Prompt 正文、Source body、target locator 或 PDP 原始错误。
+- 不支持 Prompt lifecycle 的部署拒绝 `family=prompt` Binding 并报告 `enabled=false`；
+- Access Audit 不包含 token、Handoff/Memory/Artifact 正文、Source body、target locator 或 PDP 原始错误。
 
 Cross-component acceptance scenarios 放在 `tests/e2e/`，并通过公开 HTTP/MCP contract 断言行为。Focused tests 覆盖
 Family registry、selector/canonical key、resource resolver、role mapping、Binding CAS、provider failure 和 citation
@@ -1240,16 +1244,16 @@ membership，不冻结 private call order。
 判定和关系管理分离使 adapter interface 比单一 `check()` 更复杂；另一方面，假设所有外部 PDP 都允许 PowerContext 写
 policy 会制造错误的可移植性承诺。
 
-撤销只能阻止未来访问，无法删除接收方已经阅读、截图或导出的信息。包含高度敏感内容的 Handoff、Memory、Artifact 或
-Prompt 仍需要最小化内容、外部数据分类和导出控制。
+撤销只能阻止未来访问，无法删除接收方已经阅读、截图或导出的信息。包含高度敏感内容的 Handoff、Memory 或 Artifact
+仍需要最小化内容、外部数据分类和导出控制。
 
-Artifact Family Access Profile 增加了 registry、selector、角色兼容矩阵和 conformance vector。Skill publish 在解析精确
-业务 Revision 前检查逻辑 Artifact 的 `artifact.read`；外部 PDP 会增加延迟，并留下必须记录 policy revision 的有界
-TOCTOU 风险。
+Artifact Family Access Profile 增加了 registry、selector、ownership、角色兼容矩阵和 conformance vector。多 requirement
+publication/projection 会增加判定工作；不能原子处理 batch 的外部 PDP 会增加延迟，并留下必须记录 policy revision 的
+有界 TOCTOU 风险。
 
-首版不把 target 纳入授权策略。拥有某个逻辑 Skill 的 `artifact.read` 可以把它发布到 deployment 中任一 enabled
-target。需要按 target 隔离发布权限的部署必须暂缓该能力、隔离 deployment，或等待独立 RFC 定义通用
-`execution_target` Resource；本 RFC 不用一个 Skill 专属资源提前固化这套模型。
+Access 模型不把 `target_id` 建模为 Resource。Host-local target 使用 server-observer boundary；remote target 使用所属
+scope-administration boundary。需要单 target grant 的部署必须按 Scope 隔离，或等待独立 RFC 定义通用
+`execution_target` Resource。
 
 Prompt Family Access Profile 只定义授权边界，不能代替 Prompt Artifact lifecycle 和宿主 instruction-priority contract。
 部署在这些业务能力完成前必须报告该 Family 不可用，因此 RFC 可以先落地其他 Family，但产品不会同时获得全部用户体验。
@@ -1261,7 +1265,7 @@ role editor。
 
 ## Chosen: independent Server PEP plus replaceable PDP
 
-该设计保持 Handoff、Memory、Artifact、Prompt 和 Runtime model 与身份系统解耦，同时让 HTTP、MCP 和
+该设计保持 Handoff、Memory、Artifact 和 Runtime model 与身份系统解耦，同时让 HTTP、MCP 和
 Dashboard 共用 enforcement。稳定 action vocabulary 比稳定外部 role name 更容易跨 Casbin、OpenFGA、OPA、Cerbos 和
 企业 IAM 映射。
 
@@ -1352,16 +1356,15 @@ subject、action、resource、context 和 decision contract。本 RFC 对齐其�
 [Cerbos CheckResources](https://docs.cerbos.dev/cerbos/latest/api/index.html) 提供 principal、resource 和 action 的批量判定。
 这些系统是 adapter 目标，不改变 PowerContext 的 Handoff lifecycle。
 
-# Unresolved questions
+# Open questions
 
-以下问题需要在 RFC 合并前确认，但不改变核心安全边界：
+以下产品选择仍在已实现安全边界之外：
 
-- 首个外部 conformance adapter 选择 Casbin 还是 OpenFGA；
-- 内置 Provider 是否随默认 Server extra 安装，还是作为独立 optional extra；
 - Dashboard 如何从部署方的身份目录选择 canonical recipient；目录搜索本身不由本 RFC 的 Access API 提供；
-- enforced deployment 是否要求 Provider 同时支持 `safe_resource_filtering`，还是允许禁用相关 Dashboard 列表；
+- 哪个外部 identity source 提供可信 group membership；内置 Provider 当前报告 `group_subjects=false`；
 - `handoff.receiver` 的产品默认过期时间是否由 deployment policy 决定，还是 UI 必须每次显式选择；
 - Handoff receiver 创建 Receipt 后，UI 是否建议管理员另行授予 `scope.contributor`，但不能自动执行该升级；
+- 后续 governed workflow 是否允许 Artifact ownership transfer；
 - Prompt Artifact 的后续 lifecycle 采用固定 Review policy，还是区分个人私有模板与组织 approved template。
 
 以下问题明确推迟：custom role、organization hierarchy、cross-tenant export、anonymous share link、temporary elevation、approval
@@ -1380,7 +1383,6 @@ workflow、通用 Source object-level ACL、动态 Memory collection 和 Artifac
 - 对 Handoff 导出的独立脱敏、watermark 和 data-loss-prevention policy；
 - 注册更多 approved Artifact Family 使用现有 `artifact` Resource Kind 和基础 `artifact.read` action；
 - 用独立 RFC 定义可供 Skill、Prompt 或其他 execution content 共用的 `execution_target` Resource Kind 和 per-target grant；
-- 在独立 Receiver distribution contract 和 trust-boundary review 完成后增加 remote managed Skill target；
 - 带显式成员和 Revision manifest 的共享 collection，以及经过 Context policy 的订阅式选择；
 - 在有明确 revocation-staleness guarantee 后增加 bounded decision cache。
 

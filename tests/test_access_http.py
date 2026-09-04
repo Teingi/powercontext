@@ -899,6 +899,29 @@ def test_artifact_publication_requires_logical_share_and_target_scope_admin() ->
                 assert published.status_code == 201, published.json()
                 assert published.json()["source"] == payload["source"]
                 assert publications.requests[0].source.artifact.revision == 7
+                target_resource = ResourceRef.artifact(
+                    "scope-b",
+                    family="skill",
+                    artifact_id=published.json()["target"]["artifact"]["artifact_id"],
+                )
+                target_owner = await service.artifact_owner(target_resource)
+                assert target_owner is not None
+                assert target_owner.owner == BOB
+                assert (
+                    await service.check(
+                        BOB,
+                        AccessAction.ARTIFACT_WRITE,
+                        target_resource,
+                        context=AUDIT,
+                    )
+                ).allowed
+                repeated = await bob.post(
+                    "/v1/artifact-publications",
+                    headers=_auth("bob-token"),
+                    json=payload,
+                )
+                assert repeated.status_code == 201, repeated.json()
+                assert await service.artifact_owner(target_resource) == target_owner
 
             alice_provider = StaticBearerAuthenticationProvider("alice-token", ALICE)
             alice_app = create_app(
@@ -914,7 +937,7 @@ def test_artifact_publication_requires_logical_share_and_target_scope_admin() ->
                     json=payload,
                 )
                 assert denied.status_code == 403
-            assert len(publications.requests) == 1
+            assert len(publications.requests) == 2
 
     asyncio.run(scenario())
 

@@ -1665,6 +1665,7 @@ async def clear_scope_binding(
 async def publish_artifact(
     request: PublishArtifactRequest,
     publications: Annotated[ArtifactPublicationApplication, Depends(_require_publication_application)],
+    http_request: Request,
 ) -> TransportArtifactPublication:
     result = await publications.publish(
         DomainArtifactPublicationRequest(
@@ -1675,6 +1676,16 @@ async def publish_artifact(
             target_scope_id=request.target_scope_id,
             idempotency_key=request.idempotency_key,
         )
+    )
+    await _establish_created_owner(
+        http_request,
+        ResourceRef.artifact(
+            result.target.scope_id,
+            family=result.target.artifact.family,
+            artifact_id=result.target.artifact.artifact_id,
+        ),
+        idempotency_key=f"artifact-publication-owner:{result.target.artifact.artifact_id}",
+        operation=PUBLISH_ARTIFACT.operation_id,
     )
     return TransportArtifactPublication.model_validate(result.model_dump(mode="json"))
 
