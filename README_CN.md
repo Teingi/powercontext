@@ -36,6 +36,9 @@ uv tool install "powercontext[cli,server]==0.1.0"
 powercontext server run
 ```
 
+`0.1.0` 发布版不包含 `powercontext service` 命令。使用 PowerContext 时，请保持 `powercontext server run`
+进程运行；如需使用原生个人服务，请改用下文尚未发布的 `master` 版本。
+
 Server 默认将上下文保存到本地 SQLite 数据库。
 
 然后从同一个发布版本配置 Agent 集成。例如：

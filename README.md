@@ -36,6 +36,9 @@ Start a local Server in its own terminal:
 powercontext server run
 ```
 
+The `powercontext service` command is not available in the `0.1.0` release. Keep `powercontext server run` running
+while you use PowerContext, or install the unreleased `master` version below to use the native personal service.
+
 The Server stores context in a local SQLite database by default.
 
 Then set up an agent integration from the matching release. For example:

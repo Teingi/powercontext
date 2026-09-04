@@ -36,6 +36,10 @@ uv tool install "powercontext[cli,server]==0.1.0"
 powercontext server run
 ```
 
+`0.1.0` リリースには `powercontext service` コマンドは含まれていません。PowerContext の使用中は
+`powercontext server run` を実行したままにするか、ネイティブの個人用サービスを使用するために、以下の未リリース版
+`master` をインストールしてください。
+
 Server はデフォルトで、コンテキストをローカルの SQLite データベースに保存します。
 
 次に同じリリースから Agent との連携を設定します。例：
