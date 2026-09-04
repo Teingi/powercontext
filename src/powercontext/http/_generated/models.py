@@ -1200,6 +1200,123 @@ class ImportExternalSkillRequest(BaseModel):
     reason: Annotated[StrictStr | None, Field(max_length=2000, min_length=1)] = None
 
 
+class Family(StrEnum):
+    MEMORY = "memory"
+
+
+class Family1(StrEnum):
+    EXPERIENCE = "experience"
+
+
+class CreateExperienceArtifactRequest(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    family: Literal["experience"]
+    content: ExperienceProposal
+
+
+class Family2(StrEnum):
+    SKILL = "skill"
+
+
+class Family3(StrEnum):
+    HANDOFF = "handoff"
+
+
+class CreateMemoryArtifactEntry(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    kind: Annotated[
+        StrictStr,
+        Field(
+            description="Open application-defined Memory kind. Recommended values are fact, preference, decision, constraint, and working_note. The Server validates and preserves the supplied value; it never guesses or replaces it.",
+            max_length=128,
+            min_length=1,
+            pattern=".*\\S.*",
+        ),
+    ]
+    text: Annotated[
+        StrictStr,
+        Field(
+            description="Durable non-empty Memory entry text used to create the Entry Version and search projection.",
+            max_length=8192,
+            min_length=1,
+            pattern=".*\\S.*",
+        ),
+    ]
+
+
+class SourceType(StrEnum):
+    CONTENT = "content"
+
+
+class CreateSourceRequest(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    source_type: SourceType = SourceType.CONTENT
+    content: Annotated[Any, Field(description="JSON value persisted by the built-in content Source adapter.")]
+
+
+class ListArtifactsRequest(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    limit: Annotated[StrictInt, Field(ge=1, le=100)] = 50
+    cursor: Annotated[StrictStr | None, Field(max_length=4096, min_length=1)] = None
+
+
+class ReplaceMemoryArtifactEntry(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    entry_id: Annotated[
+        StrictStr | None,
+        Field(
+            description="Existing logical entry to revise. Omit to append a new entry.",
+            max_length=128,
+            min_length=1,
+            pattern="^[\\x21-\\x7E]+$",
+        ),
+    ] = None
+    kind: Annotated[
+        StrictStr,
+        Field(
+            description="Open application-defined kind; the Server preserves the supplied value.",
+            max_length=128,
+            min_length=1,
+            pattern=".*\\S.*",
+        ),
+    ]
+    text: Annotated[StrictStr, Field(max_length=8192, min_length=1, pattern=".*\\S.*")]
+
+
+class ReplaceExperienceArtifactRequest(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    content: ExperienceProposal
+
+
+class SourceRecord(BaseModel):
+    scope_id: Annotated[StrictStr, Field(max_length=256, min_length=1, pattern=".*\\S.*")]
+    source_type: SourceType
+    source_id: Annotated[StrictStr, Field(max_length=256, min_length=1, pattern="^[\\x21-\\x7E]+$")]
+    content: Annotated[Any, Field(description="Persisted canonical JSON content.")]
+    position: Annotated[StrictInt, Field(ge=1)]
+    content_digest: Annotated[StrictStr, Field(pattern="^sha256:[0-9a-f]{64}$")]
+
+
+class SourceTypeReference(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    source_type: SourceType
+    source_id: Annotated[StrictStr, Field(max_length=256, min_length=1, pattern="^[\\x21-\\x7E]+$")]
+
+
 class SourceReference(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
@@ -1210,6 +1327,13 @@ class SourceReference(BaseModel):
 
 class CaptureStatus(StrEnum):
     ACCEPTED = "accepted"
+
+
+class BaseArtifactFamily(StrEnum):
+    MEMORY = "memory"
+    EXPERIENCE = "experience"
+    SKILL = "skill"
+    HANDOFF = "handoff"
 
 
 class StatsPeriod(StrEnum):
@@ -1322,6 +1446,41 @@ class HandoffSelection(StrEnum):
 
 class PreparedHandoffSchema(StrEnum):
     POWERCONTEXT_PREPARED_HANDOFF_V1 = "powercontext.prepared-handoff.v1"
+
+
+class ArtifactCollectionItem(BaseModel):
+    scope_id: Annotated[StrictStr, Field(max_length=256, min_length=1, pattern=".*\\S.*")]
+    family: BaseArtifactFamily
+    artifact_id: Annotated[StrictStr, Field(max_length=128, min_length=1, pattern="^[\\x21-\\x7E]+$")]
+    revision: Annotated[StrictInt, Field(ge=1)]
+    sources: list[SourceTypeReference]
+    artifacts: list[ArtifactReference]
+    content_digest: Annotated[StrictStr, Field(pattern="^sha256:[0-9a-f]{64}$")]
+
+
+class ArtifactCreated(BaseModel):
+    scope_id: Annotated[StrictStr, Field(max_length=256, min_length=1, pattern=".*\\S.*")]
+    family: BaseArtifactFamily
+    artifact_id: Annotated[StrictStr, Field(max_length=128, min_length=1, pattern="^[\\x21-\\x7E]+$")]
+    revision: Annotated[StrictInt, Field(ge=1)]
+    sources: list[SourceTypeReference]
+    artifacts: list[ArtifactReference]
+
+
+class ArtifactPage(BaseModel):
+    items: list[ArtifactCollectionItem]
+    next_cursor: Annotated[StrictStr | None, Field(...)]
+
+
+class ArtifactRevision(BaseModel):
+    scope_id: Annotated[StrictStr, Field(max_length=256, min_length=1, pattern=".*\\S.*")]
+    family: BaseArtifactFamily
+    artifact_id: Annotated[StrictStr, Field(max_length=128, min_length=1, pattern="^[\\x21-\\x7E]+$")]
+    revision: Annotated[StrictInt, Field(ge=1)]
+    content: dict[str, Any]
+    sources: list[SourceTypeReference]
+    artifacts: list[ArtifactReference]
+    content_digest: Annotated[StrictStr, Field(pattern="^sha256:[0-9a-f]{64}$")]
 
 
 class Capabilities(BaseModel):
@@ -1890,6 +2049,35 @@ class SearchMemoryResponse(BaseModel):
     hits: list[SearchMemoryHit]
 
 
+class CreateSkillArtifactRequest(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    family: Literal["skill"]
+    content: SkillProposal
+
+
+class CreateMemoryArtifactContent(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    entries: Annotated[list[CreateMemoryArtifactEntry], Field(max_length=100, min_length=1)]
+
+
+class ReplaceMemoryArtifactContent(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    entries: Annotated[list[ReplaceMemoryArtifactEntry], Field(max_length=100, min_length=1)]
+
+
+class ReplaceSkillArtifactRequest(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    content: SkillProposal
+
+
 class ArtifactCandidate(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
@@ -2027,6 +2215,21 @@ class GeneratedCandidateResponse(BaseModel):
     )
     status: GeneratedCandidateStatus
     candidate: Annotated[ArtifactCandidate | None, Field(...)]
+
+
+class CreateMemoryArtifactRequest(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    family: Literal["memory"]
+    content: CreateMemoryArtifactContent
+
+
+class ReplaceMemoryArtifactRequest(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    content: ReplaceMemoryArtifactContent
 
 
 class ActivateHandoffRequest(BaseModel):
@@ -2178,6 +2381,21 @@ class PreparedHandoff(BaseModel):
     content: HandoffContent
 
 
+class CreateHandoffArtifactRequest(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    family: Literal["handoff"]
+    content: HandoffContent
+
+
+class ReplaceHandoffArtifactRequest(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    content: HandoffContent
+
+
 class PreparedWorkHandoff(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
@@ -2254,3 +2472,36 @@ class HandoffActivation(BaseModel):
     previous_position: Annotated[StrictInt, Field(ge=0)]
     current_position: Annotated[StrictInt, Field(ge=0)]
     draft: Annotated[HandoffDraft | None, Field(...)]
+
+
+class CreateArtifactRequest(
+    RootModel[
+        CreateMemoryArtifactRequest
+        | CreateExperienceArtifactRequest
+        | CreateSkillArtifactRequest
+        | CreateHandoffArtifactRequest
+    ]
+):
+    root: Annotated[
+        CreateMemoryArtifactRequest
+        | CreateExperienceArtifactRequest
+        | CreateSkillArtifactRequest
+        | CreateHandoffArtifactRequest,
+        Field(discriminator="family"),
+    ]
+
+
+class ReplaceArtifactRequest(
+    RootModel[
+        ReplaceMemoryArtifactRequest
+        | ReplaceExperienceArtifactRequest
+        | ReplaceSkillArtifactRequest
+        | ReplaceHandoffArtifactRequest
+    ]
+):
+    root: (
+        ReplaceMemoryArtifactRequest
+        | ReplaceExperienceArtifactRequest
+        | ReplaceSkillArtifactRequest
+        | ReplaceHandoffArtifactRequest
+    )
