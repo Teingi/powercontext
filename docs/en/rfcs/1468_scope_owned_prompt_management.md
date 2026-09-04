@@ -1,6 +1,6 @@
 - Proposal Name: `scope_owned_prompt_management`
 - Start Date: 2026-09-05
-- RFC PR: [oceanbase/powercontext#0000](https://github.com/oceanbase/powercontext/pull/0000)
+- RFC PR: [oceanbase/powercontext#1468](https://github.com/oceanbase/powercontext/pull/1468)
 - Tracking Issue: [oceanbase/powercontext#1465](https://github.com/oceanbase/powercontext/issues/1465)
 - Related RFCs: [RFC 0014](0014_memory_layer_design.md), [RFC 0016](0016_pydantic_ai_inference_integration.md), [RFC 0051](0051_experience_skill_artifact_families.md), [RFC 0080](0080_memory_search_reranking.md), [RFC 1396](1396_handoff_access_control.md), [RFC 1437](1437_source_artifact_rest_api.md)
 
