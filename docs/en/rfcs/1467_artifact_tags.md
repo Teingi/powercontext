@@ -1,6 +1,6 @@
 - Proposal Name: `unified_artifact_tags`
 - Start Date: 2026-09-05
-- RFC PR: [oceanbase/powercontext#0000](https://github.com/oceanbase/powercontext/pull/0000)
+- RFC PR: [oceanbase/powercontext#1467](https://github.com/oceanbase/powercontext/pull/1467)
 - Related Discussion: [oceanbase/powercontext#1466](https://github.com/oceanbase/powercontext/issues/1466)
 - Related RFCs: [RFC 0014](0014_memory_layer_design.md), [RFC 0019](0019_local_source_memory_runtime.md),
   [RFC 0048](0048_handoff_artifact.md), [RFC 0051](0051_experience_skill_artifact_families.md),
