@@ -19,7 +19,9 @@ import re
 import shlex
 from datetime import datetime, timedelta
 from pathlib import Path
+from types import SimpleNamespace
 from typing import cast
+from unittest.mock import AsyncMock
 
 import httpx
 import pytest
@@ -39,7 +41,13 @@ from powercontext.builtin.persistence.database import AsyncDatabase
 from powercontext.builtin.persistence.oceanbase import OceanBaseConfig
 from powercontext.builtin.persistence.seekdb import SeekDBConfig
 from powercontext.builtin.persistence.sqlite import SQLiteConfig
-from powercontext.builtin.runtime import InferenceConfig, MemoryExtractionProfile, RuntimeConfig
+from powercontext.builtin.runtime import (
+    BuiltinRuntime,
+    ExperienceIncubationResult,
+    InferenceConfig,
+    MemoryExtractionProfile,
+    RuntimeConfig,
+)
 from powercontext.builtin.runtime.readiness import READINESS_PROBE_TIMEOUT_SECONDS
 from powercontext.http import (
     Capabilities,
@@ -47,8 +55,8 @@ from powercontext.http import (
     ReadinessStatus,
 )
 from powercontext.server.app import create_app
-from powercontext.server.authz import AccessControlService
-from powercontext.server.factory import create_server_app
+from powercontext.server.authz import AccessControlService, PrincipalRef
+from powercontext.server.factory import _scheduled_access_runners, create_server_app
 from powercontext.server.settings import (
     AccessControlConfig,
     BearerAuthConfig,
@@ -403,6 +411,50 @@ def test_server_scheduler_uses_the_powercontext_data_directory(tmp_path, monkeyp
 
     with TestClient(app):
         assert (data_dir / "scheduler.db").is_file()
+
+
+def test_scheduled_experience_owns_only_candidates_created_by_its_incubation() -> None:
+    async def scenario() -> None:
+        result = ExperienceIncubationResult(
+            previous_cursor=0,
+            high_watermark=2,
+            current_cursor=2,
+            source_count=1,
+            candidate_count=1,
+            candidate_ids=("scheduled-candidate",),
+        )
+        incubate = AsyncMock(return_value=result)
+        runtime = SimpleNamespace(
+            experience=SimpleNamespace(for_scope=lambda _scope_id: SimpleNamespace(incubate=incubate))
+        )
+        access = AsyncMock(spec=AccessControlService)
+        settings = ServerSettings(
+            runtime=RuntimeConfig(experience_schedule_seconds=1),
+            access=AccessControlConfig(
+                mode="enforced",
+                background_principal_id="scheduled-experience",
+            ),
+            mcp=McpConfig(enabled=False),
+        )
+        source_runner, experience_runner = _scheduled_access_runners(
+            settings,
+            access,
+            legacy_static_principal=None,
+        )
+
+        assert source_runner is None
+        assert experience_runner is not None
+        assert await experience_runner("scope-1", cast(BuiltinRuntime, runtime)) == result
+        access.attest_candidate_owner.assert_awaited_once_with(
+            scope_id="scope-1",
+            candidate_id="scheduled-candidate",
+            family="experience",
+            proposed_owner=PrincipalRef(type="service", id="scheduled-experience"),
+            target=None,
+            idempotency_key="background-candidate-owner:scope-1:scheduled-candidate",
+        )
+
+    asyncio.run(scenario())
 
 
 def test_settings_load_bearer_authentication_without_exposing_token(monkeypatch) -> None:

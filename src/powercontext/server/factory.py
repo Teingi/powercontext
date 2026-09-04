@@ -36,10 +36,8 @@ from powercontext.builtin.persistence.sqlite import SQLiteConfig
 from powercontext.builtin.runtime import (
     BuiltinRuntime,
     ExperienceIncubationResult,
-    ListArtifactCandidatesRequest,
     MemoryEntryRecord,
     MemoryFlushResult,
-    ReviewedCandidate,
 )
 from powercontext.builtin.runtime.application import ScheduledExperienceRunner, ScheduledSourceRunner
 from powercontext.builtin.runtime.composition import open_builtin_runtime
@@ -336,18 +334,15 @@ def _scheduled_access_runners(
         context = AccessAuditContext(transport="background", operation="incubate_experience_candidates")
         await access.bootstrap_static_scope(principal, scope_id, context=context)
         await access.require(principal, AccessAction.SCOPE_CONTRIBUTE, ResourceRef.scope(scope_id), context=context)
-        before = await _pending_experience_candidates(runtime, scope_id)
         result = await runtime.experience.for_scope(scope_id).incubate()
-        after = await _pending_experience_candidates(runtime, scope_id)
-        for candidate_id in after.keys() - before.keys():
-            candidate = after[candidate_id]
+        for candidate_id in result.candidate_ids:
             await access.attest_candidate_owner(
                 scope_id=scope_id,
-                candidate_id=candidate.candidate_id,
-                family=candidate.family,
+                candidate_id=candidate_id,
+                family="experience",
                 proposed_owner=principal,
                 target=None,
-                idempotency_key=f"background-candidate-owner:{scope_id}:{candidate.candidate_id}",
+                idempotency_key=f"background-candidate-owner:{scope_id}:{candidate_id}",
             )
         return result
 
@@ -381,22 +376,6 @@ def _memory_resource(scope_id: str, entry: MemoryEntryRecord) -> ResourceRef:
         artifact_id=citation.memory_ref.artifact_id,
         selector=MemoryEntrySelector(entry_id=citation.entry_id),
     )
-
-
-async def _pending_experience_candidates(
-    runtime: BuiltinRuntime,
-    scope_id: str,
-) -> dict[str, ReviewedCandidate]:
-    candidates: dict[str, ReviewedCandidate] = {}
-    cursor: str | None = None
-    while True:
-        page = await runtime.review.for_scope(scope_id).list(
-            ListArtifactCandidatesRequest(family="experience", cursor=cursor, limit=100)
-        )
-        candidates.update((candidate.candidate_id, candidate) for candidate in page.candidates)
-        cursor = page.next_cursor
-        if cursor is None:
-            return candidates
 
 
 def _mount_optional_web_ui(app: FastAPI, settings: ServerSettings) -> None:
