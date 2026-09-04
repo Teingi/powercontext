@@ -12,17 +12,14 @@ HTTP API 是访问 PowerContext Server 的语言无关接口。默认 base URL �
 
 ## 查看契约
 
-本地未启用鉴权的 Server 运行后，可以打开：
-
-- `/docs`：交互式 Swagger UI；
-- `/redoc`：ReDoc；
-- `/openapi.json`：该进程实际提供的契约。
+本地未启用鉴权的 Server 运行后，可以打开 `/docs` 查看交互式 Scalar API 参考，或打开 `/openapi.json` 获取该进程实际提供的
+契约。
 
 仓库中的契约源文件是
 [`openapi/powercontext.yaml`](https://github.com/oceanbase/powercontext/blob/master/openapi/powercontext.yaml)。
-生成客户端或检查全部请求、响应字段时以它为准。启用 Server 鉴权后，这三个发现路由与其他受保护路由一样需要 Bearer
-token。浏览器地址栏无法添加该 header；应使用可信的代理或浏览器配置注入 header，或者设置下方变量后，通过带鉴权的
-命令下载 `/openapi.json`。不要把 token 放进 URL。
+生成客户端或检查全部请求、响应字段时以它为准。启用 Server 鉴权后，`/docs` 仍保持公开以渲染参考页，但在其中发起的
+请求仍需鉴权。`/openapi.json` 需要 Bearer token。浏览器地址栏无法添加该 header；应使用可信的代理或浏览器配置注入
+header，或者通过带鉴权的命令下载 `/openapi.json`。不要把 token 放进 URL。
 
 ## 请求鉴权
 
@@ -53,7 +50,8 @@ curl --fail \
 
 ## 保存并搜索一条 Memory
 
-为项目或租户选择稳定的 `scope_id`，并在不同会话中复用。会话 ID 不是持久的项目身份。
+将 `POWERCONTEXT_SCOPE_ID` 设置为 `create_scope` 返回的已有 ID，并在不同会话中复用。会话 ID 不是持久的
+项目身份。
 
 保存一条已经整理好的 Memory：
 
@@ -62,11 +60,11 @@ curl --fail \
   --request POST \
   --header 'Content-Type: application/json' \
   --header "$POWERCONTEXT_AUTH_HEADER" \
-  --data '{
-    "scope_id": "project:example",
-    "kind": "decision",
-    "text": "公开 API 保持异步。"
-  }' \
+  --data "{
+    \"scope_id\": \"${POWERCONTEXT_SCOPE_ID}\",
+    \"kind\": \"decision\",
+    \"text\": \"公开 API 保持异步。\"
+  }" \
   "$POWERCONTEXT_URL/v1/memory/remember"
 ```
 
@@ -79,11 +77,11 @@ curl --fail \
   --request POST \
   --header 'Content-Type: application/json' \
   --header "$POWERCONTEXT_AUTH_HEADER" \
-  --data '{
-    "scope_id": "project:example",
-    "query": "公开 API",
-    "limit": 5
-  }' \
+  --data "{
+    \"scope_id\": \"${POWERCONTEXT_SCOPE_ID}\",
+    \"query\": \"公开 API\",
+    \"limit\": 5
+  }" \
   "$POWERCONTEXT_URL/v1/memory/search"
 ```
 
@@ -99,7 +97,7 @@ curl --fail \
 | Experience 与 Skill | `/v1/experience/*`、`/v1/skill/*` | propose、generate 和读取 Artifact Revision |
 | 审核 | `/v1/artifact-candidates/*` | 列出、检查、修订、批准或拒绝 pending Candidate |
 | 外部 Skill | `/v1/external-skills/*` | 扫描已配置 target，解析或导入 package |
-| Handoff Report | `/v1/handoff-reports/*` | 管理 Project、Workstream、activity、report 和 workspace binding |
+| Handoff Report | `/v1/handoff-reports/*` | 按 Scope selection 生成只读报告 |
 | 统计 | `/v1/stats` | 读取指定 scope 的使用统计 |
 
 完整路径、schema、限制和状态码以 OpenAPI 契约为准。高层工作流和 Python 示例见[接口](interfaces.md)。

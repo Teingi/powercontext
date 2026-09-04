@@ -24,7 +24,7 @@ All remote interfaces operate on the same Server and persistent Artifact storage
 | Python Client SDK | Typed asynchronous calls to a running Server | [Install the client role](../how-to/install-and-run.md#install-a-python-role) |
 | Core SDK | In-process Source, Artifact, Trigger, and composition contracts | [Python API reference](/en/modules/) |
 | HTTP | Service integration from any language | [HTTP API](http-api.md) |
-| MCP | Agent tools for Memory and work continuity | Enabled by the Server at `/mcp` |
+| MCP | Curated Agent tools for Source capture, Memory, work continuity, reports, and Candidate Review | Enabled by the Server at `/mcp` |
 
 ## Codex plugin
 
@@ -34,7 +34,11 @@ perform explicit operations. The plugin never starts or embeds the Server.
 
 ## Work continuity
 
-The Server exposes one high-level loop across HTTP, the Python Client, and MCP:
+HTTP, the Python Client, and MCP expose Work Contract creation, Handoff preparation and continuation, acknowledgement,
+and Task Outcome recording. A Prepared Handoff is temporary; `commit_handoff` creates a durable Revision. An
+acknowledgement can select a prepared or exact Handoff, but `handoff_receipt_ref` accepts only an accepted exact Receipt
+for a committed Revision. Claims and checks can be `declared` or `verified` with exact same-scope citations. These
+records never grant identity, tool, or execution authority.
 
 ```text
 create_work_contract
@@ -68,19 +72,11 @@ and authorization still take precedence over all Work and Handoff records.
 For the complete Codex transfer and acknowledgement workflow, see
 [Hand off work in Codex](../how-to/handoff-with-codex.md).
 
-Handoff Report lists scopes that contain a committed Handoff, and `get_handoff_report` requires `scope_id`.
-`project_id` remains deprecated wire-compatibility input and is ignored during report generation. Each returned
-Workstream projection includes `handoff_revision_count`, `handoff_history_truncated`, and `handoff_history`, with at
-most the latest 20 Revision summaries through the frozen selection. For the web workflow, see
-[Use Handoff Report](../how-to/use-handoff-report.md).
-
-The current scope report returns no Activity events, reports `activity_coverage=not_configured`, and has no period
-comparison. Period input is normalized but does not filter Activity. The HTTP and Python Client Markdown operations
-remain available without a token when Server authentication is disabled; the current browser download and background
-refresh controls require a stored bearer token.
-
-The Codex scope resolver can bind the current Git workspace once to a fixed Workstream scope. That binding takes
-precedence over Git remote and path derivation, but remains below explicit scope configuration.
+Handoff Report is a read-only projection over a Scope selection. `all` includes every Scope, `exact` includes only the
+listed Scope IDs, and `subtree` includes an organization root and all descendants. Each included Scope contributes its
+latest exact Handoff address or an explicit `no_handoff` result; Parent does not imply Context visibility. Codex fixes
+ordinary Agent report reads to the current Session Scope. Broader selections belong to host and Dashboard views.
+See [Use Handoff Report](../how-to/use-handoff-report.md) for the report UI.
 
 ## DeepSeek Harness plugin
 
@@ -105,12 +101,12 @@ labelled untrusted historical evidence; and `PowerContextScope` is a dataclass f
 carries the scope and per-run connection overrides. The recall node and tools read the active scope from the LangGraph
 runtime and otherwise fall back to `POWERCONTEXT_LANGGRAPH_*` environment settings.
 
-Scope resolution prefers an explicit `scope_id`, then a Git-remote-derived scope, and otherwise raises. This is the
-inverse of the Codex resolver because a deployed graph's working directory rarely identifies the project. `TOKEN` is
-a bare token that the Client composes into `Authorization: Bearer`, unlike the `POWERCONTEXT_*_AUTHORIZATION` header used by the
-Codex, Claude Code, and DeepSeek Harness plugins. Recall and the tools fail open: on Server unavailability the graph
-still reaches its end and the tools return a short unavailable string. The adapter covers Memory read and write and
-bounded recall only; automatic capture, checkpointing, and Handoff are out of scope. The adapter deliberately does not
+Scope resolution sends an explicit `scope_id`, when configured, to the Server for validation and otherwise uses the
+Server default Scope. The adapter does not derive Scope IDs from Git or process paths. `TOKEN` is a bare token that the
+Client composes into `Authorization: Bearer`, unlike the `POWERCONTEXT_*_AUTHORIZATION` header used by the Codex,
+Claude Code, and DeepSeek Harness plugins. Recall and the tools fail open: on Server unavailability the graph still
+reaches its end and the tools return a short unavailable string. The adapter covers Memory read and write and bounded
+recall only; automatic capture, checkpointing, and Handoff are out of scope. The adapter deliberately does not
 implement `BaseStore`, whose get, upsert-by-key, and delete operations the Memory model does not provide. It never
 starts or embeds the Server.
 
@@ -132,6 +128,8 @@ boundary flushing fail open; explicit durable writes require interactive confirm
 
 ## CLI
 
+Set `POWERCONTEXT_SCOPE_ID` to an existing ID returned by `create_scope` before running scoped content commands.
+
 ```text
 powercontext setup <host> --source oceanbase/powercontext --ref master
 powercontext setup select --host codex --host dsh --source oceanbase/powercontext --ref master
@@ -145,16 +143,16 @@ powercontext server run
 powercontext server run --env-file .env
 powercontext ready
 powercontext capabilities
-powercontext experience generate --scope-id project:example --source-ref content/SOURCE_ID
-powercontext skill generate --scope-id project:example --origin experience \
+powercontext experience generate --scope-id "$POWERCONTEXT_SCOPE_ID" --source-ref content/SOURCE_ID
+powercontext skill generate --scope-id "$POWERCONTEXT_SCOPE_ID" --origin experience \
   --artifact-ref experience/EXPERIENCE_ID@REVISION
-powercontext skill show --scope-id project:example --revision 1 SKILL_ID
-powercontext skill export --target codex --scope-id project:example --revision 1 \
+powercontext skill show --scope-id "$POWERCONTEXT_SCOPE_ID" --revision 1 SKILL_ID
+powercontext skill export --target codex --scope-id "$POWERCONTEXT_SCOPE_ID" --revision 1 \
   --destination .agents/skills/example-skill SKILL_ID
-powercontext external-skill scan --scope-id project:example
-powercontext external-skill list --scope-id project:example
-powercontext external-skill resolve --scope-id project:example --fingerprint SHA256 EXTERNAL_SKILL_ID
-powercontext external-skill import --scope-id project:example --fingerprint SHA256 \
+powercontext external-skill scan --scope-id "$POWERCONTEXT_SCOPE_ID"
+powercontext external-skill list --scope-id "$POWERCONTEXT_SCOPE_ID"
+powercontext external-skill resolve --scope-id "$POWERCONTEXT_SCOPE_ID" --fingerprint SHA256 EXTERNAL_SKILL_ID
+powercontext external-skill import --scope-id "$POWERCONTEXT_SCOPE_ID" --fingerprint SHA256 \
   --mode import EXTERNAL_SKILL_ID
 ```
 
@@ -185,42 +183,10 @@ automatically includes the target in Artifact evidence. Managed Skill revision a
 
 ## Python Client SDK
 
-Use the Client SDK when the Server owns persistence:
-
-```python
-import asyncio
-
-from powercontext.http import PrepareContextRequest, RememberMemoryRequest, SearchMemoryRequest
-from powercontext.client import PowerContextClient
-
-
-async def main() -> None:
-    async with PowerContextClient("http://127.0.0.1:8000") as client:
-        await client.remember_memory(
-            RememberMemoryRequest(
-                scope_id="project:example",
-                kind="decision",
-                text="Keep the public API asynchronous.",
-            )
-        )
-        result = await client.search_memory(
-            SearchMemoryRequest(
-                scope_id="project:example",
-                query="public API",
-            )
-        )
-        print([hit.text for hit in result.hits])
-        prepared = await client.prepare_context(
-            PrepareContextRequest(scope_id="project:example", query="public API")
-        )
-        print(prepared.content)
-
-
-asyncio.run(main())
-```
-
-Mutation responses include an exact citation. Pass that citation back when revising, retiring, or reading an immutable
-entry version.
+`PowerContextClient` is the typed asynchronous HTTP client for a Server-owned deployment. Its request and response
+models are exported from `powercontext.http`. Mutation responses include exact citations, which callers pass when a
+later request revises, retires, or reads an immutable entry version. See the
+[HTTP API lifecycle tutorial](../tutorials/api-quickstart.md) for a runnable client flow.
 
 The Client also exposes `generate_experience`, `propose_experience`, `get_experience`, `generate_skill`,
 `propose_skill`, `get_skill`, `scan_external_skills`, `list_external_skills`, `resolve_external_skill`,
@@ -315,9 +281,9 @@ See [HTTP API](http-api.md) for authentication, curl examples, operation groups,
 contract. The Server publishes a Scalar API reference at `/docs`, its OpenAPI document at `/openapi.json`, readiness at
 `/health/ready`, capabilities at `/v1/capabilities`, and Streamable HTTP MCP at `/mcp` by default. The Scalar reference
 remains public when bearer authentication is enabled, but the operations it describes retain their normal authentication
-requirements. HTTP is the complete application contract. MCP is a curated agent-facing projection of Memory and
-Candidate Review operations. The five Candidate Review operations use the same validation, `expected_version`
-concurrency checks, and approval transaction over HTTP and MCP.
+requirements. HTTP is the complete application contract. MCP is a curated Agent-facing projection of Source capture,
+Memory maintenance, work continuity, scope Handoff Report lookup, and Candidate Review. The five Candidate Review
+operations use the same validation, `expected_version` concurrency checks, and approval transaction over HTTP and MCP.
 Readiness is `ready` with HTTP 200 when all checks pass, `degraded` with HTTP 200 when only configured inference checks
 fail, and `not_ready` with HTTP 503 when the Runtime or database fails. Dependency checks use `ready`, `unavailable`,
 `timeout`, or `misconfigured`; an intentionally unbound Runtime reports `not_ready` for the `runtime` check.
