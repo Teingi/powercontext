@@ -13,9 +13,11 @@ The new operations live below `/v1/scopes/{scope_id}/sources` and `/v1/scopes/{s
 not introduce a generic Resource concept and does not define the Scope API.
 
 Source Create exposes only the `content` type. Artifacts expose only the `memory`, `experience`, `skill`, and
-`handoff` families, and validate `content` with the corresponding domain models. Artifact Create and Replace each
-persist a system Source in the same transaction as the new Revision and use it as that Revision's sole direct
-Source lineage. Such a Source must never participate in generation of another Artifact.
+`handoff` families. Artifact Create/Replace dispatches through Family-owned management writers that reuse existing
+domain validation, authoritative writes, and derived projections instead of duplicating Family logic in the base
+API. Each write persists a system Source in the same transaction as the new Revision and places it first in that
+Revision's direct Source lineage. Handoff then derives citation lineage through its existing service. The system
+Source must never participate in generation of another Artifact.
 
 Source Create does not trigger Memory, Experience, Skill, or Handoff generation. A caller that needs a subsequent
 domain operation first creates the Source and then invokes the corresponding existing domain command.
@@ -74,10 +76,10 @@ Public Artifact families:
 
 | `family` | Create | Get | List | Replace | Validation requirement |
 | --- | --- | --- | --- | --- | --- |
-| `memory` | Supported | Supported | Supported | Supported | Use the existing Memory domain model. |
-| `experience` | Supported | Supported | Supported | Supported | Use the existing Experience domain model. |
-| `skill` | Supported | Supported | Supported | Supported | Use the existing Skill domain model. |
-| `handoff` | Supported | Supported | Supported | Supported | Use the existing Handoff domain model. |
+| `memory` | Supported | Supported | Supported | Supported | Create/Replace use Memory commands; reads return canonical `MemoryContent`. |
+| `experience` | Supported | Supported | Supported | Supported | Use existing `ExperienceContent` and its search projection. |
+| `skill` | Supported | Supported | Supported | Supported | Use existing `SkillContent`, standard package validation, and search projection. |
+| `handoff` | Supported | Supported | Supported | Supported | Use existing `HandoffContent`, citation validation, and the Scope singleton identity. |
 
 The server first selects the domain model by `family`, then deserializes, validates, and serializes `content` using
 that family's canonical rules. An unknown family or content that violates its data standard returns
@@ -111,9 +113,12 @@ same-Scope lineage. Arrays follow persisted `ordinal` order and return `[]`, nev
 ## Provenance for Artifact Create and Replace
 
 Artifact Create and Replace do not accept Source references. For every new Revision, the server persists the
-validated and canonicalized Artifact `content` as a new system Source with `source_type=content`, then makes it the
-only direct Source lineage of that Revision. Replace does not delete or rewrite Sources attached to older
-Revisions, and it preserves the previous Revision's ordered Artifact lineage.
+validated and canonicalized write command as a new system Source with `source_type=content`, then places it at
+ordinal zero in that Revision's direct Source lineage. For Memory, this Source contains the `entries[].kind/text`
+command while Artifact GET returns the canonical `MemoryContent` produced by that command. Handoff additionally
+derives Source and Artifact lineage from its direct citations through the existing Handoff service. Replace does not
+delete or rewrite Sources attached to older Revisions. Non-Handoff writers preserve the previous Revision's ordered
+Artifact lineage; Handoff derives the replacement Revision's citation lineage from the complete content.
 
 The internal role of this Source is `lineage_only`: it is a real, traceable record of the creation input, but not
 ordinary evidence for a model to consume again. Reserved payload data binds it uniquely to
@@ -206,12 +211,53 @@ This RFC defines seven operations:
 
 Source requests and responses expose no `metadata`, server timestamp, or internal-purpose fields.
 
-`CreateArtifactRequest`:
+`CreateArtifactRequest` is a discriminated union keyed by `family`:
+
+```text
+CreateArtifactRequest
+├── CreateMemoryArtifactRequest
+├── CreateExperienceArtifactRequest
+├── CreateSkillArtifactRequest
+└── CreateHandoffArtifactRequest
+```
+
+The outer shape stays `{ "family": "<family>", "content": {} }`, but the `content` shape remains Family-owned:
+
+| family | Create `content` | Write result |
+| --- | --- | --- |
+| `memory` | Command with `entries[].kind/text` | Generate Entry Versions, manifest, changes, entry heads, and search projection; GET returns canonical `MemoryContent`. |
+| `experience` | `ExperienceContent` | Write Revision/head and refresh the Experience search projection. |
+| `skill` | `SkillContent` | Validate or build the standard Skill package, write Revision/head, and refresh the Skill search projection. |
+| `handoff` | `HandoffContent` | Validate citations and write the Scope's sole `handoff` Artifact. |
+
+Memory Create example:
 
 ```json
 {
-  "family": "memory | experience | skill | handoff",
-  "content": "required object; complete family-specific content for Revision 1"
+  "family": "memory",
+  "content": {
+    "entries": [
+      {"kind": "preference", "text": "The user prefers responses in Chinese"}
+    ]
+  }
+}
+```
+
+`kind` is required and remains an open string between 1 and 128 characters. Recommended values are `fact`,
+`preference`, `decision`, `constraint`, and `working_note`. Business-specific values are allowed; the server
+validates and preserves the supplied value and never guesses or overwrites it. `text` is required and non-empty.
+
+Experience Create example:
+
+```json
+{
+  "family": "experience",
+  "content": {
+    "situation": "A compatibility issue was found before release",
+    "action": "Add cross-version tests",
+    "outcome": "Avoided a production regression",
+    "lesson": "Public API changes require compatibility coverage"
+  }
 }
 ```
 
@@ -219,9 +265,13 @@ Source requests and responses expose no `metadata`, server timestamp, or interna
 
 ```json
 {
-  "content": "required object; complete family-specific content for the next Revision"
+  "content": "required object; a write command or complete family-specific content selected by the path family"
 }
 ```
+
+OpenAPI models Create with `oneOf` and a `family` discriminator so generated Python and TypeScript clients receive
+precise types. Replace already selects the family in the path, so its body remains `content` only while still using
+a family-specific union.
 
 `ArtifactCreated`:
 
@@ -298,13 +348,18 @@ any component returns `404 Not Found`; the implementation must not fall back to 
 
 ### Create Artifact
 
-`POST /v1/scopes/{scope_id}/artifacts` accepts `family` and `content`. The server generates `artifact_id` and the
-system `source_id`, and creates the system Source, Revision 1, head, and ordinal-zero Source lineage in one
-transaction. It returns `201 ArtifactCreated`, the Artifact head `Location`, and the new head `ETag`.
+`POST /v1/scopes/{scope_id}/artifacts` accepts the discriminated `family` and `content` union. The server selects the
+Family writer, generates the system `source_id`, and creates the system Source, Revision 1, head, Family-derived
+state, and ordinal-zero Source lineage in one transaction. The server generates `artifact_id` except for Handoff.
+It returns `201 ArtifactCreated`, the Artifact head `Location`, and the new head `ETag`.
 
-Every successful call creates a new Artifact and a `lineage_only` Source uniquely bound to its Revision 1. The
-operation does not accept `Idempotency-Key`. The response `sources` must contain that Source, and `artifacts` is
-always `[]`.
+Handoff uses fixed `artifact_id=handoff` within a Scope. Create writes it when absent. If it already exists, Create
+returns `409 artifact_already_exists` with `use_replace=true` in error details; callers must use Replace and Create
+must not silently update the singleton.
+
+Except for the Handoff singleton conflict, every successful call creates a new Artifact and a `lineage_only` Source
+uniquely bound to its Revision 1. The operation does not accept `Idempotency-Key`. The response `sources` must
+contain that Source, and `artifacts` is always `[]`.
 
 ### Get Artifact head
 
@@ -328,18 +383,20 @@ unrelated to internal `pc_source_cursors`.
 
 ### Replace Artifact
 
-`PUT /v1/scopes/{scope_id}/artifacts/{family}/{artifact_id}` accepts complete replacement `content` and validates
-it using the family from the path. `If-Match` is required. After matching the current head ETag, the server creates
-a new `lineage_only` Source bound to the next Revision, makes it that Revision's sole Source lineage, inherits the
-previous Revision's ordered Artifact lineage, creates the next immutable Revision, and returns the new
+`PUT /v1/scopes/{scope_id}/artifacts/{family}/{artifact_id}` interprets and validates `content` using the family in
+the path. Memory uses an entries command (`entry_id` omitted to append, provided to revise a current logical entry);
+the other families use complete content. `If-Match` is required. After matching the current head ETag, the server
+creates a new `lineage_only` Source bound to the next Revision and places it first in that Revision's Source lineage.
+The writer inherits the previous Artifact lineage or derives Handoff citation lineage, creates the next immutable
+Revision, and returns the new
 `ArtifactRevision` and ETag. The returned `sources` array contains the newly generated `source_type` and
 `source_id`. The operation supports neither merge patch nor automatic merging.
 
 ## System Source invariants
 
 The system Source generated by Artifact Create or Replace uses public `source_type=content`. Its public `content`
-is the family-specific validated and canonicalized content for that write. The server-reserved portion of the typed
-payload contains:
+is the validated and canonicalized write command. For Memory, the Source stores the entries command while Artifact
+GET returns generated canonical `MemoryContent`. The server-reserved portion of the typed payload contains:
 
 ```json
 {
@@ -378,9 +435,9 @@ The atomic Artifact Create/Replace transaction proceeds as follows:
 2. Determine the new Artifact identity and Revision, then generate source_id
 3. Build the lineage_only Source with that exact target Revision
 4. Insert pc_sources and allocate journal_position
-5. Insert the new pc_artifacts Revision and create or move pc_artifact_heads
+5. Invoke the Family-owned writer to write the Revision/head and maintain Family constraints and derived state
 6. Insert pc_artifact_lineage_sources with the new Source at ordinal = 0
-7. For Replace, copy the previous Revision's ordered Artifact lineage to the new Revision
+7. Memory writes Entry Versions, manifest, changes, entry heads, and search projection; Experience/Skill refresh search projections, Skill synchronizes its package, and Handoff validates citations and singleton identity
 8. Commit the transaction
 ```
 
@@ -485,7 +542,7 @@ This RFC reuses the existing schema and requires no new columns.
 | `scope_id` | `pc_sources.scope_id` | `direct` | Source owner Scope, authorization boundary, and identity component. |
 | `source_type` | `pc_sources.source_type` | `direct` | The only public value in this release is `content`. |
 | `source_id` | `pc_sources.source_id` | `direct` | Server-generated Source ID. |
-| `content` | `pc_sources.payload` | `encoded` | Content Source body; a system Source stores canonical Artifact Create/Replace content. |
+| `content` | `pc_sources.payload` | `encoded` | Content Source body; a system Source stores the canonical Artifact Create/Replace command. |
 | `position` | `pc_sources.journal_position` | `direct` | Position in the owning Scope's Source journal. |
 | `content_digest` | no independent column | `derived` | SHA-256 digest of canonical `content`. |
 
@@ -512,7 +569,7 @@ absent from OpenAPI, and add no database columns:
 | `family` | `pc_artifacts.family`, `pc_artifact_heads.family` | `direct` | Family and adapter route. |
 | `artifact_id` | `pc_artifacts.artifact_id`, `pc_artifact_heads.artifact_id` | `direct` | Server-generated Artifact ID. |
 | `revision` | `pc_artifacts.revision`, `pc_artifact_heads.revision` | `direct` | Immutable revision number increasing from 1. |
-| `content` | `pc_artifacts.content` | `encoded` | Complete content validated by the family-specific model. |
+| `content` | `pc_artifacts.content` | `encoded` | Canonical complete content validated or generated by the Family writer; Memory stores the command result. |
 | `sources` | `pc_artifact_lineage_sources` | `relation/derived` | Same-Scope Source identities assembled by Revision and ordinal. |
 | `artifacts` | `pc_artifact_lineage_artifacts` | `relation/derived` | Upstream Artifact Revisions assembled by Revision and ordinal. |
 | `content_digest` | no independent column | `derived` | SHA-256 digest of canonical `content`. |
@@ -578,14 +635,15 @@ Implementation steps:
 
 1. Add the seven operations to OpenAPI;
 2. restrict public `source_type` to `content` and `family` to the four public values;
-3. validate and canonicalize Artifact Create/Replace `content` with family-specific domain models;
-4. create a target-bound `lineage_only` Source and sole Source lineage in every Artifact Create/Replace transaction;
+3. generate four discriminated Create requests and dispatch Artifact Create/Replace to Family-owned writers;
+4. create a target-bound `lineage_only` Source at ordinal zero in every Artifact Create/Replace transaction, then let
+   the Handoff writer derive citation lineage;
 5. add one shared Source admission check across all model, Candidate, and commit paths;
 6. filter `lineage_only` Sources from Source windows while advancing the full cursor and returning no-op when all
    entries are filtered;
 7. load Artifact lineage in batches by complete Revision identity and assemble top-level identities and arrays;
-8. reuse the current Source journal, Artifact repository, lineage, and authorization services without adding
-   metadata-table columns;
+8. reuse the current Source journal, Artifact repository, Memory service, Handoff service, Skill package, and
+   Family search projections;
 9. run generated-code, contract, unit, documentation, SQLite, and OceanBase behavior tests.
 
 Acceptance criteria:
@@ -594,12 +652,19 @@ Acceptance criteria:
 - Source exposes only Create/Get, allows only `content`, and exposes no metadata, timestamps, or internal-purpose
   fields;
 - Artifact exposes only Create/Get/Get Revision/List/Replace, without Search or Delete;
-- all four public families use their domain model for Create/Get/List/Replace;
+- all four public families use their owning writer for Create/Get/List/Replace and maintain authoritative constraints
+  and derived state;
+- Memory Create accepts non-empty `entries[].kind/text`, preserves open `kind`, and produces canonical Memory state
+  and search projections;
+- Experience/Skill Create and Replace refresh existing search projections, and Skill synchronizes its standard package;
+- Handoff Create uses the Scope singleton `handoff`, duplicate Create returns 409 with a Replace hint, and both Create
+  and Replace reuse citation validation;
 - Artifact Create accepts only `family` and `content`; Replace accepts only `content`;
 - Artifact requests accept no lineage field;
-- Artifact Create and every successful Replace atomically generate a target-bound `lineage_only` Source as the
-  sole Source lineage of the new Revision;
-- Replace returns that new Source identity, preserves older Revision Sources, and inherits prior Artifact lineage;
+- Artifact Create and every successful Replace atomically generate a target-bound `lineage_only` Source at ordinal
+  zero; Handoff additionally derives its direct citation lineage through the existing service;
+- Replace returns that new Source identity and preserves older Revision Sources; non-Handoff writers inherit prior
+  Artifact lineage while Handoff derives it from replacement content;
 - every generation, Candidate, and commit path rejects using that Source for another target;
 - Source-window consumers advance over filtered records and return no-op without model or Revision when all are
   filtered;
@@ -613,8 +678,8 @@ Acceptance criteria:
 
 # Drawbacks
 
-- Family-specific `content` is a JSON object in the foundational generated client, with weaker static typing than a
-  domain API;
+- Family-specific Create `content` has precise generated-client types through the discriminator, while responses
+  still require family-specific interpretation of canonical content;
 - each family needs stable deserialization, validation, and canonical serialization adapters;
 - lineage arrays on List increase relationship-query cost, so implementations must avoid per-item queries;
 - every Artifact Create and successful Replace writes an additional Source and lineage row, growing the Source journal;

@@ -13,8 +13,10 @@
 本文不增加统一 Resource 概念，也不定义 Scope API。
 
 Source Create 只公开 `content` 类型。Artifact 只公开 `memory`、`experience`、`skill`、`handoff` 四个
-family，并复用对应领域模型校验 `content`。Artifact Create 和 Replace 每次都会在新 Revision 的同一事务中
-保存一条系统 Source，并将其作为该 Revision 唯一的直接 Source lineage；该 Source 不得进入其他 Artifact 的生成流程。
+family。Artifact Create/Replace 通过 Family-owned management writer 复用现有领域校验、权威写入和派生投影，
+不在基础 API 中复制 Family 逻辑。每次写入都会在新 Revision 的同一事务中保存一条系统 Source，并将其放在该
+Revision 直接 Source lineage 的首位；Handoff 再通过现有服务派生 citation lineage。系统 Source 不得进入其他
+Artifact 的生成流程。
 
 Source Create 不触发 Memory、Experience、Skill 或 Handoff 生成。需要继续执行领域操作的调用方先创建 Source，
 再调用对应的既有领域命令。
@@ -70,10 +72,10 @@ adapter。
 
 | `family` | Create | Get | List | Replace | 校验要求 |
 | --- | --- | --- | --- | --- | --- |
-| `memory` | 支持 | 支持 | 支持 | 支持 | 使用既有 Memory 领域模型。 |
-| `experience` | 支持 | 支持 | 支持 | 支持 | 使用既有 Experience 领域模型。 |
-| `skill` | 支持 | 支持 | 支持 | 支持 | 使用既有 Skill 领域模型。 |
-| `handoff` | 支持 | 支持 | 支持 | 支持 | 使用既有 Handoff 领域模型。 |
+| `memory` | 支持 | 支持 | 支持 | 支持 | Create/Replace 使用 Memory 命令；读取返回标准 `MemoryContent`。 |
+| `experience` | 支持 | 支持 | 支持 | 支持 | 使用既有 `ExperienceContent` 和搜索投影。 |
+| `skill` | 支持 | 支持 | 支持 | 支持 | 使用既有 `SkillContent`、标准 package 校验和搜索投影。 |
+| `handoff` | 支持 | 支持 | 支持 | 支持 | 使用既有 `HandoffContent`、citation 校验和 Scope 单例身份。 |
 
 服务端先按 `family` 选择领域模型，再反序列化、校验并按该 family 的 canonical 规则序列化 `content`。未知 family 或
 不符合对应数据标准的内容返回 `422 Unprocessable Entity`。本文不增加其他 direct family。
@@ -106,8 +108,11 @@ Artifact response 将自身身份平铺在顶层，并以两个数组返回多�
 ## Artifact Create 和 Replace 的 provenance
 
 Artifact Create 和 Replace 都不接收 Source 引用。每次创建新 Revision 时，服务端会把校验和 canonicalization 后的
-Artifact `content` 保存为一条新的 `source_type=content` 系统 Source，并将它作为该 Revision 唯一的直接 Source
-lineage。Replace 不删除或改写旧 Revision 关联的 Source，并继承上一 Revision 的有序 Artifact lineage。
+写入命令保存为一条新的 `source_type=content` 系统 Source，并将它放在该 Revision 直接 Source lineage 的
+ordinal 0。对 Memory 而言，该 Source 保存 `entries[].kind/text` 命令，而 Artifact GET 返回命令执行后生成的标准
+`MemoryContent`。Handoff 还会通过现有 Handoff service 从直接 citation 派生 Source 和 Artifact lineage。
+Replace 不删除或改写旧 Revision 关联的 Source；非 Handoff writer 继承上一 Revision 的有序 Artifact lineage，
+Handoff 则从完整替换 content 重新派生该 Revision 的 citation lineage。
 
 这条 Source 的内部角色是 `lineage_only`：它是真实、可追溯的创建输入，但不是供模型再次消费的普通 evidence。
 内部 payload 将其唯一绑定到目标 `(scope_id, family, artifact_id, revision)`；公开 Source response 不暴露这些
@@ -198,12 +203,52 @@ Source item、Artifact head 和 Artifact Revision 的 canonical URI 分别为：
 
 Source request/response 不公开 `metadata`、服务端时间或内部用途字段。
 
-`CreateArtifactRequest`：
+`CreateArtifactRequest` 是以 `family` 为 discriminator 的联合类型：
+
+```text
+CreateArtifactRequest
+├── CreateMemoryArtifactRequest
+├── CreateExperienceArtifactRequest
+├── CreateSkillArtifactRequest
+└── CreateHandoffArtifactRequest
+```
+
+统一外形保持 `{ "family": "<family>", "content": {} }`，但 `content` 不强行统一：
+
+| family | Create 的 `content` | 写入结果 |
+| --- | --- | --- |
+| `memory` | `entries[].kind/text` 创建命令 | 生成 Entry Version、manifest、changes、entry head 和搜索投影；GET 返回标准 `MemoryContent`。 |
+| `experience` | `ExperienceContent` | 写入 Revision/head，并刷新 Experience 搜索投影。 |
+| `skill` | `SkillContent` | 校验或生成标准 Skill package，写入 Revision/head，并刷新 Skill 搜索投影。 |
+| `handoff` | `HandoffContent` | 校验 citations，写入 Scope 唯一的 `handoff` Artifact。 |
+
+Memory Create 示例：
 
 ```json
 {
-  "family": "memory | experience | skill | handoff",
-  "content": "必填 object；Revision 1 的完整 family-specific 内容"
+  "family": "memory",
+  "content": {
+    "entries": [
+      {"kind": "preference", "text": "用户偏好使用中文回答"}
+    ]
+  }
+}
+```
+
+`kind` 必填，保持开放字符串，长度为 1 到 128。推荐值为 `fact`、`preference`、`decision`、`constraint`、
+`working_note`；允许业务自定义值，服务端只校验并原样保留，不猜测、不自动覆盖。`text` 必填且非空。
+
+Experience Create 示例：
+
+```json
+{
+  "family": "experience",
+  "content": {
+    "situation": "发布前发现兼容性问题",
+    "action": "增加跨版本测试",
+    "outcome": "避免了线上回归",
+    "lesson": "公共接口变更需要覆盖兼容性测试"
+  }
 }
 ```
 
@@ -211,9 +256,12 @@ Source request/response 不公开 `metadata`、服务端时间或内部用途字
 
 ```json
 {
-  "content": "必填 object；下一 Revision 的完整 family-specific 内容"
+  "content": "必填 object；按 Path family 解释的写入命令或完整 family-specific 内容"
 }
 ```
+
+OpenAPI 中 Create 使用 `oneOf` 与 `family` discriminator，让 Python/TypeScript 客户端获得准确类型。Replace 的
+family 已由 Path 确定，因此 body 仍只有 `content`，但也以 family-specific union 表达。
 
 `ArtifactCreated`：
 
@@ -289,12 +337,16 @@ Artifact response 不返回服务端时间字段，也不使用 `artifact_ref`�
 
 ### Create Artifact
 
-`POST /v1/scopes/{scope_id}/artifacts` 接收 `family` 和 `content`。服务端生成 `artifact_id` 和系统 `source_id`，在
-同一事务中创建系统 Source、Revision 1、head 和 ordinal 0 的 Source lineage。成功返回 `201 ArtifactCreated`、
-Artifact head 的 `Location` 和新 head 的 `ETag`。
+`POST /v1/scopes/{scope_id}/artifacts` 接收判别联合类型的 `family` 和 `content`。服务端按 family 选择 writer，
+生成系统 `source_id`，并在同一事务中创建系统 Source、Revision 1、head、Family 派生状态和 ordinal 0 的 Source
+lineage。除 Handoff 外，服务端生成 `artifact_id`。成功返回 `201 ArtifactCreated`、Artifact head 的 `Location`
+和新 head 的 `ETag`。
 
-每次成功调用都创建新的 Artifact 和与其 Revision 1 唯一绑定的 `lineage_only` Source，不接受
-`Idempotency-Key`。response 的 `sources` 必须包含该 Source，`artifacts` 固定为 `[]`。
+Handoff 使用 Scope 内固定 `artifact_id=handoff`。不存在时 Create；已存在时返回 `409 artifact_already_exists`，
+错误 details 提示 `use_replace=true`，调用方必须使用 Replace 更新，不得通过第二次 Create 隐式替换。
+
+除 Handoff 单例冲突外，每次成功调用都创建新的 Artifact 和与其 Revision 1 唯一绑定的 `lineage_only` Source，
+不接受 `Idempotency-Key`。response 的 `sources` 必须包含该 Source，`artifacts` 固定为 `[]`。
 
 ### Get Artifact head
 
@@ -316,16 +368,19 @@ Cursor 是不透明字符串，绑定调用方、`scope_id`、`family`、稳定�
 
 ### Replace Artifact
 
-`PUT /v1/scopes/{scope_id}/artifacts/{family}/{artifact_id}` 接收完整 `content` replacement，并按 Path 中的
-family 校验。`If-Match` 必填；匹配当前 head ETag 后，服务端创建一条绑定下一 Revision 的新 `lineage_only`
-Source，将其作为该 Revision 唯一的 Source lineage，继承上一 Revision 的有序 Artifact lineage，再创建下一条
+`PUT /v1/scopes/{scope_id}/artifacts/{family}/{artifact_id}` 按 Path 中的 family 解释和校验 `content`。
+Memory 使用 entries 命令（`entry_id` 省略时新增，提供时修订当前 logical entry），其余 family 使用完整内容。
+`If-Match` 必填；匹配当前 head ETag 后，服务端创建一条绑定下一 Revision 的新 `lineage_only`
+Source，并将其放在该 Revision Source lineage 的首位。writer 随后继承上一 Revision 的 Artifact lineage，或由
+Handoff 从完整 content 派生 citation lineage，再创建下一条
 不可变 Revision，并返回新的 `ArtifactRevision` 和 ETag。返回的 `sources` 数组包含新生成的 `source_type` 和
 `source_id`。接口不支持 merge patch 或自动合并。
 
 ## 系统 Source 不变量
 
-Artifact Create 或 Replace 生成的系统 Source 使用公开 `source_type=content`，公开 `content` 是该次写入经过
-family-specific 校验和 canonicalization 后的内容。类型化 payload 的服务端保留部分包含：
+Artifact Create 或 Replace 生成的系统 Source 使用公开 `source_type=content`，公开 `content` 是该次经过
+family-specific 校验和 canonicalization 的写入命令。Memory 的系统 Source 保存 entries 命令，而 Artifact GET
+返回生成后的标准 `MemoryContent`。类型化 payload 的服务端保留部分包含：
 
 ```json
 {
@@ -360,9 +415,9 @@ Artifact Create/Replace 的原子事务顺序为：
 2. 确定新的 Artifact 身份与 Revision，并生成 source_id
 3. 构造绑定该精确 Revision 的 lineage_only Source
 4. 插入 pc_sources 并分配 journal_position
-5. 插入新的 pc_artifacts Revision，并创建或移动 pc_artifact_heads
+5. 调用 Family-owned writer 写入新的 Revision/head，并维护对应 Family 的约束与派生状态
 6. 插入 pc_artifact_lineage_sources，新 Source 的 ordinal = 0
-7. Replace 时把上一 Revision 的有序 Artifact lineage 复制到新 Revision
+7. Memory 写入 Entry Version、manifest、changes、entry head 和搜索投影；Experience/Skill 刷新搜索投影，Skill 同步 package；Handoff 校验 citations 和单例身份
 8. 提交事务
 ```
 
@@ -460,7 +515,7 @@ OpenAPI 字段及语义是公开契约；表名和列名只是当前实现映射
 | `scope_id` | `pc_sources.scope_id` | `direct` | Source 所属 Scope、授权边界和公开身份分量。 |
 | `source_type` | `pc_sources.source_type` | `direct` | 本期公开值固定为 `content`。 |
 | `source_id` | `pc_sources.source_id` | `direct` | 服务端生成的 Source ID。 |
-| `content` | `pc_sources.payload` | `encoded` | Content Source 正文；系统 Source 保存 canonical Artifact Create/Replace content。 |
+| `content` | `pc_sources.payload` | `encoded` | Content Source 正文；系统 Source 保存 canonical Artifact Create/Replace 写入命令。 |
 | `position` | `pc_sources.journal_position` | `direct` | Source 在所属 Scope journal 中的位置。 |
 | `content_digest` | 无独立列 | `derived` | canonical `content` 的 SHA-256 摘要。 |
 
@@ -485,7 +540,7 @@ OpenAPI 字段及语义是公开契约；表名和列名只是当前实现映射
 | `family` | `pc_artifacts.family`、`pc_artifact_heads.family` | `direct` | family 和 adapter 路由。 |
 | `artifact_id` | `pc_artifacts.artifact_id`、`pc_artifact_heads.artifact_id` | `direct` | 服务端生成的 Artifact ID。 |
 | `revision` | `pc_artifacts.revision`、`pc_artifact_heads.revision` | `direct` | 从 1 开始递增的不可变 Revision。 |
-| `content` | `pc_artifacts.content` | `encoded` | family-specific 模型校验后的完整内容。 |
+| `content` | `pc_artifacts.content` | `encoded` | family-specific writer 生成或校验后的标准完整内容；Memory 保存命令执行结果。 |
 | `sources` | `pc_artifact_lineage_sources` | `relation/derived` | 按 Revision 身份和 ordinal 组装的同 Scope Source 身份数组。 |
 | `artifacts` | `pc_artifact_lineage_artifacts` | `relation/derived` | 按 Revision 身份和 ordinal 组装的上游 Artifact Revision 数组。 |
 | `content_digest` | 无独立列 | `derived` | canonical `content` 的 SHA-256 摘要。 |
@@ -550,12 +605,13 @@ Digest 规则：
 
 1. 在 OpenAPI 中增加本文 7 个 operation；
 2. 将公开 `source_type` 固定为 `content`，将 `family` 固定为四个公开值；
-3. 让 Artifact Create/Replace 通过 family-specific 领域模型校验和规范化 `content`；
-4. 在每次 Artifact Create/Replace 事务中创建目标绑定的 `lineage_only` Source，并作为新 Revision 唯一 Source lineage；
+3. 以 discriminator 生成四类 Create request，并让 Artifact Create/Replace 分发到 Family-owned writer；
+4. 在每次 Artifact Create/Replace 事务中创建目标绑定的 `lineage_only` Source 并放在 ordinal 0，再由 Handoff
+   writer 派生 citation lineage；
 5. 增加共享 Source 生成准入校验，并覆盖所有模型、Candidate 和 commit 路径；
 6. Source-window 过滤 `lineage_only` Source，但按完整窗口推进 cursor，全过滤时返回 no-op；
 7. Artifact response 按完整 Revision 身份批量读取 lineage，组装顶层身份和数组；
-8. 复用现有 Source journal、Artifact repository、lineage 和授权服务，不增加现有元数据表字段；
+8. 复用现有 Source journal、Artifact repository、Memory service、Handoff service、Skill package 及各 Family 搜索投影；
 9. 运行生成、契约、单元、文档及 SQLite/OceanBase 行为测试。
 
 验收条件：
@@ -563,12 +619,16 @@ Digest 规则：
 - 只在两棵 Scope 子资源树下新增 7 个 operation，不重复定义 Scope API；
 - Source 只提供 Create/Get，公开类型只允许 `content`，且不公开 metadata、时间或内部用途字段；
 - Artifact 只提供 Create/Get/Get Revision/List/Replace，不提供 Search 或 Delete；
-- 四个公开 family 均使用对应领域模型支持 Create/Get/List/Replace；
+- 四个公开 family 均通过对应 writer 支持 Create/Get/List/Replace，并维护其权威约束与派生状态；
+- Memory Create 接受非空 `entries[].kind/text`，保留开放 `kind`，并生成标准 Memory 状态与搜索投影；
+- Experience/Skill Create 与 Replace 刷新现有搜索投影，Skill 同步标准 package；
+- Handoff Create 使用 Scope 单例 `handoff`，重复 Create 返回 409 并提示使用 Replace，Create/Replace 均复用 citation 校验；
 - Artifact Create body 只有 `family` 和 `content`，Replace body 只有 `content`；
 - Artifact request 不接受任何 lineage 字段；
-- Artifact Create 和每次成功 Replace 都在同一事务中生成目标绑定的 `lineage_only` Source，并作为新 Revision
-  唯一 Source lineage；
-- Replace 返回新 Source 身份、保留旧 Revision 的 Source，并继承上一 Revision 的 Artifact lineage；
+- Artifact Create 和每次成功 Replace 都在同一事务中生成目标绑定的 `lineage_only` Source 并放在 ordinal 0；
+  Handoff 还会通过现有服务派生直接 citation lineage；
+- Replace 返回新 Source 身份并保留旧 Revision 的 Source；非 Handoff writer 继承上一 Revision 的 Artifact
+  lineage，Handoff 则从替换 content 派生；
 - 所有生成、Candidate 和 commit 路径统一拒绝将该 Source 用于其他目标；
 - Source-window 跨过被过滤记录，全过滤时不调用模型、不创建 Revision，并返回 no-op；
 - Source、Artifact Revision、head 或 lineage 任一步写入失败时全部回滚；
@@ -581,7 +641,7 @@ Digest 规则：
 
 # Drawbacks
 
-- Family-specific `content` 在基础 generated Client 中只能表示为 JSON object，静态类型弱于领域 API；
+- Family-specific Create `content` 通过 discriminator 获得准确客户端类型，但 response 仍需按 family 解释标准内容；
 - 每个 family 都需要稳定的反序列化、校验和 canonical serialization adapter；
 - List 返回 lineage 数组会增加关系查询成本，实现需要避免逐条查询；
 - 每次 Artifact Create 和成功 Replace 都会额外写入一条 Source 和一条 lineage，增加 Source journal 体量；
