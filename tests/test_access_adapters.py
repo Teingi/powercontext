@@ -37,6 +37,7 @@ from powercontext.server.authz import (
     BuiltinAuthorizationProvider,
     CasbinAuthorizationProvider,
     CreateBinding,
+    GroupRef,
     MemoryEntrySelector,
     PrincipalRef,
     ResourceRef,
@@ -113,8 +114,18 @@ def test_casbin_composition_has_writable_relationships_and_owner_enforcement() -
     asyncio.run(scenario())
 
 
-def test_authzen_uses_logical_identity_and_description_without_issuer() -> None:
+def test_authzen_uses_logical_identity_and_trusted_powercontext_context() -> None:
     seen: list[dict[str, object]] = []
+    subject = PrincipalRef(type="user", id="workforce:alice", description="Alice")
+    actor = PrincipalRef(type="service", id="agent:codex", description="Codex")
+    group = GroupRef(type="group", id="workforce:payments", description="Payments")
+    context = AccessAuditContext(
+        transport="http",
+        operation="adapter-conformance",
+        request_id="req-adapter",
+        actor=actor,
+        subject_groups=(group,),
+    )
 
     def handler(request: httpx.Request) -> httpx.Response:
         assert request.headers["Authorization"] == "Bearer provider-token"
@@ -138,12 +149,12 @@ def test_authzen_uses_logical_identity_and_description_without_issuer() -> None:
                 selector=MemoryEntrySelector(entry_id="entry-a"),
             )
             decision = await provider.check(
-                AccessRequest(subject=ALICE, action=AccessAction.ARTIFACT_READ, resource=resource, context=AUDIT)
+                AccessRequest(subject=subject, action=AccessAction.ARTIFACT_READ, resource=resource, context=context)
             )
             assert decision.allowed
             assert decision.policy_revision == "pdp-42"
             assert seen[0] == {
-                "subject": {"type": "user", "id": "alice", "properties": {"description": "Alice"}},
+                "subject": {"type": "user", "id": "workforce:alice", "properties": {"description": "Alice"}},
                 "action": {"name": "artifact.read"},
                 "resource": {
                     "type": "artifact",
@@ -158,6 +169,20 @@ def test_authzen_uses_logical_identity_and_description_without_issuer() -> None:
                     "request_id": "req-adapter",
                     "transport": "http",
                     "operation": "adapter-conformance",
+                    "powercontext": {
+                        "actor": {
+                            "type": "service",
+                            "id": "agent:codex",
+                            "properties": {"description": "Codex"},
+                        },
+                        "subject_groups": [
+                            {
+                                "type": "group",
+                                "id": "workforce:payments",
+                                "properties": {"description": "Payments"},
+                            }
+                        ],
+                    },
                 },
             }
             with pytest.raises(AccessUnavailableError, match="filtering"):
@@ -170,6 +195,72 @@ def test_authzen_uses_logical_identity_and_description_without_issuer() -> None:
                         context=AUDIT,
                     )
                 )
+
+    asyncio.run(scenario())
+
+
+def test_authzen_group_context_matches_builtin_and_casbin_decisions() -> None:
+    group = GroupRef(type="group", id="workforce:payments")
+    actor = PrincipalRef(type="service", id="agent:codex")
+    scope = ResourceRef.scope("scope-a")
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        payload = json.loads(request.content)
+        trusted = payload["context"]["powercontext"]
+        assert trusted["actor"] == {"type": "service", "id": "agent:codex", "properties": {}}
+        group_ids = {item["id"] for item in trusted["subject_groups"]}
+        return httpx.Response(200, json={"decision": "workforce:payments" in group_ids})
+
+    async def scenario() -> None:
+        async with SQLiteProfile.open(SQLiteConfig(), tables=ACCESS_TABLES) as profile:
+            repository = RelationalAccessRepository(profile.database)
+            await _seed_admin(repository)
+            builtin = BuiltinAuthorizationProvider(repository)
+            casbin = CasbinAuthorizationProvider(repository)
+            service = AccessControlService(
+                builtin,
+                relationships=repository,
+                audit=repository,
+                provider_capabilities=AccessProviderCapabilities(
+                    safe_resource_filtering=True,
+                    multi_requirement_check=True,
+                    relationship_management=True,
+                    group_subjects=True,
+                ),
+            )
+            await service.create_binding(
+                ADMIN,
+                CreateBinding(
+                    subject=group,
+                    resource=scope,
+                    role=AccessRole.SCOPE_VIEWER,
+                    idempotency_key="group-scope-viewer",
+                ),
+                context=AUDIT,
+            )
+
+            transport = httpx.MockTransport(handler)
+            async with httpx.AsyncClient(transport=transport) as client:
+                authzen = AuthZenAuthorizationProvider("http://127.0.0.1:9876", http_client=client)
+                for subject_groups, expected in (((group,), True), ((), False)):
+                    context = AccessAuditContext(
+                        transport="http",
+                        operation="adapter-conformance",
+                        actor=actor,
+                        subject_groups=subject_groups,
+                    )
+                    request = AccessRequest(
+                        subject=BOB,
+                        action=AccessAction.SCOPE_READ,
+                        resource=scope,
+                        context=context,
+                    )
+                    decisions = await asyncio.gather(
+                        builtin.check(request),
+                        casbin.check(request),
+                        authzen.check(request),
+                    )
+                    assert all(decision.allowed is expected for decision in decisions)
 
     asyncio.run(scenario())
 

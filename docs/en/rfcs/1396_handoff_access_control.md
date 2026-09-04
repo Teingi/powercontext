@@ -613,6 +613,13 @@ records a Server-side proposed-owner attestation; approval establishes that Prin
 an existing identity must retain its existing owner. Cross-Scope publication establishes the publisher as owner of
 the new target identity.
 
+The first version assumes that a deployment enables enforced mode before it persists its first Artifact. It does not
+backfill or infer owners for a catalog populated while access control was disabled, and it exposes no general owner
+repair workflow. Switching such a catalog to enforced mode without a separate operator migration leaves those
+Artifacts unavailable by design. If domain persistence succeeds but owner establishment fails, the request still
+fails closed; only a business flow that explicitly supports idempotent replay may repair the relation on retry. A
+general transactional outbox and operator recovery procedure are future work outside this RFC.
+
 ## Action vocabulary
 
 First-version actions are stable lowercase dotted strings:
@@ -1171,6 +1178,13 @@ The included AuthZEN adapter maps point and batch `AccessRequest` values to the 
 resource, and context and maps only a bounded decision plus optional policy revision back to `AccessDecision`. It is
 decision-only: safe resource filtering and relationship management are unavailable. OPA and Cerbos are possible
 future adapters, not current deployment options.
+
+The standard AuthZEN context retains `request_id`, `transport`, and `operation`. A `context.powercontext` extension
+also carries the trusted `actor` as a Principal object or `null`, plus `subject_groups` as a list of Group objects.
+These identities use the same deployment-wide opaque IDs normalized by the Authentication Provider; there is no
+separate caller-supplied issuer field. The adapter must preserve this context for both point and batch decisions so an
+external PDP can enforce group membership and on-behalf-of constraints with the same authenticated facts as the
+Server-owned Providers.
 
 Decision interoperability does not imply policy administration interoperability. If an organization manages policy
 through GitOps, IAM, or a separate administration plane, PowerContext consumes decisions and safe resource filters but

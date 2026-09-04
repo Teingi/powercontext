@@ -575,6 +575,12 @@ Entry 和首次 Handoff commit 由创建者拥有。新 Experience/Skill Candida
 批准后再建立 ownership；以已有 identity 为 target 的 Candidate 必须保留原 owner。跨 Scope publication 的新 target
 identity 归 publisher 所有。
 
+首版假设 deployment 在持久化第一个 Artifact 前就已启用 enforced mode。它不会为 access control disabled 期间已写入的
+catalog 回填或推断 owner，也不提供通用 owner repair 流程。未经过独立 operator migration 就把这类 catalog 切换到
+enforced mode 时，其中的 Artifact 按设计保持不可用。若 domain persistence 已成功但 owner establishment 失败，请求仍
+fail closed；只有明确支持幂等重放的业务流程才能通过重试修复 relation。通用 transactional outbox 和 operator recovery
+流程属于本 RFC 之外的未来工作。
+
 ## Action vocabulary
 
 首版 action 是稳定、小写、点分隔的字符串：
@@ -1091,6 +1097,12 @@ group 和 resource-filter capability。
 已包含的 AuthZEN adapter 把 point/batch `AccessRequest` 映射为 Authorization API 的 subject、action、resource、context，
 只把有界 decision 和可选 policy revision 映射回 `AccessDecision`。它只提供 decision，不支持安全 resource filtering
 或 relationship management。OPA/Cerbos 是未来 adapter，不是当前 deployment option。
+
+标准 AuthZEN context 保留 `request_id`、`transport` 和 `operation`。`context.powercontext` 扩展还会携带可信 `actor`：
+其值为 Principal object 或 `null`；同时把 `subject_groups` 作为 Group object 列表传递。这些 identity 使用
+Authentication Provider 已归一化的同一套 deployment-wide opaque ID，不接受调用方另行提交 `issuer`。Point 和 batch
+decision 都必须保留该 context，使外部 PDP 能基于与 Server-owned Provider 相同的认证事实执行 group membership 和
+on-behalf-of 约束。
 
 这些 adapter 的 decision interoperability 不代表 policy administration interoperability。若组织在 GitOps、IAM 或
 独立管理面维护 policy，PowerContext 只消费判定和安全 resource filter，不写 policy。部署必须明确

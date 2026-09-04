@@ -24,7 +24,7 @@ from pydantic import SecretStr
 
 from powercontext.limits import MAX_POLICY_REVISION_LENGTH
 from powercontext.server.authz.errors import AccessUnavailableError
-from powercontext.server.authz.models import AccessDecision, MemoryEntrySelector, ResourceRef
+from powercontext.server.authz.models import AccessDecision, AccessSubjectRef, MemoryEntrySelector, ResourceRef
 from powercontext.server.authz.service import (
     AccessRequest,
     AuthorizedResourceFilter,
@@ -116,18 +116,26 @@ class AuthZenAuthorizationProvider:
 
 def _access_request(request: AccessRequest) -> dict[str, object]:
     return {
-        "subject": {
-            "type": request.subject.type,
-            "id": request.subject.id,
-            "properties": ({} if request.subject.description is None else {"description": request.subject.description}),
-        },
+        "subject": _subject(request.subject),
         "action": {"name": request.action.value},
         "resource": _resource(request.resource),
         "context": {
             "request_id": request.context.request_id,
             "transport": request.context.transport,
             "operation": request.context.operation,
+            "powercontext": {
+                "actor": None if request.context.actor is None else _subject(request.context.actor),
+                "subject_groups": [_subject(group) for group in request.context.subject_groups],
+            },
         },
+    }
+
+
+def _subject(subject: AccessSubjectRef) -> dict[str, object]:
+    return {
+        "type": subject.type,
+        "id": subject.id,
+        "properties": {} if subject.description is None else {"description": subject.description},
     }
 
 
