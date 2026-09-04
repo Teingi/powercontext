@@ -179,6 +179,7 @@ async def open_builtin_runtime(
     scheduled_source_runner: ScheduledSourceRunner | None = None,
     scheduled_experience_runner: ScheduledExperienceRunner | None = None,
     source_registry: SourceDefinitionRegistry | None = None,
+    cursor_secret: bytes | None = None,
 ) -> AsyncIterator[BuiltinRuntime]:
     """Open the selected database, inference adapters, and built-in runtime."""
 
@@ -255,6 +256,7 @@ async def open_builtin_runtime(
                 token_estimator=token_estimator,
                 memory_reranker=configured_reranker,
                 source_registry=configured_source_registry,
+                cursor_secret=cursor_secret,
             )
         )
         readiness_probes: dict[str, ReadinessProbeDefinition] = {
@@ -308,6 +310,7 @@ async def open_builtin_runtime(
                 skill_publication_service=contexts.skill_publications,
                 remote_skill_distribution=contexts.remote_skill_distribution(),
                 statistics_service=contexts.statistics,
+                record_service=contexts.records,
                 recall_token_estimator=contexts.estimate_recall_tokens,
                 publication_application=contexts.publications,
                 scope_application=contexts.scopes,
@@ -352,6 +355,7 @@ async def open_builtin_contexts(
     token_estimator: TokenEstimator | None = None,
     memory_reranker: MemoryReranker | None = None,
     source_registry: SourceDefinitionRegistry | None = None,
+    cursor_secret: bytes | None = None,
 ) -> AsyncIterator[RelationalContexts]:
     """Open the selected database and expose scope-bound PowerContext providers."""
 
@@ -387,6 +391,7 @@ async def open_builtin_contexts(
                 memory_reranker=memory_reranker,
                 memory_rerank_candidate_limit=config.runtime.memory_rerank_candidate_limit,
                 source_registry=source_registry,
+                cursor_secret=cursor_secret,
             )
             await contexts.scopes.bootstrap_default()
             yield contexts
@@ -423,6 +428,7 @@ async def open_builtin_contexts(
             memory_reranker=memory_reranker,
             memory_rerank_candidate_limit=config.runtime.memory_rerank_candidate_limit,
             source_registry=source_registry,
+            cursor_secret=cursor_secret,
         )
         await contexts.scopes.bootstrap_default()
         yield contexts

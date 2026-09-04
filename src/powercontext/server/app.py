@@ -27,19 +27,25 @@ from contextlib import suppress
 from copy import deepcopy
 from datetime import UTC, datetime
 from functools import wraps
+from hashlib import sha256
 from time import perf_counter
 from typing import TYPE_CHECKING, Annotated, Any, Literal, Protocol, TypeVar, cast
+from urllib.parse import quote, unquote
 
-from fastapi import Depends, FastAPI, Request, Response, status
+from fastapi import Depends, FastAPI, Header, Path, Query, Request, Response, status
 from fastapi import Path as PathParameter
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from fastapi.routing import APIRoute
 from opentelemetry.trace import SpanKind
+from pydantic import JsonValue
 from pydantic import ValidationError as PydanticValidationError
 from scalar_fastapi import AgentScalarConfig, get_scalar_api_reference
 from starlette.middleware import Middleware
 from starlette.middleware.base import RequestResponseEndpoint
-from starlette.types import Lifespan
+from starlette.routing import Match
+from starlette.types import Lifespan, Scope
+from typing_extensions import override
 
 from powercontext._logging import log_safely
 from powercontext.artifacts import ArtifactAddress, ArtifactRef
@@ -130,6 +136,34 @@ from powercontext.builtin.publication import (
 )
 from powercontext.builtin.publication import (
     ArtifactPublicationRequest as DomainArtifactPublicationRequest,
+)
+from powercontext.builtin.records import (
+    ArtifactAlreadyExistsError,
+    ArtifactRevisionPreconditionError,
+    BaseAccessError,
+    BaseValueConflictError,
+    BaseValueNotFoundError,
+    CursorExpiredError,
+    InvalidBaseAccessRequestError,
+    InvalidCursorError,
+)
+from powercontext.builtin.records import (
+    ArtifactCollectionItem as RuntimeArtifactCollectionItem,
+)
+from powercontext.builtin.records import (
+    ArtifactCreated as RuntimeArtifactCreated,
+)
+from powercontext.builtin.records import (
+    ArtifactRecord as RuntimeArtifactRecord,
+)
+from powercontext.builtin.records import (
+    ArtifactRecordPage as RuntimeArtifactRecordPage,
+)
+from powercontext.builtin.records import (
+    ArtifactWrite as RuntimeArtifactWrite,
+)
+from powercontext.builtin.records import (
+    SourceRecord as RuntimeSourceRecord,
 )
 from powercontext.builtin.review import (
     ArtifactTargetConflictError,
@@ -259,6 +293,7 @@ from powercontext.builtin.scope import (
 from powercontext.builtin.scope import (
     ScopeSelection as DomainScopeSelection,
 )
+from powercontext.builtin.source_eligibility import SourceNotEligibleError
 from powercontext.builtin.sources import (
     ObservedInvocation,
     ObservedOutcome,
@@ -314,7 +349,12 @@ from powercontext.http import (
     ArtifactAccessResource,
     ArtifactCandidate,
     ArtifactCandidatePage,
+    ArtifactCollectionItem,
+    ArtifactCreated,
     ArtifactFamilyAccessCapability,
+    ArtifactPage,
+    ArtifactRevision,
+    BaseArtifactFamily,
     Capabilities,
     CaptureContentSourceRequest,
     CaptureContentSourceResponse,
@@ -326,8 +366,10 @@ from powercontext.http import (
     ConnectorCheckpointState,
     ContinueHandoffRequest,
     CreateAccessBindingRequest,
+    CreateArtifactRequest,
     CreateRemoteSkillTargetRequest,
     CreateScopeRequest,
+    CreateSourceRequest,
     CreateWorkContractRequest,
     DownloadRemoteSkillPackageRequest,
     EnrollRemoteSkillTargetRequest,
@@ -360,6 +402,7 @@ from powercontext.http import (
     ListAccessResourcesRequest,
     ListAccessRolesRequest,
     ListArtifactCandidatesRequest,
+    ListArtifactsRequest,
     ListExternalSkillsRequest,
     ListExternalSkillsResponse,
     ListManagedSkillsRequest,
@@ -401,6 +444,7 @@ from powercontext.http import (
     RemoteSkillTargetStatus,
     RenameRemoteSkillTargetRequest,
     ReplaceAccessBindingRequest,
+    ReplaceArtifactRequest,
     ResolveExternalSkillRequest,
     ResolveScopeBindingRequest,
     ResolveScopeSelectionRequest,
@@ -430,6 +474,8 @@ from powercontext.http import (
     SkillPackageManifest,
     SourceDefinitionManifest,
     SourceObservationReceipt,
+    SourceRecord,
+    SourceType,
     SubmitSourceObservationRequest,
     UnpublishRemoteSkillRequest,
     UpdateScopeRequest,
@@ -481,6 +527,7 @@ from powercontext.http import (
 from powercontext.http import (
     HandoffActivation as TransportHandoffActivation,
 )
+from powercontext.http import HandoffContent as TransportHandoffContent
 from powercontext.http import (
     HandoffDraft as TransportHandoffDraft,
 )
@@ -514,8 +561,10 @@ from powercontext.http._generated.operations import (
     COMMIT_HANDOFF,
     CONTINUE_HANDOFF,
     CREATE_ACCESS_BINDING,
+    CREATE_ARTIFACT,
     CREATE_REMOTE_SKILL_TARGET,
     CREATE_SCOPE,
+    CREATE_SOURCE,
     CREATE_WORK_CONTRACT,
     DOWNLOAD_REMOTE_SKILL_PACKAGE,
     DOWNLOAD_SKILL_PACKAGE,
@@ -525,7 +574,9 @@ from powercontext.http._generated.operations import (
     GENERATE_EXPERIENCE,
     GENERATE_SKILL,
     GET_ACCESS_PRINCIPAL,
+    GET_ARTIFACT,
     GET_ARTIFACT_CANDIDATE,
+    GET_ARTIFACT_REVISION,
     GET_CAPABILITIES,
     GET_CONNECTOR_CHECKPOINT,
     GET_DEFAULT_SCOPE,
@@ -537,6 +588,7 @@ from powercontext.http._generated.operations import (
     GET_SCOPE,
     GET_SKILL,
     GET_SKILL_PACKAGE_MANIFEST,
+    GET_SOURCE,
     GET_STATS,
     HANDOFF_CURRENT_WORK,
     IMPORT_EXTERNAL_SKILL,
@@ -545,6 +597,7 @@ from powercontext.http._generated.operations import (
     LIST_ACCESS_RESOURCES,
     LIST_ACCESS_ROLES,
     LIST_ARTIFACT_CANDIDATES,
+    LIST_ARTIFACTS,
     LIST_EXTERNAL_SKILLS,
     LIST_MANAGED_SKILLS,
     LIST_MEMORY_CHANGES,
@@ -568,6 +621,7 @@ from powercontext.http._generated.operations import (
     REMEMBER_MEMORY,
     RENAME_REMOTE_SKILL_TARGET,
     REPLACE_ACCESS_BINDING,
+    REPLACE_ARTIFACT,
     RESOLVE_EXTERNAL_SKILL,
     RESOLVE_SCOPE_BINDING,
     RESOLVE_SCOPE_SELECTION,
@@ -657,6 +711,56 @@ class _ScopedSourceApplication(Protocol):
 
 class _SourceApplication(Protocol):
     def for_scope(self, scope_id: str, /) -> _ScopedSourceApplication: ...
+
+
+class _ScopedRecordApplication(Protocol):
+    async def create_source(
+        self,
+        source_type: str,
+        content: JsonValue,
+        /,
+    ) -> RuntimeSourceRecord: ...
+
+    async def get_source(self, source_type: str, source_id: str, /) -> RuntimeSourceRecord: ...
+
+    async def create_artifact(
+        self,
+        family: str,
+        write: RuntimeArtifactWrite,
+        /,
+    ) -> RuntimeArtifactCreated: ...
+
+    async def get_artifact(self, family: str, artifact_id: str, /) -> RuntimeArtifactRecord: ...
+
+    async def get_artifact_revision(
+        self,
+        family: str,
+        artifact_id: str,
+        revision: int,
+        /,
+    ) -> RuntimeArtifactRecord: ...
+
+    async def query_artifacts(
+        self,
+        family: str,
+        /,
+        *,
+        limit: int,
+        cursor: str | None,
+    ) -> RuntimeArtifactRecordPage: ...
+
+    async def replace_artifact(
+        self,
+        family: str,
+        artifact_id: str,
+        expected_etag: str,
+        write: RuntimeArtifactWrite,
+        /,
+    ) -> RuntimeArtifactRecord: ...
+
+
+class _RecordApplication(Protocol):
+    def for_scope(self, scope_id: str, /) -> _ScopedRecordApplication: ...
 
 
 class _RemoteIngestionApplication(Protocol):
@@ -946,6 +1050,7 @@ class ServerApplication(Protocol):
     scopes: ScopeApplication | None
     publications: ArtifactPublicationApplication | None
     sources: _SourceApplication
+    records: _RecordApplication
     ingestion: _RemoteIngestionApplication
     context: _ContextApplication
     experience: _ExperienceApplication
@@ -962,6 +1067,10 @@ class ServerApplication(Protocol):
 
 class _RuntimeNotReadyError(RuntimeError):
     """Raised when an application operation is called without a Runtime binding."""
+
+
+class _PreconditionRequiredError(RuntimeError):
+    """Raised when an Artifact mutation omits If-Match."""
 
 
 def create_app(
@@ -1033,14 +1142,25 @@ def create_app(
         request: Request,
         error: RequestValidationError | PydanticValidationError,
     ) -> JSONResponse:
+        errors = _validation_error_details(error)
+        scoped_resource_syntax_error = request.url.path.startswith("/v1/scopes/") and any(
+            isinstance(item, dict)
+            and isinstance(item.get("loc"), (list, tuple))
+            and item["loc"]
+            and item["loc"][0] == "query"
+            for item in errors
+        )
         return _error_response(
-            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            status.HTTP_400_BAD_REQUEST if scoped_resource_syntax_error else status.HTTP_422_UNPROCESSABLE_CONTENT,
             code="invalid_request",
             message="The request violates the API contract.",
-            details={"errors": _validation_error_details(error)},
+            details={"errors": errors},
         )
 
     @app.exception_handler(_RuntimeNotReadyError)
+    @app.exception_handler(_PreconditionRequiredError)
+    @app.exception_handler(BaseAccessError)
+    @app.exception_handler(SourceNotEligibleError)
     @app.exception_handler(PowerContextError)
     @app.exception_handler(PersistenceError)
     async def application_error(request: Request, error: Exception) -> JSONResponse:
@@ -1088,6 +1208,13 @@ def create_app(
     _add_route(app, LIST_ACCESS_AUDIT, list_access_audit)
     if handoff_report_enabled:
         _add_route(app, GET_HANDOFF_REPORT, get_handoff_report)
+    _add_route(app, CREATE_SOURCE, create_source)
+    _add_route(app, GET_SOURCE, get_source)
+    _add_route(app, CREATE_ARTIFACT, create_artifact)
+    _add_route(app, GET_ARTIFACT_REVISION, get_artifact_revision)
+    _add_route(app, GET_ARTIFACT, get_artifact)
+    _add_route(app, LIST_ARTIFACTS, list_artifacts)
+    _add_route(app, REPLACE_ARTIFACT, replace_artifact)
     _add_route(app, CAPTURE_CONTENT_SOURCE, capture_content_source)
     _add_route(app, REGISTER_SOURCE_DEFINITION, register_source_definition)
     _add_route(app, GET_CONNECTOR_CHECKPOINT, get_connector_checkpoint)
@@ -1750,6 +1877,223 @@ async def get_handoff_report(
     encoded_response = response_payload.model_dump_json(by_alias=True).encode("utf-8")
     _require_report_size(len(encoded_response), result)
     return response_payload
+
+
+async def create_source(
+    scope_id: Annotated[str, Path(min_length=1, max_length=256, pattern=r".*\S.*")],
+    request: CreateSourceRequest,
+    response: Response,
+    application: Annotated[ServerApplication, Depends(_require_application)],
+) -> SourceRecord:
+    result = await application.records.for_scope(scope_id).create_source(
+        request.source_type.value,
+        request.content,
+    )
+    response.headers["Location"] = _source_location(result)
+    return _source_record_response(result)
+
+
+async def get_source(
+    scope_id: Annotated[str, Path(min_length=1, max_length=256, pattern=r".*\S.*")],
+    source_type: Annotated[Literal["content"], Path()],
+    source_id: Annotated[str, Path(min_length=1, max_length=256, pattern=r"^[\x21-\x7E]+$")],
+    application: Annotated[ServerApplication, Depends(_require_application)],
+) -> SourceRecord:
+    result = await application.records.for_scope(scope_id).get_source(source_type, source_id)
+    return _source_record_response(result)
+
+
+async def create_artifact(
+    scope_id: Annotated[str, Path(min_length=1, max_length=256, pattern=r".*\S.*")],
+    request: CreateArtifactRequest,
+    response: Response,
+    http_request: Request,
+    application: Annotated[ServerApplication, Depends(_require_application)],
+) -> ArtifactCreated:
+    result = await application.records.for_scope(scope_id).create_artifact(
+        request.root.family,
+        _artifact_write(request),
+    )
+    await _establish_base_artifact_owners(
+        http_request,
+        application,
+        result,
+    )
+    response.headers["Location"] = _artifact_location(result)
+    response.headers["ETag"] = _artifact_etag(result.revision)
+    return _artifact_created_response(result)
+
+
+def _list_artifacts_query(
+    limit: Annotated[int, Query(ge=1, le=100)] = 50,
+    cursor: Annotated[str | None, Query(min_length=1, max_length=4096)] = None,
+) -> ListArtifactsRequest:
+    return ListArtifactsRequest(limit=limit, cursor=cursor)
+
+
+async def list_artifacts(
+    scope_id: Annotated[str, Path(min_length=1, max_length=256, pattern=r".*\S.*")],
+    family: Annotated[BaseArtifactFamily, Path()],
+    request: Annotated[ListArtifactsRequest, Depends(_list_artifacts_query)],
+    application: Annotated[ServerApplication, Depends(_require_application)],
+) -> ArtifactPage:
+    result = await application.records.for_scope(scope_id).query_artifacts(
+        family.value,
+        limit=request.limit,
+        cursor=request.cursor,
+    )
+    return ArtifactPage(
+        items=[_artifact_collection_item_response(item) for item in result.items],
+        next_cursor=result.next_cursor,
+    )
+
+
+async def get_artifact(
+    scope_id: Annotated[str, Path(min_length=1, max_length=256, pattern=r".*\S.*")],
+    family: Annotated[BaseArtifactFamily, Path()],
+    artifact_id: Annotated[str, Path(min_length=1, max_length=128, pattern=r"^[\x21-\x7E]+$")],
+    response: Response,
+    application: Annotated[ServerApplication, Depends(_require_application)],
+    if_none_match: Annotated[
+        str | None,
+        Header(alias="If-None-Match", min_length=1),
+    ] = None,
+) -> ArtifactRevision | Response:
+    result = await application.records.for_scope(scope_id).get_artifact(family.value, artifact_id)
+    etag = _artifact_etag(result.revision)
+    if if_none_match == etag:
+        return Response(status_code=status.HTTP_304_NOT_MODIFIED, headers={"ETag": etag})
+    response.headers["ETag"] = etag
+    return _artifact_revision_response(result)
+
+
+async def replace_artifact(
+    scope_id: Annotated[str, Path(min_length=1, max_length=256, pattern=r".*\S.*")],
+    family: Annotated[BaseArtifactFamily, Path()],
+    artifact_id: Annotated[str, Path(min_length=1, max_length=128, pattern=r"^[\x21-\x7E]+$")],
+    request: ReplaceArtifactRequest,
+    response: Response,
+    http_request: Request,
+    application: Annotated[ServerApplication, Depends(_require_application)],
+    if_match: Annotated[str | None, Header(alias="If-Match")] = None,
+) -> ArtifactRevision:
+    expected_etag = _require_artifact_etag(if_match)
+    previous_memory_entries: frozenset[str] = frozenset()
+    if family is BaseArtifactFamily.MEMORY:
+        current = await application.records.for_scope(scope_id).get_artifact(family.value, artifact_id)
+        previous_memory_entries = _memory_manifest_entry_ids(current)
+    result = await application.records.for_scope(scope_id).replace_artifact(
+        family.value,
+        artifact_id,
+        expected_etag,
+        _artifact_write(request),
+    )
+    await _establish_new_memory_entry_owners(
+        http_request,
+        result,
+        previous_entry_ids=previous_memory_entries,
+        operation=REPLACE_ARTIFACT.operation_id,
+    )
+    response.headers["ETag"] = _artifact_etag(result.revision)
+    return _artifact_revision_response(result)
+
+
+async def get_artifact_revision(
+    scope_id: Annotated[str, Path(min_length=1, max_length=256, pattern=r".*\S.*")],
+    family: Annotated[BaseArtifactFamily, Path()],
+    artifact_id: Annotated[str, Path(min_length=1, max_length=128, pattern=r"^[\x21-\x7E]+$")],
+    revision: Annotated[int, Path(ge=1)],
+    application: Annotated[ServerApplication, Depends(_require_application)],
+) -> ArtifactRevision:
+    result = await application.records.for_scope(scope_id).get_artifact_revision(
+        family.value,
+        artifact_id,
+        revision,
+    )
+    return _artifact_revision_response(result)
+
+
+def _source_record_response(value: RuntimeSourceRecord) -> SourceRecord:
+    return SourceRecord(
+        scope_id=value.scope_id,
+        source_type=SourceType(value.source_type),
+        source_id=value.source_id,
+        content=value.content,
+        position=value.position,
+        content_digest=value.content_digest,
+    )
+
+
+def _artifact_revision_response(value: RuntimeArtifactRecord) -> ArtifactRevision:
+    return ArtifactRevision(
+        scope_id=value.scope_id,
+        family=BaseArtifactFamily(value.family),
+        artifact_id=value.artifact_id,
+        revision=value.revision,
+        content=value.content,
+        sources=[mapping.source_type_reference(ref) for ref in value.sources],
+        artifacts=[mapping.artifact_reference(ref) for ref in value.artifacts],
+        content_digest=value.content_digest,
+    )
+
+
+def _artifact_created_response(value: RuntimeArtifactCreated) -> ArtifactCreated:
+    return ArtifactCreated(
+        scope_id=value.scope_id,
+        family=BaseArtifactFamily(value.family),
+        artifact_id=value.artifact_id,
+        revision=value.revision,
+        sources=[mapping.source_type_reference(ref) for ref in value.sources],
+        artifacts=[mapping.artifact_reference(ref) for ref in value.artifacts],
+    )
+
+
+def _artifact_collection_item_response(value: RuntimeArtifactCollectionItem) -> ArtifactCollectionItem:
+    return ArtifactCollectionItem(
+        scope_id=value.scope_id,
+        family=BaseArtifactFamily(value.family),
+        artifact_id=value.artifact_id,
+        revision=value.revision,
+        sources=[mapping.source_type_reference(ref) for ref in value.sources],
+        artifacts=[mapping.artifact_reference(ref) for ref in value.artifacts],
+        content_digest=value.content_digest,
+    )
+
+
+def _artifact_write(value: CreateArtifactRequest | ReplaceArtifactRequest) -> RuntimeArtifactWrite:
+    content = value.root.content
+    if isinstance(content, TransportHandoffContent):
+        content = mapping.runtime_handoff_content(content)
+    return RuntimeArtifactWrite(
+        content=cast(
+            dict[str, JsonValue],
+            content.model_dump(mode="json", by_alias=True, exclude_none=True),
+        ),
+    )
+
+
+def _source_location(value: RuntimeSourceRecord) -> str:
+    source_id = quote(value.source_id, safe="")
+    scope_id = quote(value.scope_id, safe="")
+    source_type = quote(value.source_type, safe="")
+    return f"/v1/scopes/{scope_id}/sources/{source_type}/{source_id}"
+
+
+def _artifact_location(value: RuntimeArtifactCreated) -> str:
+    artifact_id = quote(value.artifact_id, safe="")
+    scope_id = quote(value.scope_id, safe="")
+    family = quote(value.family, safe="")
+    return f"/v1/scopes/{scope_id}/artifacts/{family}/{artifact_id}"
+
+
+def _artifact_etag(revision: int) -> str:
+    return f'"revision:{revision}"'
+
+
+def _require_artifact_etag(value: str | None) -> str:
+    if value is None:
+        raise _PreconditionRequiredError
+    return value
 
 
 def _require_report_size(estimated_bytes: int, report: Any) -> None:
@@ -2575,6 +2919,73 @@ async def _establish_created_owner(
     )
 
 
+async def _establish_base_artifact_owners(
+    request: Request,
+    application: ServerApplication,
+    result: RuntimeArtifactCreated,
+) -> None:
+    if access_control_for_mode(request.app.state.access_control, mode=request.app.state.access_mode) is None:
+        return
+    resource = ResourceRef.artifact(result.scope_id, family=result.family, artifact_id=result.artifact_id)
+    if result.family != BaseArtifactFamily.MEMORY.value:
+        await _establish_created_owner(
+            request,
+            resource,
+            idempotency_key=_base_owner_idempotency_key(resource),
+            operation=CREATE_ARTIFACT.operation_id,
+        )
+        return
+    artifact = await application.records.for_scope(result.scope_id).get_artifact(result.family, result.artifact_id)
+    await _establish_new_memory_entry_owners(
+        request,
+        artifact,
+        previous_entry_ids=frozenset(),
+        operation=CREATE_ARTIFACT.operation_id,
+    )
+
+
+async def _establish_new_memory_entry_owners(
+    request: Request,
+    result: RuntimeArtifactRecord,
+    *,
+    previous_entry_ids: frozenset[str],
+    operation: str,
+) -> None:
+    if result.family != BaseArtifactFamily.MEMORY.value:
+        return
+    for entry_id in sorted(_memory_manifest_entry_ids(result) - previous_entry_ids):
+        resource = ResourceRef.artifact(
+            result.scope_id,
+            family=result.family,
+            artifact_id=result.artifact_id,
+            selector=MemoryEntrySelector(entry_id=entry_id),
+        )
+        await _establish_created_owner(
+            request,
+            resource,
+            idempotency_key=_base_owner_idempotency_key(resource),
+            operation=operation,
+        )
+
+
+def _memory_manifest_entry_ids(result: RuntimeArtifactRecord) -> frozenset[str]:
+    manifest = result.content.get("manifest")
+    entries = manifest.get("entries") if isinstance(manifest, Mapping) else None
+    if not isinstance(entries, list):
+        raise AccessUnavailableError
+    entry_ids: set[str] = set()
+    for entry in entries:
+        entry_id = entry.get("entry_id") if isinstance(entry, Mapping) else None
+        if not isinstance(entry_id, str) or not entry_id or entry_id in entry_ids:
+            raise AccessUnavailableError
+        entry_ids.add(entry_id)
+    return frozenset(entry_ids)
+
+
+def _base_owner_idempotency_key(resource: ResourceRef) -> str:
+    return f"base-artifact-owner:{sha256(resource.key.encode()).hexdigest()}"
+
+
 async def _attest_candidate_owner(
     request: Request,
     *,
@@ -3017,7 +3428,7 @@ def _add_route(
     endpoint: Callable[..., Awaitable[_ResponseT | Response]],
 ) -> None:
     observed = _observe_application_operation(app, operation, endpoint)
-    app.add_api_route(
+    app.router.add_api_route(
         operation.path,
         observed,
         methods=[operation.method],
@@ -3028,6 +3439,7 @@ def _add_route(
         summary=operation.summary,
         tags=list(operation.tags),
         dependencies=[] if operation.access is None else [Depends(_authorization_dependency(operation))],
+        route_class_override=_EncodedPathAPIRoute if operation.path.startswith("/v1/scopes/") else None,
     )
 
 
@@ -3297,6 +3709,85 @@ def _path_scope_admin_access(
     return _path_scope_access(payload, action=AccessAction.SCOPE_ADMIN)
 
 
+def _path_artifact_access(
+    payload: Mapping[str, Any],
+    *,
+    action: AccessAction,
+) -> tuple[tuple[AccessAction, ResourceRef], ...]:
+    family = _path_artifact_family(payload)
+    return (
+        (
+            action,
+            ResourceRef.artifact(
+                _nested_request_value(payload, "scope_id"),
+                family=family,
+                artifact_id=_nested_request_value(payload, "artifact_id"),
+            ),
+        ),
+    )
+
+
+def _path_artifact_family(payload: Mapping[str, Any]) -> str:
+    try:
+        return BaseArtifactFamily(_nested_request_value(payload, "family")).value
+    except ValueError as error:
+        raise AccessInvalidRequestError("artifact-family") from error
+
+
+def _path_artifact_read_access(
+    payload: Mapping[str, Any],
+    _deployment_id: str,
+) -> tuple[tuple[AccessAction, ResourceRef], ...]:
+    if _path_artifact_family(payload) == BaseArtifactFamily.MEMORY.value:
+        return _path_scope_access(payload, action=AccessAction.SCOPE_READ)
+    return _path_artifact_access(payload, action=AccessAction.ARTIFACT_READ)
+
+
+def _path_artifact_write_access(
+    payload: Mapping[str, Any],
+    _deployment_id: str,
+) -> tuple[tuple[AccessAction, ResourceRef], ...]:
+    if _path_artifact_family(payload) == BaseArtifactFamily.MEMORY.value:
+        return _base_memory_write_access(payload)
+    return _path_artifact_access(payload, action=AccessAction.ARTIFACT_WRITE)
+
+
+def _base_memory_write_access(
+    payload: Mapping[str, Any],
+) -> tuple[tuple[AccessAction, ResourceRef], ...]:
+    content = payload.get("content")
+    entries = content.get("entries") if isinstance(content, Mapping) else None
+    if not isinstance(entries, list) or not entries:
+        raise AccessInvalidRequestError("resource")
+    scope_id = _nested_request_value(payload, "scope_id")
+    artifact_id = _nested_request_value(payload, "artifact_id")
+    checks: list[tuple[AccessAction, ResourceRef]] = []
+    if any(isinstance(entry, Mapping) and entry.get("entry_id") is None for entry in entries):
+        checks.append((AccessAction.SCOPE_CONTRIBUTE, ResourceRef.scope(scope_id)))
+    seen_entry_ids: set[str] = set()
+    for entry in entries:
+        entry_id = entry.get("entry_id") if isinstance(entry, Mapping) else None
+        if entry_id is None:
+            continue
+        if not isinstance(entry_id, str) or not entry_id:
+            raise AccessInvalidRequestError("memory-entry-selector")
+        if entry_id in seen_entry_ids:
+            continue
+        seen_entry_ids.add(entry_id)
+        checks.append((
+            AccessAction.ARTIFACT_WRITE,
+            ResourceRef.artifact(
+                scope_id,
+                family=BaseArtifactFamily.MEMORY.value,
+                artifact_id=artifact_id,
+                selector=MemoryEntrySelector(entry_id=entry_id),
+            ),
+        ))
+    if not checks:
+        raise AccessInvalidRequestError("resource")
+    return tuple(checks)
+
+
 def _scope_selection_read_access(
     payload: Mapping[str, Any],
     deployment_id: str,
@@ -3367,6 +3858,8 @@ _NAMED_ACCESS_RESOLVERS: dict[
     "exact_skill_access": _exact_skill_access,
     "path_scope_admin_access": _path_scope_admin_access,
     "path_scope_read_access": _path_scope_read_access,
+    "path_artifact_read_access": _path_artifact_read_access,
+    "path_artifact_write_access": _path_artifact_write_access,
     "publish_artifact_access": _publish_artifact_access,
     "publish_remote_skill_access": _publish_remote_skill_access,
     "scope_selection_read_access": _scope_selection_read_access,
@@ -3402,6 +3895,32 @@ def _mapping_revision(value: Mapping[str, Any]) -> int:
     if not isinstance(revision, int) or isinstance(revision, bool) or revision < 1:
         raise AccessInvalidRequestError("artifact-reference")
     return revision
+
+
+class _EncodedPathAPIRoute(APIRoute):
+    """Match scoped resources against raw paths and decode each identity exactly once."""
+
+    @override
+    def matches(self, scope: Scope) -> tuple[Match, Scope]:
+        raw_path = scope.get("raw_path")
+        if scope["type"] != "http" or not isinstance(raw_path, bytes):
+            return super().matches(scope)
+        try:
+            encoded_path = raw_path.decode("ascii")
+        except UnicodeDecodeError:
+            return super().matches(scope)
+        encoded_scope = dict(scope)
+        encoded_scope["path"] = encoded_path
+        root_path = scope.get("root_path", "")
+        if root_path:
+            encoded_scope["root_path"] = quote(str(root_path), safe="/")
+        match, child_scope = super().matches(cast(Scope, encoded_scope))
+        if match is not Match.NONE:
+            child_scope["path_params"] = {
+                key: unquote(value) if isinstance(value, str) else value
+                for key, value in child_scope.get("path_params", {}).items()
+            }
+        return match, child_scope
 
 
 def _observe_application_operation(
@@ -3552,9 +4071,10 @@ def _error_response(
     code: str,
     message: str,
     details: dict[str, Any] | None = None,
+    headers: dict[str, str] | None = None,
 ) -> JSONResponse:
     error = ErrorResponse(error=ErrorDetail(code=code, message=message, details=details))
-    return JSONResponse(status_code=response_status, content=error.model_dump(mode="json"))
+    return JSONResponse(status_code=response_status, content=error.model_dump(mode="json"), headers=headers)
 
 
 def _validation_error_details(error: RequestValidationError | PydanticValidationError) -> list[Any]:
@@ -3575,9 +4095,12 @@ def _map_error(error: Exception) -> tuple[int, str, str, dict[str, Any] | None]:
     return _map_domain_error(error) if service_error is None else service_error
 
 
-def _map_service_error(error: Exception) -> tuple[int, str, str, dict[str, Any] | None] | None:
+def _map_service_error(error: Exception) -> tuple[int, str, str, dict[str, Any] | None] | None:  # noqa: C901
     if isinstance(error, _RuntimeNotReadyError):
         return status.HTTP_503_SERVICE_UNAVAILABLE, "runtime_not_ready", "The Runtime is not ready.", None
+    base_access_error = _map_base_access_error(error)
+    if base_access_error is not None:
+        return base_access_error
     external_skill_error = _map_external_skill_error(error)
     if external_skill_error is not None:
         return external_skill_error
@@ -3668,6 +4191,85 @@ def _map_access_error(error: Exception) -> tuple[int, str, str, dict[str, Any] |
         return status.HTTP_422_UNPROCESSABLE_CONTENT, "invalid_access_request", "The Access request is invalid.", None
     if isinstance(error, AccessUnavailableError):
         return status.HTTP_503_SERVICE_UNAVAILABLE, error.code, "Access Control is unavailable.", None
+    return None
+
+
+def _map_base_access_error(error: Exception) -> tuple[int, str, str, dict[str, Any] | None] | None:
+    if isinstance(error, SourceNotEligibleError):
+        return (
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            "source_not_eligible",
+            "The Source is reserved for its bound Artifact creation lineage.",
+            {"source": error.source.model_dump(mode="json")},
+        )
+    if isinstance(error, _PreconditionRequiredError):
+        return (
+            status.HTTP_428_PRECONDITION_REQUIRED,
+            "precondition_required",
+            "Artifact mutation requires the current ETag in If-Match.",
+            None,
+        )
+    if isinstance(error, ArtifactRevisionPreconditionError):
+        return (
+            status.HTTP_412_PRECONDITION_FAILED,
+            "revision_conflict",
+            "Artifact ETag does not match the current head.",
+            {
+                "provided_etag": error.provided_etag,
+                "current_etag": error.current_etag,
+            },
+        )
+    if isinstance(error, BaseValueNotFoundError):
+        return (
+            status.HTTP_404_NOT_FOUND,
+            f"{error.kind}_not_found",
+            f"The requested {error.kind.capitalize()} was not found.",
+            None,
+        )
+    if isinstance(error, BaseValueConflictError):
+        return (
+            status.HTTP_409_CONFLICT,
+            "idempotency_conflict",
+            "The stable identity already names different durable state.",
+            {"kind": error.kind},
+        )
+    if isinstance(error, ArtifactAlreadyExistsError):
+        return (
+            status.HTTP_409_CONFLICT,
+            "artifact_already_exists",
+            "The Scope already has this singleton Artifact; use Replace Artifact to update it.",
+            {
+                "family": error.family,
+                "artifact_id": error.artifact_id,
+                "use_replace": error.use_replace,
+            },
+        )
+    if isinstance(error, CursorExpiredError):
+        return (
+            status.HTTP_410_GONE,
+            "cursor_expired",
+            "The pagination cursor has expired.",
+            None,
+        )
+    if isinstance(error, InvalidCursorError):
+        return (
+            status.HTTP_400_BAD_REQUEST,
+            "invalid_cursor",
+            "The pagination cursor is invalid or does not match this request.",
+            {"field": error.field, "reason": error.reason},
+        )
+    if isinstance(error, InvalidBaseAccessRequestError):
+        response_status = (
+            status.HTTP_400_BAD_REQUEST
+            if error.field in {"If-Match", "limit", "mode"}
+            else status.HTTP_422_UNPROCESSABLE_CONTENT
+        )
+        return (
+            response_status,
+            "invalid_request",
+            "The request is invalid.",
+            {"field": error.field, "reason": error.reason},
+        )
     return None
 
 

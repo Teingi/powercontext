@@ -38,15 +38,19 @@ from powercontext.http import (
     CommitHandoffRequest,
     ContinueHandoffRequest,
     CreateAccessBindingRequest,
+    CreateArtifactRequest,
     CreateScopeRequest,
+    CreateSourceRequest,
     FinalizeHandoffRequest,
     HandoffSelection,
     ListAccessResourcesRequest,
+    ListArtifactsRequest,
     ListMemoryEntriesRequest,
+    ReplaceArtifactRequest,
     RevokeAccessBindingRequest,
 )
 from powercontext.server.authentication import StaticBearerAuthenticationProvider
-from powercontext.server.authz import AccessControlService, PrincipalRef
+from powercontext.server.authz import AccessControlService, MemoryEntrySelector, PrincipalRef, ResourceRef
 from powercontext.server.authz.composition import open_builtin_access_control
 from powercontext.server.factory import create_server_app
 from powercontext.server.settings import (
@@ -60,6 +64,7 @@ from powercontext.server.settings import (
 
 ADMIN = PrincipalRef(type="service", id="admin")
 RECEIVER = PrincipalRef(type="user", id="bob")
+VIEWER = PrincipalRef(type="user", id="alice")
 DEPLOYMENT_ID = "access-control-http-e2e"
 
 
@@ -245,6 +250,172 @@ def test_logical_handoff_grant_and_revoke_cross_the_public_server_boundary(tmp_p
                 )
                 assert visible.total == 0
                 assert visible.items == []
+
+    asyncio.run(scenario())
+
+
+def test_base_source_and_artifact_routes_preserve_access_boundaries(tmp_path: Path) -> None:
+    async def scenario() -> None:
+        database = SQLiteConfig(url=f"sqlite+aiosqlite:///{tmp_path / 'base-access-runtime.db'}")
+        async with open_builtin_access_control(
+            database,
+            bootstrap_administrators=(ADMIN,),
+            deployment_id=DEPLOYMENT_ID,
+        ) as access_control:
+            async with _client(
+                _app(database, access_control, ADMIN, "admin-token", tmp_path / "base-admin-scheduler.db"),
+                "admin-token",
+            ) as admin:
+                scope = await admin.create_scope(
+                    CreateScopeRequest(
+                        title="Base Access API",
+                        summary="Exercise Source and Artifact routes through the enforced Access boundary.",
+                        idempotency_key="base-access-api-scope",
+                    )
+                )
+                await admin.create_access_binding(
+                    CreateAccessBindingRequest.model_validate({
+                        "subject": {"type": RECEIVER.type, "id": RECEIVER.id},
+                        "resource": {"type": "scope", "scope_id": scope.scope_id},
+                        "role": "scope.contributor",
+                        "idempotency_key": "base-access-bob-contributor",
+                    })
+                )
+
+            async with _client(
+                _app(database, access_control, RECEIVER, "receiver-token", tmp_path / "base-owner-scheduler.db"),
+                "receiver-token",
+            ) as owner:
+                source = await owner.create_source(
+                    scope.scope_id,
+                    CreateSourceRequest(content={"statement": "An exact viewer cannot enumerate the Scope."}),
+                )
+                created = await owner.create_artifact(
+                    scope.scope_id,
+                    CreateArtifactRequest.model_validate({
+                        "family": "experience",
+                        "content": {
+                            "situation": "A new base API was merged into an Access-enabled Server.",
+                            "action": "Exercise the API through the public authorization boundary.",
+                            "outcome": "The creator retained control of the logical Artifact.",
+                            "lesson": "Every new write surface must establish its owner.",
+                        },
+                    }),
+                )
+                replaced = await owner.replace_artifact(
+                    scope.scope_id,
+                    "experience",
+                    created.artifact_id,
+                    ReplaceArtifactRequest.model_validate({
+                        "content": {
+                            "situation": "A new base API was merged into an Access-enabled Server.",
+                            "action": "Verify the owner can replace the Artifact through the public boundary.",
+                            "outcome": "The owner committed revision two.",
+                            "lesson": "Creation and later mutation must use the same logical Access identity.",
+                        }
+                    }),
+                    expected_etag='"revision:1"',
+                )
+                assert replaced.revision == 2
+                owner_relation = await access_control.artifact_owner(
+                    ResourceRef.artifact(scope.scope_id, family="experience", artifact_id=created.artifact_id)
+                )
+                assert owner_relation is not None
+                assert owner_relation.owner == RECEIVER
+
+                memory = await owner.create_artifact(
+                    scope.scope_id,
+                    CreateArtifactRequest.model_validate({
+                        "family": "memory",
+                        "content": {"entries": [{"kind": "preference", "text": "Use concise answers."}]},
+                    }),
+                )
+                memory_head = await owner.get_artifact(scope.scope_id, "memory", memory.artifact_id)
+                assert memory_head is not None
+                first_entry_id = memory_head.content["manifest"]["entries"][0]["entry_id"]
+                revised_memory = await owner.replace_artifact(
+                    scope.scope_id,
+                    "memory",
+                    memory.artifact_id,
+                    ReplaceArtifactRequest.model_validate({
+                        "content": {
+                            "entries": [
+                                {
+                                    "entry_id": first_entry_id,
+                                    "kind": "preference",
+                                    "text": "Use concise Chinese answers.",
+                                },
+                                {"kind": "constraint", "text": "Do not expose credentials."},
+                            ]
+                        }
+                    }),
+                    expected_etag='"revision:1"',
+                )
+                assert revised_memory.revision == 2
+                memory_entry_ids = {entry["entry_id"] for entry in revised_memory.content["manifest"]["entries"]}
+                assert len(memory_entry_ids) == 2
+                for entry_id in memory_entry_ids:
+                    relation = await access_control.artifact_owner(
+                        ResourceRef.artifact(
+                            scope.scope_id,
+                            family="memory",
+                            artifact_id=memory.artifact_id,
+                            selector=MemoryEntrySelector(entry_id=entry_id),
+                        )
+                    )
+                    assert relation is not None
+                    assert relation.owner == RECEIVER
+
+            async with _client(
+                _app(database, access_control, ADMIN, "admin-token", tmp_path / "base-share-scheduler.db"),
+                "admin-token",
+            ) as admin:
+                await admin.create_access_binding(
+                    CreateAccessBindingRequest.model_validate({
+                        "subject": {"type": VIEWER.type, "id": VIEWER.id},
+                        "resource": {
+                            "type": "artifact",
+                            "scope_id": scope.scope_id,
+                            "identity": {"family": "experience", "artifact_id": created.artifact_id},
+                            "selector": None,
+                        },
+                        "role": "artifact.viewer",
+                        "idempotency_key": "base-access-alice-viewer",
+                    })
+                )
+
+            async with _client(
+                _app(database, access_control, VIEWER, "viewer-token", tmp_path / "base-viewer-scheduler.db"),
+                "viewer-token",
+            ) as viewer:
+                head = await viewer.get_artifact(scope.scope_id, "experience", created.artifact_id)
+                assert head is not None
+                assert head.revision == 2
+                assert (
+                    await viewer.get_artifact_revision(scope.scope_id, "experience", created.artifact_id, 1)
+                ).revision == 1
+
+                with pytest.raises(ForbiddenResponseError):
+                    await viewer.list_artifacts(scope.scope_id, "experience", ListArtifactsRequest())
+                with pytest.raises(ForbiddenResponseError):
+                    await viewer.get_source(scope.scope_id, "content", source.source_id)
+                with pytest.raises(ForbiddenResponseError):
+                    await viewer.get_artifact(scope.scope_id, "memory", memory.artifact_id)
+                with pytest.raises(ForbiddenResponseError):
+                    await viewer.replace_artifact(
+                        scope.scope_id,
+                        "experience",
+                        created.artifact_id,
+                        ReplaceArtifactRequest.model_validate({
+                            "content": {
+                                "situation": "An exact viewer attempted a write.",
+                                "action": "Reject the replacement before it reaches the Runtime.",
+                                "outcome": "The Artifact remained unchanged.",
+                                "lesson": "Read grants never imply mutation rights.",
+                            }
+                        }),
+                        expected_etag='"revision:2"',
+                    )
 
     asyncio.run(scenario())
 

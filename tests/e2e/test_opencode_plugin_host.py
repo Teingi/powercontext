@@ -104,6 +104,9 @@ def test_opencode_run_normalizes_prompt_before_recall_and_capture(tmp_path: Path
             [
                 executable,
                 "run",
+                "--print-logs",
+                "--log-level",
+                "DEBUG",
                 "--dir",
                 str(project),
                 "--model",

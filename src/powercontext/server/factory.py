@@ -64,6 +64,7 @@ from powercontext.server.authz import (
 )
 from powercontext.server.authz.composition import open_builtin_access_control
 from powercontext.server.context import current_principal, current_request_id
+from powercontext.server.cursor_secret import resolve_cursor_secret
 from powercontext.server.mcp import mount_mcp
 from powercontext.server.metrics import CONTENT_TYPE_LATEST, HttpMetricsMiddleware, ServerMetrics
 from powercontext.server.middleware import AuthenticationMiddleware
@@ -143,6 +144,10 @@ def create_server_app(
             _log_insecure_remote_http_warning()
         if isinstance(config.database, SQLiteConfig) and config.database.is_in_memory:
             _log_in_memory_database_warning()
+        configured_cursor_secret = (
+            None if resolved.cursor_signing_secret is None else resolved.cursor_signing_secret.get_secret_value()
+        )
+        cursor_secret = resolve_cursor_secret(config.database, configured_cursor_secret)
         async with AsyncExitStack() as resources:
             active_access_control = configured_access_control
             if active_access_control is None and resolved.access.mode == "enforced":
@@ -174,6 +179,7 @@ def create_server_app(
                     tracing=resolved_tracing,
                     scheduled_source_runner=scheduled_source_runner,
                     scheduled_experience_runner=scheduled_experience_runner,
+                    cursor_secret=cursor_secret,
                 )
             )
             readiness_probe.bind(runtime)
