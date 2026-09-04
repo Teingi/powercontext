@@ -1975,6 +1975,328 @@ OPENAPI_SCHEMA: dict[str, JsonValue] = {
                 "x-powercontext-scope-mode": "selection",
             }
         },
+        "/v1/scopes/{scope_id}/sources": {
+            "post": {
+                "tags": ["sources"],
+                "summary": "Create a durable Source",
+                "description": "Persist one Source without "
+                "synchronously deriving "
+                "Artifacts. The Server "
+                "generates source_id.",
+                "operationId": "create_source",
+                "parameters": [
+                    {
+                        "name": "scope_id",
+                        "in": "path",
+                        "required": True,
+                        "schema": {"type": "string", "minLength": 1, "maxLength": 256, "pattern": ".*\\S.*"},
+                    }
+                ],
+                "requestBody": {
+                    "required": True,
+                    "content": {"application/json": {"schema": {"$ref": "#/components/schemas/CreateSourceRequest"}}},
+                },
+                "responses": {
+                    "201": {
+                        "description": "The Source was durably created.",
+                        "headers": {
+                            "Location": {"$ref": "#/components/headers/Location"},
+                            "X-PowerContext-Request-ID": {"$ref": "#/components/headers/RequestId"},
+                        },
+                        "content": {"application/json": {"schema": {"$ref": "#/components/schemas/SourceRecord"}}},
+                    },
+                    "401": {"$ref": "#/components/responses/Unauthorized"},
+                    "409": {"$ref": "#/components/responses/Conflict"},
+                    "422": {"$ref": "#/components/responses/InvalidRequest"},
+                    "503": {"$ref": "#/components/responses/Unavailable"},
+                    "500": {"$ref": "#/components/responses/InternalError"},
+                },
+            }
+        },
+        "/v1/scopes/{scope_id}/sources/{source_type}/{source_id}": {
+            "get": {
+                "tags": ["sources"],
+                "summary": "Get one exact Source",
+                "operationId": "get_source",
+                "parameters": [
+                    {
+                        "name": "scope_id",
+                        "in": "path",
+                        "required": True,
+                        "schema": {"type": "string", "minLength": 1, "maxLength": 256, "pattern": ".*\\S.*"},
+                    },
+                    {
+                        "name": "source_type",
+                        "in": "path",
+                        "required": True,
+                        "schema": {"type": "string", "enum": ["content"]},
+                    },
+                    {
+                        "name": "source_id",
+                        "in": "path",
+                        "required": True,
+                        "schema": {"type": "string", "minLength": 1, "maxLength": 256, "pattern": "^[\\x21-\\x7E]+$"},
+                    },
+                ],
+                "responses": {
+                    "200": {
+                        "description": "The exact Source.",
+                        "headers": {"X-PowerContext-Request-ID": {"$ref": "#/components/headers/RequestId"}},
+                        "content": {"application/json": {"schema": {"$ref": "#/components/schemas/SourceRecord"}}},
+                    },
+                    "401": {"$ref": "#/components/responses/Unauthorized"},
+                    "404": {"$ref": "#/components/responses/NotFound"},
+                    "422": {"$ref": "#/components/responses/InvalidRequest"},
+                    "503": {"$ref": "#/components/responses/Unavailable"},
+                    "500": {"$ref": "#/components/responses/InternalError"},
+                },
+            }
+        },
+        "/v1/scopes/{scope_id}/artifacts": {
+            "post": {
+                "tags": ["artifacts"],
+                "summary": "Create an Artifact",
+                "description": "Dispatch the "
+                "family-specific creation "
+                "command through the owning "
+                "Family writer and "
+                "atomically create revision "
+                "one, its derived Family "
+                "state, and its system "
+                "provenance Source. Handoff "
+                "is the Scope singleton: "
+                "Create returns 409 when it "
+                "already exists and callers "
+                "must use Replace to update "
+                "it.",
+                "operationId": "create_artifact",
+                "parameters": [
+                    {
+                        "name": "scope_id",
+                        "in": "path",
+                        "required": True,
+                        "schema": {"type": "string", "minLength": 1, "maxLength": 256, "pattern": ".*\\S.*"},
+                    }
+                ],
+                "requestBody": {
+                    "required": True,
+                    "content": {"application/json": {"schema": {"$ref": "#/components/schemas/CreateArtifactRequest"}}},
+                },
+                "responses": {
+                    "201": {
+                        "description": "Artifact revision one was committed.",
+                        "headers": {
+                            "Location": {"$ref": "#/components/headers/Location"},
+                            "ETag": {"$ref": "#/components/headers/ArtifactETag"},
+                            "X-PowerContext-Request-ID": {"$ref": "#/components/headers/RequestId"},
+                        },
+                        "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ArtifactCreated"}}},
+                    },
+                    "401": {"$ref": "#/components/responses/Unauthorized"},
+                    "409": {"$ref": "#/components/responses/Conflict"},
+                    "422": {"$ref": "#/components/responses/InvalidRequest"},
+                    "503": {"$ref": "#/components/responses/Unavailable"},
+                    "500": {"$ref": "#/components/responses/InternalError"},
+                },
+            }
+        },
+        "/v1/scopes/{scope_id}/artifacts/{family}": {
+            "get": {
+                "tags": ["artifacts"],
+                "summary": "List current Artifact heads",
+                "description": "List current heads for exactly one built-in Artifact family.",
+                "operationId": "list_artifacts",
+                "parameters": [
+                    {
+                        "name": "scope_id",
+                        "in": "path",
+                        "required": True,
+                        "schema": {"type": "string", "minLength": 1, "maxLength": 256, "pattern": ".*\\S.*"},
+                    },
+                    {
+                        "name": "family",
+                        "in": "path",
+                        "required": True,
+                        "schema": {"type": "string", "enum": ["memory", "experience", "skill", "handoff"]},
+                    },
+                    {
+                        "name": "limit",
+                        "in": "query",
+                        "required": False,
+                        "schema": {"type": "integer", "minimum": 1, "maximum": 100, "default": 50},
+                    },
+                    {
+                        "name": "cursor",
+                        "in": "query",
+                        "required": False,
+                        "schema": {"type": "string", "minLength": 1, "maxLength": 4096},
+                    },
+                ],
+                "responses": {
+                    "200": {
+                        "description": "One stable page of current Artifact heads.",
+                        "headers": {"X-PowerContext-Request-ID": {"$ref": "#/components/headers/RequestId"}},
+                        "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ArtifactPage"}}},
+                    },
+                    "400": {"$ref": "#/components/responses/BadRequest"},
+                    "401": {"$ref": "#/components/responses/Unauthorized"},
+                    "410": {"$ref": "#/components/responses/CursorExpired"},
+                    "422": {"$ref": "#/components/responses/InvalidRequest"},
+                    "503": {"$ref": "#/components/responses/Unavailable"},
+                    "500": {"$ref": "#/components/responses/InternalError"},
+                },
+            }
+        },
+        "/v1/scopes/{scope_id}/artifacts/{family}/{artifact_id}": {
+            "get": {
+                "tags": ["artifacts"],
+                "summary": "Get the current Artifact head",
+                "operationId": "get_artifact",
+                "parameters": [
+                    {
+                        "name": "scope_id",
+                        "in": "path",
+                        "required": True,
+                        "schema": {"type": "string", "minLength": 1, "maxLength": 256, "pattern": ".*\\S.*"},
+                    },
+                    {
+                        "name": "family",
+                        "in": "path",
+                        "required": True,
+                        "schema": {"type": "string", "enum": ["memory", "experience", "skill", "handoff"]},
+                    },
+                    {
+                        "name": "artifact_id",
+                        "in": "path",
+                        "required": True,
+                        "schema": {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[\\x21-\\x7E]+$"},
+                    },
+                    {
+                        "name": "If-None-Match",
+                        "in": "header",
+                        "required": False,
+                        "schema": {"type": "string", "minLength": 1},
+                    },
+                ],
+                "responses": {
+                    "200": {
+                        "description": "The current visible Artifact head.",
+                        "headers": {
+                            "ETag": {"$ref": "#/components/headers/ArtifactETag"},
+                            "X-PowerContext-Request-ID": {"$ref": "#/components/headers/RequestId"},
+                        },
+                        "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ArtifactRevision"}}},
+                    },
+                    "304": {
+                        "description": "If-None-Match identifies the current Artifact head.",
+                        "headers": {
+                            "ETag": {"$ref": "#/components/headers/ArtifactETag"},
+                            "X-PowerContext-Request-ID": {"$ref": "#/components/headers/RequestId"},
+                        },
+                    },
+                    "401": {"$ref": "#/components/responses/Unauthorized"},
+                    "404": {"$ref": "#/components/responses/NotFound"},
+                    "422": {"$ref": "#/components/responses/InvalidRequest"},
+                    "503": {"$ref": "#/components/responses/Unavailable"},
+                    "500": {"$ref": "#/components/responses/InternalError"},
+                },
+            },
+            "put": {
+                "tags": ["artifacts"],
+                "summary": "Replace the current Artifact head",
+                "description": "Commit a complete next revision when If-Match identifies the current head.",
+                "operationId": "replace_artifact",
+                "parameters": [
+                    {
+                        "name": "scope_id",
+                        "in": "path",
+                        "required": True,
+                        "schema": {"type": "string", "minLength": 1, "maxLength": 256, "pattern": ".*\\S.*"},
+                    },
+                    {
+                        "name": "family",
+                        "in": "path",
+                        "required": True,
+                        "schema": {"type": "string", "enum": ["memory", "experience", "skill", "handoff"]},
+                    },
+                    {
+                        "name": "artifact_id",
+                        "in": "path",
+                        "required": True,
+                        "schema": {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[\\x21-\\x7E]+$"},
+                    },
+                    {
+                        "name": "If-Match",
+                        "in": "header",
+                        "required": True,
+                        "schema": {"type": "string", "minLength": 1},
+                    },
+                ],
+                "requestBody": {
+                    "required": True,
+                    "content": {
+                        "application/json": {"schema": {"$ref": "#/components/schemas/ReplaceArtifactRequest"}}
+                    },
+                },
+                "responses": {
+                    "200": {
+                        "description": "The complete replacement was committed as the next revision.",
+                        "headers": {
+                            "ETag": {"$ref": "#/components/headers/ArtifactETag"},
+                            "X-PowerContext-Request-ID": {"$ref": "#/components/headers/RequestId"},
+                        },
+                        "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ArtifactRevision"}}},
+                    },
+                    "401": {"$ref": "#/components/responses/Unauthorized"},
+                    "404": {"$ref": "#/components/responses/NotFound"},
+                    "412": {"$ref": "#/components/responses/PreconditionFailed"},
+                    "422": {"$ref": "#/components/responses/InvalidRequest"},
+                    "428": {"$ref": "#/components/responses/PreconditionRequired"},
+                    "503": {"$ref": "#/components/responses/Unavailable"},
+                    "500": {"$ref": "#/components/responses/InternalError"},
+                },
+            },
+        },
+        "/v1/scopes/{scope_id}/artifacts/{family}/{artifact_id}/revisions/{revision}": {
+            "get": {
+                "tags": ["artifacts"],
+                "summary": "Get one exact immutable Artifact revision",
+                "operationId": "get_artifact_revision",
+                "parameters": [
+                    {
+                        "name": "scope_id",
+                        "in": "path",
+                        "required": True,
+                        "schema": {"type": "string", "minLength": 1, "maxLength": 256, "pattern": ".*\\S.*"},
+                    },
+                    {
+                        "name": "family",
+                        "in": "path",
+                        "required": True,
+                        "schema": {"type": "string", "enum": ["memory", "experience", "skill", "handoff"]},
+                    },
+                    {
+                        "name": "artifact_id",
+                        "in": "path",
+                        "required": True,
+                        "schema": {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[\\x21-\\x7E]+$"},
+                    },
+                    {"name": "revision", "in": "path", "required": True, "schema": {"type": "integer", "minimum": 1}},
+                ],
+                "responses": {
+                    "200": {
+                        "description": "The exact immutable Artifact revision.",
+                        "headers": {"X-PowerContext-Request-ID": {"$ref": "#/components/headers/RequestId"}},
+                        "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ArtifactRevision"}}},
+                    },
+                    "401": {"$ref": "#/components/responses/Unauthorized"},
+                    "404": {"$ref": "#/components/responses/NotFound"},
+                    "422": {"$ref": "#/components/responses/InvalidRequest"},
+                    "503": {"$ref": "#/components/responses/Unavailable"},
+                    "500": {"$ref": "#/components/responses/InternalError"},
+                },
+            }
+        },
     },
     "components": {
         "schemas": {
@@ -1994,6 +2316,62 @@ OPENAPI_SCHEMA: dict[str, JsonValue] = {
                 "additionalProperties": False,
                 "type": "object",
                 "required": ["scope_id", "boundary_source", "objective"],
+            },
+            "ArtifactCollectionItem": {
+                "properties": {
+                    "scope_id": {"type": "string", "maxLength": 256, "minLength": 1, "pattern": ".*\\S.*"},
+                    "family": {"$ref": "#/components/schemas/BaseArtifactFamily"},
+                    "artifact_id": {"type": "string", "maxLength": 128, "minLength": 1, "pattern": "^[\\x21-\\x7E]+$"},
+                    "revision": {"type": "integer", "minimum": 1.0},
+                    "sources": {"items": {"$ref": "#/components/schemas/SourceTypeReference"}, "type": "array"},
+                    "artifacts": {"items": {"$ref": "#/components/schemas/ArtifactReference"}, "type": "array"},
+                    "content_digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+                },
+                "type": "object",
+                "required": ["scope_id", "family", "artifact_id", "revision", "sources", "artifacts", "content_digest"],
+            },
+            "ArtifactCreated": {
+                "properties": {
+                    "scope_id": {"type": "string", "maxLength": 256, "minLength": 1, "pattern": ".*\\S.*"},
+                    "family": {"$ref": "#/components/schemas/BaseArtifactFamily"},
+                    "artifact_id": {"type": "string", "maxLength": 128, "minLength": 1, "pattern": "^[\\x21-\\x7E]+$"},
+                    "revision": {"type": "integer", "minimum": 1.0},
+                    "sources": {"items": {"$ref": "#/components/schemas/SourceTypeReference"}, "type": "array"},
+                    "artifacts": {"items": {"$ref": "#/components/schemas/ArtifactReference"}, "type": "array"},
+                },
+                "type": "object",
+                "required": ["scope_id", "family", "artifact_id", "revision", "sources", "artifacts"],
+            },
+            "ArtifactPage": {
+                "properties": {
+                    "items": {"items": {"$ref": "#/components/schemas/ArtifactCollectionItem"}, "type": "array"},
+                    "next_cursor": {"type": "string", "nullable": True},
+                },
+                "type": "object",
+                "required": ["items", "next_cursor"],
+            },
+            "ArtifactRevision": {
+                "properties": {
+                    "scope_id": {"type": "string", "maxLength": 256, "minLength": 1, "pattern": ".*\\S.*"},
+                    "family": {"$ref": "#/components/schemas/BaseArtifactFamily"},
+                    "artifact_id": {"type": "string", "maxLength": 128, "minLength": 1, "pattern": "^[\\x21-\\x7E]+$"},
+                    "revision": {"type": "integer", "minimum": 1.0},
+                    "content": {"additionalProperties": True, "type": "object"},
+                    "sources": {"items": {"$ref": "#/components/schemas/SourceTypeReference"}, "type": "array"},
+                    "artifacts": {"items": {"$ref": "#/components/schemas/ArtifactReference"}, "type": "array"},
+                    "content_digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+                },
+                "type": "object",
+                "required": [
+                    "scope_id",
+                    "family",
+                    "artifact_id",
+                    "revision",
+                    "content",
+                    "sources",
+                    "artifacts",
+                    "content_digest",
+                ],
             },
             "ArtifactReference": {
                 "properties": {
@@ -4674,6 +5052,238 @@ OPENAPI_SCHEMA: dict[str, JsonValue] = {
                 "type": "object",
                 "required": ["hits"],
             },
+            "CreateArtifactRequest": {
+                "oneOf": [
+                    {"$ref": "#/components/schemas/CreateMemoryArtifactRequest"},
+                    {"$ref": "#/components/schemas/CreateExperienceArtifactRequest"},
+                    {"$ref": "#/components/schemas/CreateSkillArtifactRequest"},
+                    {"$ref": "#/components/schemas/CreateHandoffArtifactRequest"},
+                ],
+                "discriminator": {
+                    "propertyName": "family",
+                    "mapping": {
+                        "memory": "#/components/schemas/CreateMemoryArtifactRequest",
+                        "experience": "#/components/schemas/CreateExperienceArtifactRequest",
+                        "skill": "#/components/schemas/CreateSkillArtifactRequest",
+                        "handoff": "#/components/schemas/CreateHandoffArtifactRequest",
+                    },
+                },
+            },
+            "CreateMemoryArtifactRequest": {
+                "properties": {
+                    "family": {"type": "string", "enum": ["memory"]},
+                    "content": {"$ref": "#/components/schemas/CreateMemoryArtifactContent"},
+                },
+                "additionalProperties": False,
+                "type": "object",
+                "required": ["family", "content"],
+            },
+            "CreateExperienceArtifactRequest": {
+                "properties": {
+                    "family": {"type": "string", "enum": ["experience"]},
+                    "content": {"$ref": "#/components/schemas/ExperienceProposal"},
+                },
+                "additionalProperties": False,
+                "type": "object",
+                "required": ["family", "content"],
+            },
+            "CreateSkillArtifactRequest": {
+                "properties": {
+                    "family": {"type": "string", "enum": ["skill"]},
+                    "content": {"$ref": "#/components/schemas/SkillProposal"},
+                },
+                "additionalProperties": False,
+                "type": "object",
+                "required": ["family", "content"],
+            },
+            "CreateHandoffArtifactRequest": {
+                "properties": {
+                    "family": {"type": "string", "enum": ["handoff"]},
+                    "content": {"$ref": "#/components/schemas/HandoffContent"},
+                },
+                "additionalProperties": False,
+                "type": "object",
+                "required": ["family", "content"],
+            },
+            "CreateMemoryArtifactContent": {
+                "properties": {
+                    "entries": {
+                        "items": {"$ref": "#/components/schemas/CreateMemoryArtifactEntry"},
+                        "type": "array",
+                        "maxItems": 100,
+                        "minItems": 1,
+                    }
+                },
+                "additionalProperties": False,
+                "type": "object",
+                "required": ["entries"],
+            },
+            "CreateMemoryArtifactEntry": {
+                "properties": {
+                    "kind": {
+                        "type": "string",
+                        "maxLength": 128,
+                        "minLength": 1,
+                        "pattern": ".*\\S.*",
+                        "description": "Open "
+                        "application-defined "
+                        "Memory "
+                        "kind. "
+                        "Recommended "
+                        "values "
+                        "are "
+                        "fact, "
+                        "preference, "
+                        "decision, "
+                        "constraint, "
+                        "and "
+                        "working_note. "
+                        "The "
+                        "Server "
+                        "validates "
+                        "and "
+                        "preserves "
+                        "the "
+                        "supplied "
+                        "value; "
+                        "it "
+                        "never "
+                        "guesses "
+                        "or "
+                        "replaces "
+                        "it.",
+                    },
+                    "text": {
+                        "type": "string",
+                        "maxLength": 8192,
+                        "minLength": 1,
+                        "pattern": ".*\\S.*",
+                        "description": "Durable "
+                        "non-empty "
+                        "Memory "
+                        "entry "
+                        "text "
+                        "used "
+                        "to "
+                        "create "
+                        "the "
+                        "Entry "
+                        "Version "
+                        "and "
+                        "search "
+                        "projection.",
+                    },
+                },
+                "additionalProperties": False,
+                "type": "object",
+                "required": ["kind", "text"],
+            },
+            "CreateSourceRequest": {
+                "properties": {
+                    "source_type": {"type": "string", "enum": ["content"], "default": "content"},
+                    "content": {"description": "JSON value persisted by the built-in content Source adapter."},
+                },
+                "additionalProperties": False,
+                "type": "object",
+                "required": ["content"],
+            },
+            "ListArtifactsRequest": {
+                "properties": {
+                    "limit": {"type": "integer", "maximum": 100.0, "minimum": 1.0, "default": 50},
+                    "cursor": {"type": "string", "maxLength": 4096, "minLength": 1, "nullable": True},
+                },
+                "additionalProperties": False,
+                "type": "object",
+            },
+            "ReplaceArtifactRequest": {
+                "oneOf": [
+                    {"$ref": "#/components/schemas/ReplaceMemoryArtifactRequest"},
+                    {"$ref": "#/components/schemas/ReplaceExperienceArtifactRequest"},
+                    {"$ref": "#/components/schemas/ReplaceSkillArtifactRequest"},
+                    {"$ref": "#/components/schemas/ReplaceHandoffArtifactRequest"},
+                ]
+            },
+            "ReplaceMemoryArtifactRequest": {
+                "properties": {"content": {"$ref": "#/components/schemas/ReplaceMemoryArtifactContent"}},
+                "additionalProperties": False,
+                "type": "object",
+                "required": ["content"],
+            },
+            "ReplaceMemoryArtifactContent": {
+                "properties": {
+                    "entries": {
+                        "items": {"$ref": "#/components/schemas/ReplaceMemoryArtifactEntry"},
+                        "type": "array",
+                        "maxItems": 100,
+                        "minItems": 1,
+                    }
+                },
+                "additionalProperties": False,
+                "type": "object",
+                "required": ["entries"],
+            },
+            "ReplaceMemoryArtifactEntry": {
+                "properties": {
+                    "entry_id": {
+                        "type": "string",
+                        "maxLength": 128,
+                        "minLength": 1,
+                        "pattern": "^[\\x21-\\x7E]+$",
+                        "description": "Existing logical entry to revise. Omit to append a new entry.",
+                        "nullable": True,
+                    },
+                    "kind": {
+                        "type": "string",
+                        "maxLength": 128,
+                        "minLength": 1,
+                        "pattern": ".*\\S.*",
+                        "description": "Open application-defined kind; the Server preserves the supplied value.",
+                    },
+                    "text": {"type": "string", "maxLength": 8192, "minLength": 1, "pattern": ".*\\S.*"},
+                },
+                "additionalProperties": False,
+                "type": "object",
+                "required": ["kind", "text"],
+            },
+            "ReplaceExperienceArtifactRequest": {
+                "properties": {"content": {"$ref": "#/components/schemas/ExperienceProposal"}},
+                "additionalProperties": False,
+                "type": "object",
+                "required": ["content"],
+            },
+            "ReplaceSkillArtifactRequest": {
+                "properties": {"content": {"$ref": "#/components/schemas/SkillProposal"}},
+                "additionalProperties": False,
+                "type": "object",
+                "required": ["content"],
+            },
+            "ReplaceHandoffArtifactRequest": {
+                "properties": {"content": {"$ref": "#/components/schemas/HandoffContent"}},
+                "additionalProperties": False,
+                "type": "object",
+                "required": ["content"],
+            },
+            "SourceRecord": {
+                "properties": {
+                    "scope_id": {"type": "string", "maxLength": 256, "minLength": 1, "pattern": ".*\\S.*"},
+                    "source_type": {"type": "string", "enum": ["content"]},
+                    "source_id": {"type": "string", "maxLength": 256, "minLength": 1, "pattern": "^[\\x21-\\x7E]+$"},
+                    "content": {"description": "Persisted canonical JSON content."},
+                    "position": {"type": "integer", "minimum": 1.0},
+                    "content_digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+                },
+                "type": "object",
+                "required": ["scope_id", "source_type", "source_id", "content", "position", "content_digest"],
+            },
+            "SourceTypeReference": {
+                "properties": {
+                    "source_type": {"type": "string", "enum": ["content"]},
+                    "source_id": {"type": "string", "maxLength": 256, "minLength": 1, "pattern": "^[\\x21-\\x7E]+$"},
+                },
+                "additionalProperties": False,
+                "type": "object",
+                "required": ["source_type", "source_id"],
+            },
             "SourceReference": {
                 "properties": {
                     "name": {"type": "string", "description": "Stable Source type."},
@@ -4684,6 +5294,7 @@ OPENAPI_SCHEMA: dict[str, JsonValue] = {
                 "required": ["name", "source_id"],
             },
             "CaptureStatus": {"type": "string", "enum": ["accepted"]},
+            "BaseArtifactFamily": {"type": "string", "enum": ["memory", "experience", "skill", "handoff"]},
             "StatsPeriod": {"type": "string", "enum": ["today", "7d", "30d"]},
             "CandidateFamily": {"type": "string", "enum": ["experience", "skill"]},
             "ExternalSkillInstallationScope": {"type": "string", "enum": ["user", "project", "plugin"]},
@@ -4707,6 +5318,16 @@ OPENAPI_SCHEMA: dict[str, JsonValue] = {
             "PreparedHandoffSchema": {"type": "string", "enum": ["powercontext.prepared-handoff.v1"]},
         },
         "responses": {
+            "BadRequest": {
+                "description": "The request query or pagination cursor is invalid.",
+                "headers": {"X-PowerContext-Request-ID": {"$ref": "#/components/headers/RequestId"}},
+                "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ErrorResponse"}}},
+            },
+            "CursorExpired": {
+                "description": "The pagination cursor has expired.",
+                "headers": {"X-PowerContext-Request-ID": {"$ref": "#/components/headers/RequestId"}},
+                "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ErrorResponse"}}},
+            },
             "Unauthorized": {
                 "description": "A valid bearer token is required by this Server deployment.",
                 "headers": {
@@ -4717,6 +5338,16 @@ OPENAPI_SCHEMA: dict[str, JsonValue] = {
             },
             "Conflict": {
                 "description": "The command conflicts with current immutable state.",
+                "headers": {"X-PowerContext-Request-ID": {"$ref": "#/components/headers/RequestId"}},
+                "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ErrorResponse"}}},
+            },
+            "PreconditionFailed": {
+                "description": "If-Match does not identify the current Artifact head.",
+                "headers": {"X-PowerContext-Request-ID": {"$ref": "#/components/headers/RequestId"}},
+                "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ErrorResponse"}}},
+            },
+            "PreconditionRequired": {
+                "description": "A current Artifact ETag is required in If-Match.",
                 "headers": {"X-PowerContext-Request-ID": {"$ref": "#/components/headers/RequestId"}},
                 "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ErrorResponse"}}},
             },
@@ -4731,7 +5362,7 @@ OPENAPI_SCHEMA: dict[str, JsonValue] = {
                 "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ErrorResponse"}}},
             },
             "NotFound": {
-                "description": "The requested immutable Memory value was not found.",
+                "description": "The requested durable value was not found or is not observable.",
                 "headers": {"X-PowerContext-Request-ID": {"$ref": "#/components/headers/RequestId"}},
                 "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ErrorResponse"}}},
             },
@@ -4747,12 +5378,22 @@ OPENAPI_SCHEMA: dict[str, JsonValue] = {
             },
         },
         "headers": {
+            "ArtifactETag": {
+                "description": "Opaque strong validator for the "
+                "current Artifact head. Clients must "
+                "replay it verbatim.",
+                "schema": {"type": "string", "minLength": 1},
+            },
             "BearerChallenge": {
                 "description": "Authentication scheme required by the Server.",
                 "schema": {"type": "string", "example": "Bearer"},
             },
             "RequestId": {
                 "description": "Opaque identifier for correlating one request.",
+                "schema": {"type": "string"},
+            },
+            "Location": {
+                "description": "URI of the newly created Source or Artifact head.",
                 "schema": {"type": "string"},
             },
         },

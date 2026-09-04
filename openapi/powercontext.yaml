@@ -2145,6 +2145,386 @@ paths:
           $ref: "#/components/responses/Unavailable"
         "500":
           $ref: "#/components/responses/InternalError"
+  /v1/scopes/{scope_id}/sources:
+    post:
+      tags: [sources]
+      summary: Create a durable Source
+      description: Persist one Source without synchronously deriving Artifacts. The Server generates source_id.
+      operationId: create_source
+      parameters:
+        - name: scope_id
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 256
+            pattern: '.*\S.*'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateSourceRequest"
+      responses:
+        "201":
+          description: The Source was durably created.
+          headers:
+            Location:
+              $ref: "#/components/headers/Location"
+            X-PowerContext-Request-ID:
+              $ref: "#/components/headers/RequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SourceRecord"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/InvalidRequest"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /v1/scopes/{scope_id}/sources/{source_type}/{source_id}:
+    get:
+      tags: [sources]
+      summary: Get one exact Source
+      operationId: get_source
+      parameters:
+        - name: scope_id
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 256
+            pattern: '.*\S.*'
+        - name: source_type
+          in: path
+          required: true
+          schema:
+            type: string
+            enum: [content]
+        - name: source_id
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 256
+            pattern: '^[\x21-\x7E]+$'
+      responses:
+        "200":
+          description: The exact Source.
+          headers:
+            X-PowerContext-Request-ID:
+              $ref: "#/components/headers/RequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SourceRecord"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/InvalidRequest"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /v1/scopes/{scope_id}/artifacts:
+    post:
+      tags: [artifacts]
+      summary: Create an Artifact
+      description: >-
+        Dispatch the family-specific creation command through the owning Family writer and atomically create
+        revision one, its derived Family state, and its system provenance Source. Handoff is the Scope singleton:
+        Create returns 409 when it already exists and callers must use Replace to update it.
+      operationId: create_artifact
+      parameters:
+        - name: scope_id
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 256
+            pattern: '.*\S.*'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateArtifactRequest"
+      responses:
+        "201":
+          description: Artifact revision one was committed.
+          headers:
+            Location:
+              $ref: "#/components/headers/Location"
+            ETag:
+              $ref: "#/components/headers/ArtifactETag"
+            X-PowerContext-Request-ID:
+              $ref: "#/components/headers/RequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ArtifactCreated"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/InvalidRequest"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /v1/scopes/{scope_id}/artifacts/{family}:
+    get:
+      tags: [artifacts]
+      summary: List current Artifact heads
+      description: List current heads for exactly one built-in Artifact family.
+      operationId: list_artifacts
+      parameters:
+        - name: scope_id
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 256
+            pattern: '.*\S.*'
+        - name: family
+          in: path
+          required: true
+          schema:
+            type: string
+            enum: [memory, experience, skill, handoff]
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 50
+        - name: cursor
+          in: query
+          required: false
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 4096
+      responses:
+        "200":
+          description: One stable page of current Artifact heads.
+          headers:
+            X-PowerContext-Request-ID:
+              $ref: "#/components/headers/RequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ArtifactPage"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "410":
+          $ref: "#/components/responses/CursorExpired"
+        "422":
+          $ref: "#/components/responses/InvalidRequest"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /v1/scopes/{scope_id}/artifacts/{family}/{artifact_id}:
+    get:
+      tags: [artifacts]
+      summary: Get the current Artifact head
+      operationId: get_artifact
+      parameters:
+        - name: scope_id
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 256
+            pattern: '.*\S.*'
+        - name: family
+          in: path
+          required: true
+          schema:
+            type: string
+            enum: [memory, experience, skill, handoff]
+        - name: artifact_id
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 128
+            pattern: '^[\x21-\x7E]+$'
+        - name: If-None-Match
+          in: header
+          required: false
+          schema:
+            type: string
+            minLength: 1
+      responses:
+        "200":
+          description: The current visible Artifact head.
+          headers:
+            ETag:
+              $ref: "#/components/headers/ArtifactETag"
+            X-PowerContext-Request-ID:
+              $ref: "#/components/headers/RequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ArtifactRevision"
+        "304":
+          description: If-None-Match identifies the current Artifact head.
+          headers:
+            ETag:
+              $ref: "#/components/headers/ArtifactETag"
+            X-PowerContext-Request-ID:
+              $ref: "#/components/headers/RequestId"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/InvalidRequest"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    put:
+      tags: [artifacts]
+      summary: Replace the current Artifact head
+      description: Commit a complete next revision when If-Match identifies the current head.
+      operationId: replace_artifact
+      parameters:
+        - name: scope_id
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 256
+            pattern: '.*\S.*'
+        - name: family
+          in: path
+          required: true
+          schema:
+            type: string
+            enum: [memory, experience, skill, handoff]
+        - name: artifact_id
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 128
+            pattern: '^[\x21-\x7E]+$'
+        - name: If-Match
+          in: header
+          required: true
+          schema:
+            type: string
+            minLength: 1
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ReplaceArtifactRequest"
+      responses:
+        "200":
+          description: The complete replacement was committed as the next revision.
+          headers:
+            ETag:
+              $ref: "#/components/headers/ArtifactETag"
+            X-PowerContext-Request-ID:
+              $ref: "#/components/headers/RequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ArtifactRevision"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "412":
+          $ref: "#/components/responses/PreconditionFailed"
+        "422":
+          $ref: "#/components/responses/InvalidRequest"
+        "428":
+          $ref: "#/components/responses/PreconditionRequired"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /v1/scopes/{scope_id}/artifacts/{family}/{artifact_id}/revisions/{revision}:
+    get:
+      tags: [artifacts]
+      summary: Get one exact immutable Artifact revision
+      operationId: get_artifact_revision
+      parameters:
+        - name: scope_id
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 256
+            pattern: '.*\S.*'
+        - name: family
+          in: path
+          required: true
+          schema:
+            type: string
+            enum: [memory, experience, skill, handoff]
+        - name: artifact_id
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 128
+            pattern: '^[\x21-\x7E]+$'
+        - name: revision
+          in: path
+          required: true
+          schema:
+            type: integer
+            minimum: 1
+      responses:
+        "200":
+          description: The exact immutable Artifact revision.
+          headers:
+            X-PowerContext-Request-ID:
+              $ref: "#/components/headers/RequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ArtifactRevision"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/InvalidRequest"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+        "500":
+          $ref: "#/components/responses/InternalError"
 components:
   securitySchemes:
     BearerAuth:
@@ -2156,6 +2536,11 @@ components:
       scheme: bearer
       description: Per-target credential issued once during remote Receiver enrollment.
   headers:
+    ArtifactETag:
+      description: Opaque strong validator for the current Artifact head. Clients must replay it verbatim.
+      schema:
+        type: string
+        minLength: 1
     BearerChallenge:
       description: Authentication scheme required by the Server.
       schema:
@@ -2165,7 +2550,29 @@ components:
       description: Opaque identifier for correlating one request.
       schema:
         type: string
+    Location:
+      description: URI of the newly created Source or Artifact head.
+      schema:
+        type: string
   responses:
+    BadRequest:
+      description: The request query or pagination cursor is invalid.
+      headers:
+        X-PowerContext-Request-ID:
+          $ref: "#/components/headers/RequestId"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    CursorExpired:
+      description: The pagination cursor has expired.
+      headers:
+        X-PowerContext-Request-ID:
+          $ref: "#/components/headers/RequestId"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
     Unauthorized:
       description: A valid bearer token is required by this Server deployment.
       headers:
@@ -2179,6 +2586,24 @@ components:
             $ref: "#/components/schemas/ErrorResponse"
     Conflict:
       description: The command conflicts with current immutable state.
+      headers:
+        X-PowerContext-Request-ID:
+          $ref: "#/components/headers/RequestId"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    PreconditionFailed:
+      description: If-Match does not identify the current Artifact head.
+      headers:
+        X-PowerContext-Request-ID:
+          $ref: "#/components/headers/RequestId"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    PreconditionRequired:
+      description: A current Artifact ETag is required in If-Match.
       headers:
         X-PowerContext-Request-ID:
           $ref: "#/components/headers/RequestId"
@@ -2205,7 +2630,7 @@ components:
           schema:
             $ref: "#/components/schemas/ErrorResponse"
     NotFound:
-      description: The requested immutable Memory value was not found.
+      description: The requested durable value was not found or is not observable.
       headers:
         X-PowerContext-Request-ID:
           $ref: "#/components/headers/RequestId"
@@ -2260,6 +2685,107 @@ components:
           minimum: 512
           maximum: 32768
           default: 8000
+    ArtifactCollectionItem:
+      type: object
+      required: [scope_id, family, artifact_id, revision, sources, artifacts, content_digest]
+      properties:
+        scope_id:
+          type: string
+          minLength: 1
+          maxLength: 256
+          pattern: '.*\S.*'
+        family:
+          $ref: "#/components/schemas/BaseArtifactFamily"
+        artifact_id:
+          type: string
+          minLength: 1
+          maxLength: 128
+          pattern: '^[\x21-\x7E]+$'
+        revision:
+          type: integer
+          minimum: 1
+        sources:
+          type: array
+          items:
+            $ref: "#/components/schemas/SourceTypeReference"
+        artifacts:
+          type: array
+          items:
+            $ref: "#/components/schemas/ArtifactReference"
+        content_digest:
+          type: string
+          pattern: '^sha256:[0-9a-f]{64}$'
+    ArtifactCreated:
+      type: object
+      required: [scope_id, family, artifact_id, revision, sources, artifacts]
+      properties:
+        scope_id:
+          type: string
+          minLength: 1
+          maxLength: 256
+          pattern: '.*\S.*'
+        family:
+          $ref: "#/components/schemas/BaseArtifactFamily"
+        artifact_id:
+          type: string
+          minLength: 1
+          maxLength: 128
+          pattern: '^[\x21-\x7E]+$'
+        revision:
+          type: integer
+          minimum: 1
+        sources:
+          type: array
+          items:
+            $ref: "#/components/schemas/SourceTypeReference"
+        artifacts:
+          type: array
+          items:
+            $ref: "#/components/schemas/ArtifactReference"
+    ArtifactPage:
+      type: object
+      required: [items, next_cursor]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/ArtifactCollectionItem"
+        next_cursor:
+          type: string
+          nullable: true
+    ArtifactRevision:
+      type: object
+      required: [scope_id, family, artifact_id, revision, content, sources, artifacts, content_digest]
+      properties:
+        scope_id:
+          type: string
+          minLength: 1
+          maxLength: 256
+          pattern: '.*\S.*'
+        family:
+          $ref: "#/components/schemas/BaseArtifactFamily"
+        artifact_id:
+          type: string
+          minLength: 1
+          maxLength: 128
+          pattern: '^[\x21-\x7E]+$'
+        revision:
+          type: integer
+          minimum: 1
+        content:
+          type: object
+          additionalProperties: true
+        sources:
+          type: array
+          items:
+            $ref: "#/components/schemas/SourceTypeReference"
+        artifacts:
+          type: array
+          items:
+            $ref: "#/components/schemas/ArtifactReference"
+        content_digest:
+          type: string
+          pattern: '^sha256:[0-9a-f]{64}$'
     ArtifactReference:
       type: object
       additionalProperties: false
@@ -5696,6 +6222,220 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/SearchMemoryHit"
+    CreateArtifactRequest:
+      oneOf:
+        - $ref: "#/components/schemas/CreateMemoryArtifactRequest"
+        - $ref: "#/components/schemas/CreateExperienceArtifactRequest"
+        - $ref: "#/components/schemas/CreateSkillArtifactRequest"
+        - $ref: "#/components/schemas/CreateHandoffArtifactRequest"
+      discriminator:
+        propertyName: family
+        mapping:
+          memory: "#/components/schemas/CreateMemoryArtifactRequest"
+          experience: "#/components/schemas/CreateExperienceArtifactRequest"
+          skill: "#/components/schemas/CreateSkillArtifactRequest"
+          handoff: "#/components/schemas/CreateHandoffArtifactRequest"
+    CreateMemoryArtifactRequest:
+      type: object
+      additionalProperties: false
+      required: [family, content]
+      properties:
+        family:
+          type: string
+          enum: [memory]
+        content:
+          $ref: "#/components/schemas/CreateMemoryArtifactContent"
+    CreateExperienceArtifactRequest:
+      type: object
+      additionalProperties: false
+      required: [family, content]
+      properties:
+        family:
+          type: string
+          enum: [experience]
+        content:
+          $ref: "#/components/schemas/ExperienceProposal"
+    CreateSkillArtifactRequest:
+      type: object
+      additionalProperties: false
+      required: [family, content]
+      properties:
+        family:
+          type: string
+          enum: [skill]
+        content:
+          $ref: "#/components/schemas/SkillProposal"
+    CreateHandoffArtifactRequest:
+      type: object
+      additionalProperties: false
+      required: [family, content]
+      properties:
+        family:
+          type: string
+          enum: [handoff]
+        content:
+          $ref: "#/components/schemas/HandoffContent"
+    CreateMemoryArtifactContent:
+      type: object
+      additionalProperties: false
+      required: [entries]
+      properties:
+        entries:
+          type: array
+          minItems: 1
+          maxItems: 100
+          items:
+            $ref: "#/components/schemas/CreateMemoryArtifactEntry"
+    CreateMemoryArtifactEntry:
+      type: object
+      additionalProperties: false
+      required: [kind, text]
+      properties:
+        kind:
+          type: string
+          minLength: 1
+          maxLength: 128
+          pattern: '.*\S.*'
+          description: >-
+            Open application-defined Memory kind. Recommended values are fact, preference, decision, constraint,
+            and working_note. The Server validates and preserves the supplied value; it never guesses or replaces it.
+        text:
+          type: string
+          minLength: 1
+          maxLength: 8192
+          pattern: '.*\S.*'
+          description: Durable non-empty Memory entry text used to create the Entry Version and search projection.
+    CreateSourceRequest:
+      type: object
+      additionalProperties: false
+      required: [content]
+      properties:
+        source_type:
+          type: string
+          enum: [content]
+          default: content
+        content:
+          description: JSON value persisted by the built-in content Source adapter.
+    ListArtifactsRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        limit:
+          type: integer
+          minimum: 1
+          maximum: 100
+          default: 50
+        cursor:
+          type: string
+          minLength: 1
+          maxLength: 4096
+          nullable: true
+    ReplaceArtifactRequest:
+      oneOf:
+        - $ref: "#/components/schemas/ReplaceMemoryArtifactRequest"
+        - $ref: "#/components/schemas/ReplaceExperienceArtifactRequest"
+        - $ref: "#/components/schemas/ReplaceSkillArtifactRequest"
+        - $ref: "#/components/schemas/ReplaceHandoffArtifactRequest"
+    ReplaceMemoryArtifactRequest:
+      type: object
+      additionalProperties: false
+      required: [content]
+      properties:
+        content:
+          $ref: "#/components/schemas/ReplaceMemoryArtifactContent"
+    ReplaceMemoryArtifactContent:
+      type: object
+      additionalProperties: false
+      required: [entries]
+      properties:
+        entries:
+          type: array
+          minItems: 1
+          maxItems: 100
+          items:
+            $ref: "#/components/schemas/ReplaceMemoryArtifactEntry"
+    ReplaceMemoryArtifactEntry:
+      type: object
+      additionalProperties: false
+      required: [kind, text]
+      properties:
+        entry_id:
+          type: string
+          minLength: 1
+          maxLength: 128
+          pattern: '^[\x21-\x7E]+$'
+          nullable: true
+          description: Existing logical entry to revise. Omit to append a new entry.
+        kind:
+          type: string
+          minLength: 1
+          maxLength: 128
+          pattern: '.*\S.*'
+          description: Open application-defined kind; the Server preserves the supplied value.
+        text:
+          type: string
+          minLength: 1
+          maxLength: 8192
+          pattern: '.*\S.*'
+    ReplaceExperienceArtifactRequest:
+      type: object
+      additionalProperties: false
+      required: [content]
+      properties:
+        content:
+          $ref: "#/components/schemas/ExperienceProposal"
+    ReplaceSkillArtifactRequest:
+      type: object
+      additionalProperties: false
+      required: [content]
+      properties:
+        content:
+          $ref: "#/components/schemas/SkillProposal"
+    ReplaceHandoffArtifactRequest:
+      type: object
+      additionalProperties: false
+      required: [content]
+      properties:
+        content:
+          $ref: "#/components/schemas/HandoffContent"
+    SourceRecord:
+      type: object
+      required: [scope_id, source_type, source_id, content, position, content_digest]
+      properties:
+        scope_id:
+          type: string
+          minLength: 1
+          maxLength: 256
+          pattern: '.*\S.*'
+        source_type:
+          type: string
+          enum: [content]
+        source_id:
+          type: string
+          minLength: 1
+          maxLength: 256
+          pattern: '^[\x21-\x7E]+$'
+        content:
+          description: Persisted canonical JSON content.
+        position:
+          type: integer
+          minimum: 1
+        content_digest:
+          type: string
+          pattern: '^sha256:[0-9a-f]{64}$'
+    SourceTypeReference:
+      type: object
+      additionalProperties: false
+      required: [source_type, source_id]
+      properties:
+        source_type:
+          type: string
+          enum: [content]
+        source_id:
+          type: string
+          minLength: 1
+          maxLength: 256
+          pattern: '^[\x21-\x7E]+$'
     SourceReference:
       type: object
       additionalProperties: false
@@ -5709,6 +6449,9 @@ components:
     CaptureStatus:
       type: string
       enum: [accepted]
+    BaseArtifactFamily:
+      type: string
+      enum: [memory, experience, skill, handoff]
     StatsPeriod:
       type: string
       enum: [today, 7d, 30d]

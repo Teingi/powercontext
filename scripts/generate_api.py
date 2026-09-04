@@ -161,8 +161,13 @@ def _generate_operations(
                 imports.add(request_model[:2])
 
             success_status, success_response = _success_response(operation.responses, path)
-            response_model = _model_for_json_content(success_response.content, schemas, path)
-            imports.add(response_model[:2])
+            response_model = (
+                None
+                if success_response.content is None
+                else _model_for_json_content(success_response.content, schemas, path)
+            )
+            if response_model is not None:
+                imports.add(response_model[:2])
             operations.append(
                 _render_operation(
                     constant_name=operation_id.upper(),
@@ -171,10 +176,10 @@ def _generate_operations(
                     operation_id=operation_id,
                     request_model=None if request_model is None else request_model[1],
                     request_location=None if request_model is None else request_model[2],
+                    response_model=None if response_model is None else response_model[1],
                     path_parameters=tuple(
                         parameter.name for parameter in parameters if parameter.in_ is ParameterInType.path
                     ),
-                    response_model=response_model[1],
                     success_status=success_status,
                     summary=operation.summary,
                     tags=tuple(operation.tags or ()),
@@ -213,8 +218,8 @@ class Operation(BaseModel, Generic[RequestT, ResponseT]):
     operation_id: str
     request_type: type[RequestT] | None
     request_location: Literal["body", "query"] | None
+    response_type: type[ResponseT] | None
     path_parameters: tuple[str, ...]
-    response_type: type[ResponseT]
     success_status: int
     summary: str
     tags: tuple[str, ...]
@@ -388,8 +393,8 @@ def _render_operation(
     operation_id: str,
     request_model: str | None,
     request_location: Literal["body", "query"] | None,
+    response_model: str | None,
     path_parameters: tuple[str, ...],
-    response_model: str,
     success_status: int,
     summary: str,
     tags: tuple[str, ...],
@@ -397,14 +402,15 @@ def _render_operation(
     responses: dict[int | str, dict[str, JsonValue]],
 ) -> str:
     request_type = "None" if request_model is None else request_model
-    return f"""{constant_name} = Operation[{request_type}, {response_model}](
+    response_type = "None" if response_model is None else response_model
+    return f"""{constant_name} = Operation[{request_type}, {response_type}](
     method={method!r},
     path={path!r},
     operation_id={operation_id!r},
     request_type={request_type},
     request_location={request_location!r},
     path_parameters={path_parameters!r},
-    response_type={response_model},
+    response_type={response_type},
     success_status={success_status},
     summary={summary!r},
     tags={tags!r},
