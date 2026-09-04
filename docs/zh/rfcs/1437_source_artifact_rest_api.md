@@ -13,8 +13,8 @@
 本文不增加统一 Resource 概念，也不定义 Scope API。
 
 Source Create 只公开 `content` 类型。Artifact 只公开 `memory`、`experience`、`skill`、`handoff` 四个
-family，并复用对应领域模型校验 `content`。Artifact Create 会在同一事务中保存一条只用于 Revision 1 lineage
-的系统 Source；该 Source 不得进入其他 Artifact 的生成流程。
+family，并复用对应领域模型校验 `content`。Artifact Create 和 Replace 每次都会在新 Revision 的同一事务中
+保存一条系统 Source，并将其作为该 Revision 唯一的直接 Source lineage；该 Source 不得进入其他 Artifact 的生成流程。
 
 Source Create 不触发 Memory、Experience、Skill 或 Handoff 生成。需要继续执行领域操作的调用方先创建 Source，
 再调用对应的既有领域命令。
@@ -25,8 +25,8 @@ PowerContext 已有接口主要表达 Source capture、Memory flush、Experience
 但缺少稳定的 Source 与 Artifact 基础访问接口。调用方需要在不引入第二套数据或身份空间的前提下，按完整资源身份
 创建和读取 Source，以及创建、读取、列举和替换正式 Artifact。
 
-基础 API 必须继续使用现有 Source journal、Artifact Revision/head、lineage 和授权能力。Artifact Create 还需要留下
-可追溯的直接输入，同时避免这条为 provenance 保存的 Source 被模型或其他生成流程再次消费。
+基础 API 必须继续使用现有 Source journal、Artifact Revision/head、lineage 和授权能力。通过基础 API 写入的每个
+Artifact Revision 都需要留下可追溯的直接输入，同时避免这条为 provenance 保存的 Source 被模型或其他生成流程再次消费。
 
 # Guide-level explanation
 
@@ -103,17 +103,18 @@ Artifact response 将自身身份平铺在顶层，并以两个数组返回多�
 `sources` 与 `artifacts` 是只读结果。Create 和 Replace request 不接受这两个字段，也不接受 `source_refs` 或
 `artifact_refs`；调用方不能通过基础 HTTP API 直接写 lineage。
 
-## Artifact Create 的 provenance
+## Artifact Create 和 Replace 的 provenance
 
-Artifact Create 不接收 Source 引用。服务端会把校验和 canonicalization 后的 Artifact `content` 保存为一条
-`source_type=content` 的系统 Source，并将它作为 Revision 1 唯一的直接 Source lineage。
+Artifact Create 和 Replace 都不接收 Source 引用。每次创建新 Revision 时，服务端会把校验和 canonicalization 后的
+Artifact `content` 保存为一条新的 `source_type=content` 系统 Source，并将它作为该 Revision 唯一的直接 Source
+lineage。Replace 不删除或改写旧 Revision 关联的 Source，并继承上一 Revision 的有序 Artifact lineage。
 
 这条 Source 的内部角色是 `lineage_only`：它是真实、可追溯的创建输入，但不是供模型再次消费的普通 evidence。
-内部 payload 将其唯一绑定到目标 `(scope_id, family, artifact_id, revision=1)`；公开 Source response 不暴露这些
+内部 payload 将其唯一绑定到目标 `(scope_id, family, artifact_id, revision)`；公开 Source response 不暴露这些
 内部用途字段。
 
-Artifact Create 在同一数据库事务中写入系统 Source、journal position、Artifact Revision 1、head 和 Source
-lineage。任一步失败都整体回滚。
+Artifact Create 或 Replace 在同一数据库事务中写入系统 Source、journal position、新 Artifact Revision、head 和
+Source lineage。任一步失败都整体回滚。
 
 ## Non-goals
 
@@ -316,34 +317,33 @@ Cursor 是不透明字符串，绑定调用方、`scope_id`、`family`、稳定�
 ### Replace Artifact
 
 `PUT /v1/scopes/{scope_id}/artifacts/{family}/{artifact_id}` 接收完整 `content` replacement，并按 Path 中的
-family 校验。`If-Match` 必填；匹配当前 head ETag 后创建下一不可变 Revision，并返回新的 `ArtifactRevision` 和
-ETag。接口不支持 merge patch 或自动合并。
+family 校验。`If-Match` 必填；匹配当前 head ETag 后，服务端创建一条绑定下一 Revision 的新 `lineage_only`
+Source，将其作为该 Revision 唯一的 Source lineage，继承上一 Revision 的有序 Artifact lineage，再创建下一条
+不可变 Revision，并返回新的 `ArtifactRevision` 和 ETag。返回的 `sources` 数组包含新生成的 `source_type` 和
+`source_id`。接口不支持 merge patch 或自动合并。
 
 ## 系统 Source 不变量
 
-Artifact Create 生成的系统 Source 使用公开 `source_type=content`，公开 `content` 是经过 family-specific 校验和
-canonicalization 后的 Artifact Create content。类型化 payload 的服务端保留部分包含：
+Artifact Create 或 Replace 生成的系统 Source 使用公开 `source_type=content`，公开 `content` 是该次写入经过
+family-specific 校验和 canonicalization 后的内容。类型化 payload 的服务端保留部分包含：
 
 ```json
 {
   "role": "lineage_only",
-  "operation": "artifact_create",
+  "operation": "artifact_replace",
   "target": {
     "scope_id": "scp_01J...",
     "family": "memory",
     "artifact_id": "mem_01J...",
-    "revision": 1
+    "revision": 2
   }
 }
 ```
 
 这些字段不是 OpenAPI 字段，调用方不能提交、覆盖或伪装；历史 Source 缺少 `role` 时按普通 `evidence` 处理。
 
-`lineage_only` Source 只能写入 `target` 指定的 Revision 1 lineage。显式生成、Propose、Candidate Revise、Handoff
+`lineage_only` Source 只能写入 `target` 指定的精确 Revision lineage。显式生成、Propose、Candidate Revise、Handoff
 citation 或其他流程尝试把它用于不同目标时，返回 `422 source_not_eligible`。
-
-该规则只适用于 Artifact Create 和 Revision 1。Replace 不自动创建新的 `lineage_only` Source，其 lineage 继续由
-对应 family 的既有演进规则确定。
 
 实现提供统一的 Source 生成准入校验，并在完整 Source 从持久化层解析后、进入模型或 Candidate 前执行。Memory、
 Experience、Skill、Handoff 和未来生成流程必须复用该校验。Candidate Approve 和 Artifact commit 在持久化前再次
@@ -353,20 +353,21 @@ Experience、Skill、Handoff 和未来生成流程必须复用该校验。Candid
 `lineage_only` Source，但业务成功后仍按完整窗口边界推进 cursor。如果窗口全部被过滤，则不调用模型、不创建
 Revision、正常推进 cursor 并返回 no-op。
 
-Artifact Create 的原子事务顺序为：
+Artifact Create/Replace 的原子事务顺序为：
 
 ```text
-1. 校验 scope_id、family 和 content
-2. 生成 artifact_id 和 source_id
-3. 构造 target 已确定的 lineage_only Source
+1. 校验 scope_id、family、content，以及 Replace 的前置条件
+2. 确定新的 Artifact 身份与 Revision，并生成 source_id
+3. 构造绑定该精确 Revision 的 lineage_only Source
 4. 插入 pc_sources 并分配 journal_position
-5. 插入 pc_artifacts Revision 1 和 pc_artifact_heads
-6. 插入 pc_artifact_lineage_sources，ordinal = 0
-7. 提交事务
+5. 插入新的 pc_artifacts Revision，并创建或移动 pc_artifact_heads
+6. 插入 pc_artifact_lineage_sources，新 Source 的 ordinal = 0
+7. Replace 时把上一 Revision 的有序 Artifact lineage 复制到新 Revision
+8. 提交事务
 ```
 
 任一步失败都整体回滚，不得遗留孤立 Source、没有 Source lineage 的 Artifact，或已经推进但没有对应记录的 journal
-head。实现不得先调用独立 Source Create，再在另一个事务中创建 Artifact。
+head。实现不得先调用独立 Source Create，再在另一个事务中写入 Artifact Revision。
 
 ## HTTP headers、请求和响应
 
@@ -459,7 +460,7 @@ OpenAPI 字段及语义是公开契约；表名和列名只是当前实现映射
 | `scope_id` | `pc_sources.scope_id` | `direct` | Source 所属 Scope、授权边界和公开身份分量。 |
 | `source_type` | `pc_sources.source_type` | `direct` | 本期公开值固定为 `content`。 |
 | `source_id` | `pc_sources.source_id` | `direct` | 服务端生成的 Source ID。 |
-| `content` | `pc_sources.payload` | `encoded` | Content Source 正文；系统 Source 保存 canonical Artifact Create content。 |
+| `content` | `pc_sources.payload` | `encoded` | Content Source 正文；系统 Source 保存 canonical Artifact Create/Replace content。 |
 | `position` | `pc_sources.journal_position` | `direct` | Source 在所属 Scope journal 中的位置。 |
 | `content_digest` | 无独立列 | `derived` | canonical `content` 的 SHA-256 摘要。 |
 
@@ -470,11 +471,11 @@ OpenAPI 字段及语义是公开契约；表名和列名只是当前实现映射
 | 内部字段 | 含义 |
 | --- | --- |
 | `role=lineage_only` | 禁止该 Source 进入其他 Artifact 生成和 Candidate evidence。 |
-| `operation=artifact_create` | 记录基础 Artifact Create 输入。 |
+| `operation` | 取 `artifact_create` 或 `artifact_replace`，记录输入来自哪一种基础 Artifact 写操作。 |
 | `target.scope_id` | 绑定目标 Artifact Scope。 |
 | `target.family` | 绑定目标 family。 |
 | `target.artifact_id` | 绑定目标 Artifact ID。 |
-| `target.revision=1` | 只允许作为目标 Revision 1 lineage。 |
+| `target.revision` | 只允许作为本次写入所创建精确 Revision 的 lineage。 |
 
 ### Artifact 字段
 
@@ -550,7 +551,7 @@ Digest 规则：
 1. 在 OpenAPI 中增加本文 7 个 operation；
 2. 将公开 `source_type` 固定为 `content`，将 `family` 固定为四个公开值；
 3. 让 Artifact Create/Replace 通过 family-specific 领域模型校验和规范化 `content`；
-4. 在 Artifact Create 事务中创建带目标绑定的 `lineage_only` Source、Revision 1、head 和 lineage；
+4. 在每次 Artifact Create/Replace 事务中创建目标绑定的 `lineage_only` Source，并作为新 Revision 唯一 Source lineage；
 5. 增加共享 Source 生成准入校验，并覆盖所有模型、Candidate 和 commit 路径；
 6. Source-window 过滤 `lineage_only` Source，但按完整窗口推进 cursor，全过滤时返回 no-op；
 7. Artifact response 按完整 Revision 身份批量读取 lineage，组装顶层身份和数组；
@@ -565,10 +566,12 @@ Digest 规则：
 - 四个公开 family 均使用对应领域模型支持 Create/Get/List/Replace；
 - Artifact Create body 只有 `family` 和 `content`，Replace body 只有 `content`；
 - Artifact request 不接受任何 lineage 字段；
-- Artifact Create 在同一事务中生成目标绑定的 `lineage_only` Source，并作为 Revision 1 唯一 Source lineage；
+- Artifact Create 和每次成功 Replace 都在同一事务中生成目标绑定的 `lineage_only` Source，并作为新 Revision
+  唯一 Source lineage；
+- Replace 返回新 Source 身份、保留旧 Revision 的 Source，并继承上一 Revision 的 Artifact lineage；
 - 所有生成、Candidate 和 commit 路径统一拒绝将该 Source 用于其他目标；
 - Source-window 跨过被过滤记录，全过滤时不调用模型、不创建 Revision，并返回 no-op；
-- Source、Artifact Revision 1、head 或 lineage 任一步写入失败时全部回滚；
+- Source、Artifact Revision、head 或 lineage 任一步写入失败时全部回滚；
 - Artifact response 平铺身份并以 `sources`、`artifacts` 返回有序 lineage；
 - Source 与 Artifact response 不返回服务端时间字段；
 - Replace 使用不透明 ETag/If-Match，Get head 支持 If-None-Match；
@@ -581,7 +584,7 @@ Digest 规则：
 - Family-specific `content` 在基础 generated Client 中只能表示为 JSON object，静态类型弱于领域 API；
 - 每个 family 都需要稳定的反序列化、校验和 canonical serialization adapter；
 - List 返回 lineage 数组会增加关系查询成本，实现需要避免逐条查询；
-- 每次 Artifact Create 会额外写入一条 Source 和一条 lineage，增加 Source journal 体量；
+- 每次 Artifact Create 和成功 Replace 都会额外写入一条 Source 和一条 lineage，增加 Source journal 体量；
 - Source 生成准入成为跨 family 安全不变量，新入口绕过共享校验会导致 `lineage_only` Source 泄漏；
 - 新旧读取入口需要共享 application service 和 parity tests，避免行为漂移；
 - 复合身份使 URI 更长，owner Scope、Source type 或 Artifact family 变化会改变 canonical URI；
@@ -604,10 +607,10 @@ Revision，以及 family-specific 校验，因此保留两棵资源树。
 本期目标是稳定的身份访问与 Artifact 生命周期，不引入跨适配器的检索语义。Artifact List 仅在单一 family 内返回当前
 heads；Source List/Search、Artifact Search 和跨 family List 需要独立契约。
 
-## 由 Artifact Create 生成系统 Source
+## 每次基础 Artifact 写入都生成系统 Source
 
-让客户端提交 lineage refs 无法保证每次 Create 都有真实直接输入，也会扩大非法引用面。事务内生成目标绑定的
-`lineage_only` Source，可以同时保证 provenance、原子性和生成隔离。
+让客户端提交 lineage refs 无法保证每条 Revision 都有真实直接输入，也会扩大非法引用面。每次 Create 或 Replace
+事务内都生成新的目标绑定 `lineage_only` Source，可以同时保证逐 Revision provenance、原子性和生成隔离。
 
 ## 平铺身份和只读 lineage 数组
 
