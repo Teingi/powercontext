@@ -7,9 +7,14 @@ description: Install the PowerContext DeepSeek Harness plugin and control its lo
 
 ## Install or refresh the plugin
 
-Install DeepSeek Harness first and make sure the web profile exists. Then run:
+Install DeepSeek Harness first and make sure the web profile exists. Choose the command that matches the
+PowerContext tool you installed:
 
 ```bash
+# PowerContext 0.1.0 installed from PyPI
+powercontext setup dsh --source oceanbase/powercontext --ref powercontext-v0.1.0
+
+# Latest unreleased PowerContext installed from Git
 powercontext setup dsh --source oceanbase/powercontext --ref master
 ```
 
@@ -21,7 +26,29 @@ A local checkout works the same way:
 powercontext setup dsh --source .
 ```
 
-`setup dsh` calls `dsh plugin --profile web add`. Open a new `dsh web` session after setup.
+`setup dsh` calls `dsh plugin --profile web add`. Complete the startup and checks below before opening a new
+`dsh web` session.
+
+## Start and verify the integration
+
+Start the Server in a separate terminal and keep it running:
+
+```bash
+powercontext server run
+```
+
+A successful startup prints the local Dashboard URL. In another terminal, verify both the Server and the installed
+DSH plugin, then start a new DSH session:
+
+```bash
+powercontext doctor
+powercontext doctor dsh
+dsh web
+```
+
+Run `/pc doctor` inside DSH. It should report successful Server liveness and readiness. The plugin does not print a
+success message for every ordinary prompt; when the Server is unavailable, recall and capture fail open so DSH can
+continue without PowerContext. Use `/pc doctor` to distinguish that fallback from a working connection.
 
 ## Understand what the plugin does
 
@@ -67,12 +94,3 @@ dsh web
 ```
 
 Do not put the token in the patch file or the Server URL. If the Server is unavailable, recall and capture fail open. Plugin load still requires the DeepSeek Harness peer modules.
-
-## Verify the installation
-
-```bash
-powercontext doctor
-powercontext doctor dsh
-```
-
-`doctor` checks the package and Server. `doctor dsh` checks the DeepSeek Harness CLI and that dump-config contains the plugin id `powercontext-dsh`.

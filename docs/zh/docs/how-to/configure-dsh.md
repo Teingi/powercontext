@@ -7,9 +7,13 @@ description: 安装 PowerContext DeepSeek Harness 插件并控制其本地行为
 
 ## 安装或刷新插件
 
-先安装 DeepSeek Harness，并确保 web profile 可用。然后执行：
+先安装 DeepSeek Harness，并确保 web profile 可用。然后根据已安装的 PowerContext 工具选择对应命令：
 
 ```bash
+# 从 PyPI 安装的 PowerContext 0.1.0
+powercontext setup dsh --source oceanbase/powercontext --ref powercontext-v0.1.0
+
+# 从 Git 安装的最新未发布 PowerContext
 powercontext setup dsh --source oceanbase/powercontext --ref master
 ```
 
@@ -21,7 +25,27 @@ powercontext setup dsh --source oceanbase/powercontext --ref master
 powercontext setup dsh --source .
 ```
 
-`setup dsh` 内部会执行 `dsh plugin --profile web add`。配置完成后重新打开 `dsh web`。
+`setup dsh` 内部会执行 `dsh plugin --profile web add`。完成下面的启动和检查步骤后，再打开新的 `dsh web` 会话。
+
+## 启动并验证集成
+
+在单独的终端中启动 Server，并保持该进程运行：
+
+```bash
+powercontext server run
+```
+
+启动成功后会输出本地 Dashboard 地址。在另一个终端中检查 Server 和已安装的 DSH 插件，然后打开新的 DSH 会话：
+
+```bash
+powercontext doctor
+powercontext doctor dsh
+dsh web
+```
+
+在 DSH 中运行 `/pc doctor`，结果应显示 Server 的 liveness 和 readiness 检查成功。插件不会在每次普通对话中都显示
+成功提示；Server 不可用时，召回和采集会正常降级，让 DSH 可以在没有 PowerContext 的情况下继续工作。请使用
+`/pc doctor` 区分正常降级和已经建立的连接。
 
 ## 理解插件行为
 
@@ -67,12 +91,3 @@ dsh web
 ```
 
 不要把 token 写进 patch 文件或 Server URL。Server 不可用时，召回和采集会正常降级。插件加载仍然需要 DeepSeek Harness 的 peer 模块。
-
-## 验证安装
-
-```bash
-powercontext doctor
-powercontext doctor dsh
-```
-
-`doctor` 检查已安装的包和 Server。`doctor dsh` 检查 DeepSeek Harness CLI，以及 dump-config 是否包含插件 id `powercontext-dsh`。
