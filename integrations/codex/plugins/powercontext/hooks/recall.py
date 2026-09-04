@@ -37,7 +37,7 @@ sys.path.insert(0, str(_PLUGIN_ROOT))
 
 from hooks import prepared_context as _prepared_context  # noqa: E402
 from hooks.diagnostics import should_emit as _should_emit_diagnostic  # noqa: E402
-from scripts.scope_binding import resolve_scope_id  # noqa: E402  # ty: ignore[unresolved-import]
+from scripts.scope_binding import resolve_scope_id  # noqa: E402
 from settings import CodexPluginSettings  # noqa: E402
 
 _MAX_CONTEXT_BYTES = _prepared_context.MAX_CONTEXT_BYTES

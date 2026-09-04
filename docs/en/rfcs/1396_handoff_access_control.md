@@ -840,11 +840,13 @@ class RelationshipWriter(Protocol):
     ) -> AccessBinding: ...
 ```
 
-The built-in Provider and included Casbin adapter implement both `AuthorizationProvider` and `RelationshipWriter` over
-the canonical relational Access repository. The included AuthZEN adapter is decision-only. With that adapter,
-PowerContext Binding mutation returns `relationship_management_unavailable`, and administrators configure
-relationships in the external system. Future OpenFGA, OPA, or Cerbos adapters must declare the capabilities they
-actually implement. The Server must not report a successful grant and then write only a local shadow record.
+The built-in and included Casbin compositions pair their `AuthorizationProvider` with the canonical relational Access
+repository as the `RelationshipWriter`; the Provider class itself does not own relationship mutation. An external
+decision adapter may instead supply a matching `RelationshipWriter` and declare `relationship_management=true`, so
+receiver and other Bindings are not restricted to the built-in store. The included AuthZEN adapter is decision-only.
+With that adapter, PowerContext Binding mutation returns `relationship_management_unavailable`, and administrators
+configure relationships in the external system. Future OpenFGA, OPA, or Cerbos adapters must declare the capabilities
+they actually implement. The Server must not report a successful grant and then write only a local shadow record.
 
 ## Access Binding model
 
@@ -1152,17 +1154,18 @@ tests and does not provide passwords, a directory, or a custom policy language.
 
 The included Casbin adapter uses the canonical Access relationships with Casbin enforcement semantics:
 
-- subject maps to a deployment-wide opaque Principal or group ID;
-- domain maps a server resource to the deployment access namespace and a scope or Artifact resource to its canonical
-  scope resource namespace;
-- object maps to a canonical server key, scope key, or Artifact key containing Family and selector;
-- action uses this RFC's action vocabulary;
-- role assignment and policy mutation use the Casbin management API and a persistence adapter.
+- trusted subject and group IDs select active Bindings from the canonical repository before evaluation;
+- `act` uses this RFC's action vocabulary and `obj` uses a canonical server, scope, or Artifact key;
+- `scope` and `deployment` are trusted parent constraints, not authentication or tenant proof;
+- the fixed PowerContext role tables expand active Bindings into concrete action policies;
+- the canonical relational Access repository remains the source of truth for Bindings and ownership. The adapter
+  materializes those relationships into a fresh embedded Casbin enforcer for evaluation and does not maintain a second
+  persistent Casbin policy store.
 
-The Casbin domain is an adapter policy namespace. It does not turn `scope_id` into authentication or tenant proof. The
-adapter derives the domain from a trusted ResourceRef supplied by the Server. For list filtering, logical-object policy
-produces canonical keys while scope or server role assignments produce parent constraints; the Casbin adapter does not
-enumerate the business Repository.
+For list filtering, logical-object policy produces canonical keys while scope or server role assignments produce
+parent constraints; the Casbin adapter does not enumerate the business Repository. A future native Casbin-backed
+composition may provide both decision and relationship management, but its writer must satisfy the same canonical
+idempotency, versioning, ownership, and audit contracts before declaring `relationship_management=true`.
 
 ### Future OpenFGA adapter
 

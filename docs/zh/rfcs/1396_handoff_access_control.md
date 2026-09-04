@@ -789,10 +789,12 @@ class RelationshipWriter(Protocol):
     ) -> AccessBinding: ...
 ```
 
-内置 Provider 和已包含的 Casbin adapter 都基于 canonical relational Access repository，同时实现
-`AuthorizationProvider` 与 `RelationshipWriter`。已包含的 AuthZEN adapter 只提供 decision；此时 PowerContext 的
-Binding mutation endpoint 明确返回 `relationship_management_unavailable`，管理员通过外部系统配置关系。未来的
-OpenFGA、OPA 或 Cerbos adapter 必须如实声明所实现 capability。Server 不能声称 grant 成功后再只写本地影子记录。
+内置 composition 和已包含的 Casbin composition 都把各自的 `AuthorizationProvider` 与 canonical relational Access
+repository 提供的 `RelationshipWriter` 配对；Provider class 本身不负责 relationship mutation。外部 decision adapter
+也可以提供配套 `RelationshipWriter` 并声明 `relationship_management=true`，因此 receiver 等 Binding 不局限于内置
+store。已包含的 AuthZEN adapter 只提供 decision；此时 PowerContext 的 Binding mutation endpoint 明确返回
+`relationship_management_unavailable`，管理员通过外部系统配置关系。未来的 OpenFGA、OPA 或 Cerbos adapter 必须
+如实声明所实现 capability。Server 不能声称 grant 成功后再只写本地影子记录。
 
 ## Access Binding model
 
@@ -1074,16 +1076,17 @@ conformance test 的参考语义；它不提供用户密码、目录或自定义
 
 已包含的 Casbin adapter 使用 canonical Access relationship 和 Casbin enforcement semantics：
 
-- subject 映射为 deployment-wide opaque Principal 或 group ID；
-- domain 对 server resource 映射为 deployment access namespace，对 scope/artifact resource 映射为 canonical scope
-  resource namespace；
-- object 映射为 canonical server key、scope key 或包含 Family/selector 的 canonical Artifact key；
-- action 使用本 RFC 的 action vocabulary；
-- role assignment 和 policy mutation 通过 Casbin management API 与持久化 adapter 完成。
+- 可信 subject/group ID 在判定前用于从 canonical repository 选择 active Binding；
+- `act` 使用本 RFC 的 action vocabulary，`obj` 使用 canonical server、scope 或 Artifact key；
+- `scope` 和 `deployment` 是可信 parent constraint，不是认证或 tenant 证明；
+- 固定 PowerContext role table 把 active Binding 展开成具体 action policy；
+- canonical relational Access repository 仍是 Binding 和 ownership 的事实源。Adapter 在判定时把这些 relationship
+  materialize 到新的 embedded Casbin enforcer，不维护第二套持久化 Casbin policy store。
 
-Casbin domain 是 adapter policy namespace，不把 `scope_id` 变成认证或 tenant 证明。Adapter 仍从 Server 传入的可信
-ResourceRef 建立 domain。生成列表 filter 时，逻辑 object policy 产生 canonical key，scope/server role assignment 产生
-对应 parent constraint；Casbin adapter 不需要枚举业务 Repository。
+生成列表 filter 时，逻辑 object policy 产生 canonical key，scope/server role assignment 产生对应 parent constraint；
+Casbin adapter 不需要枚举业务 Repository。未来 native Casbin-backed composition 可以同时提供 decision 和 relationship
+management，但 writer 必须满足相同的 canonical idempotency、versioning、ownership 和 audit contract，才能声明
+`relationship_management=true`。
 
 ### Future OpenFGA adapter
 

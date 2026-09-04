@@ -26,7 +26,7 @@ from typing import Any, cast
 _PLUGIN_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(_PLUGIN_ROOT))
 
-from scripts.scope_binding import ScopeBindingError, resolve_scope_id  # noqa: E402  # ty: ignore[unresolved-import]
+from scripts.scope_binding import ScopeBindingError, resolve_scope_id  # noqa: E402
 from settings import CodexPluginSettings  # noqa: E402
 
 
