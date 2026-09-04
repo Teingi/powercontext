@@ -312,64 +312,21 @@ the Review lifecycle to produce a new Revision instead of editing an approved Re
 later access, but it cannot erase content already seen by the receiver or automatically revoke a Receipt, projection,
 or fork that was previously created under independent authority.
 
-## Publishing a managed Skill
+## Publishing an Artifact across Scopes
 
-Reading Skill content and publishing it to a configured host-local Agent target are different operations. A
-publication request accepts only an exact managed Skill `ArtifactReference` and an opaque Server-configured
-`target_id`. It does not accept a destination path, Agent home, SSH credential, or arbitrary filesystem locator.
-Before it reads the Skill body, resolves `target_id`, inspects target host state, or writes a projection, the Server
-must allow `artifact.read` on the logical Skill identity:
+`POST /v1/artifact-publications` copies one exact source Artifact Revision into an independent Artifact owned by a
+target Scope. The business request therefore contains an exact `ArtifactAddress`, but the Access Resource remains the
+logical `{family, artifact_id}` identity without a Revision. Before loading or copying content, the Server requires:
 
 ```text
-artifact.read on logical family=skill Artifact
+artifact.share on the logical source Artifact
+scope.admin on the target Scope
 ```
 
-The business request still selects one exact managed Skill Revision, but the Access Resource contains no Revision.
-`target_id` is an opaque operation parameter configured by `server.admin`, not a `ResourceRef`, Access Binding, or authorization resource in
-`/access/resources/list`. Only after authorization may the Server confirm that `target_id` is registered and resolve it
-to host-local Agent projection configuration. An unknown or disabled target rejects publication. Host IDs,
-destination paths, Agent homes, credential references, and locators do not enter the request, Binding, ordinary audit,
-or public errors.
-
-An ordinary publisher selects a target through `POST /v1/skills/publication-targets/list`. The request contains the
-`scope_id` and exact Skill `ArtifactReference`, and the Server resolves that request to the logical identity before the
-authorization check. It reads the Skill Repository and target registry only after the decision allows access. The response lists only enabled targets and
-their opaque `target_id`, Agent kind, installation scope, and safe capabilities. It does not return desired or applied
-state, host paths, Agent homes, credential references, or underlying errors. This operation belongs to the Skill
-publication domain contract; it is not Access Resource listing and creates no target Binding.
-
-```json
-{
-  "scope_id": "project:payments",
-  "artifact": {"family": "skill", "artifact_id": "retry-runbook", "revision": 4}
-}
-```
-
-```json
-{
-  "artifact": {"family": "skill", "artifact_id": "retry-runbook", "revision": 4},
-  "targets": [
-    {
-      "target_id": "codex-project",
-      "agent_kind": "codex",
-      "installation_scope": "project",
-      "capabilities": ["publish"]
-    }
-  ]
-}
-```
-
-The first version does not support per-target delegation. A Principal with `artifact.read` on a logical Skill may
-publish any selected Revision of it to any enabled configured target in the current deployment. Only `server.admin` may configure,
-change, or remove targets. Target status is operational information protected by `server.observe` or `server.admin`.
-If the product must express “B may publish to X but not Y,” a separate distribution RFC introduces a generic
-`execution_target` Resource instead of mixing a Skill-specific target into the Artifact sharing model.
-
-Successful publication means only that the configured host-local target projection received the exact Revision. It
-does not authorize the host to load or execute the Skill or to access tools, networks, filesystems, or secrets.
-External Skill registrations and host-local locators are not cross-host shareable Artifact Family Access Profiles.
-Collaboration requires an explicit import or fork into a managed Skill. Remote Receiver distribution is outside the
-first version.
+This keeps the authorization durable across source revisions while preserving exact publication provenance. A grant
+does not copy content by itself, and a publication does not grant access to host paths, tools, networks, credentials,
+or later target mutations. Family-specific publication support remains a Runtime concern; unsupported complete-state
+copies fail after authorization without weakening the Access model.
 
 ## B takes over the Workstream
 
@@ -994,21 +951,15 @@ x-powercontext-access:
 A resolver is deterministic, Server-owned, and unit-tested. It builds an AccessRequest only from the validated request
 model and route metadata. It cannot read a business Repository before deciding what to authorize.
 
-Operations whose resource is derived from business input use a resolver. Publisher target selection and publication
-reuse the same logical Skill resolver:
+Operations whose resource is derived from business input use a resolver. Cross-Scope publication combines source
+sharing and target administration in one deterministic check:
 
 ```yaml
-/v1/skills/publication-targets/list:
+/v1/artifact-publications:
   post:
-    operationId: list_skill_publication_targets
+    operationId: publish_artifact
     x-powercontext-access:
-      resolver: exact_skill_access
-
-/v1/skills/publish:
-  post:
-    operationId: publish_managed_skill
-    x-powercontext-access:
-      resolver: exact_skill_access
+      resolver: publish_artifact_access
 ```
 
 Generated `Operation.access` represents either one static requirement or a named resolver. The Server-side resolver

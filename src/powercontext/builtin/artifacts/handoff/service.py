@@ -65,12 +65,14 @@ class HandoffService:
         artifact_id: str,
         backend: HandoffBackend,
         evidence_resolver: HandoffEvidenceResolver,
+        evidence_resolver_for_scope: Callable[[str], HandoffEvidenceResolver] | None = None,
         generation_pipeline: HandoffGenerationPipeline | None = None,
     ) -> None:
         self.scope_id = scope_id
         self.artifact_id = artifact_id
         self._backend = backend
         self._evidence_resolver = evidence_resolver
+        self._evidence_resolver_for_scope = evidence_resolver_for_scope
         self._generation_pipeline = generation_pipeline
         ArtifactRef(family=Handoff.family, artifact_id=artifact_id, revision=1)
 
@@ -127,9 +129,9 @@ class HandoffService:
         return await self._backend.latest(self.artifact_id)
 
     async def revision(self, reference: ArtifactRef, /) -> Handoff:
-        """Return one exact committed milestone."""
+        """Return one exact local or published Handoff revision."""
 
-        self._require_reference(reference)
+        self._require_handoff_reference(reference)
         return await self._backend.get(reference)
 
     async def revisions(self) -> tuple[Handoff, ...]:
@@ -152,22 +154,27 @@ class HandoffService:
     ) -> HandoffResolution:
         """Resolve Handoff content without treating historical claims as current truth."""
 
-        current = await self._backend.latest(self.artifact_id)
+        evidence_resolver = self._evidence_resolver
         if isinstance(handoff, PreparedHandoff):
+            current = await self._backend.latest(self.artifact_id)
             self._require_prepared(handoff)
             content = handoff.content
             selection: HandoffResolutionSelection = "prepared"
             selected_revision = None
         else:
             selected = await self.revision(handoff)
+            current = await self._backend.latest(selected.artifact_id)
             content = selected.content
             selection = "exact"
             selected_revision = selected.as_ref()
+            provenance = selected.lineage.publication_source
+            evidence_resolver = self._resolver_for_scope(self.scope_id if provenance is None else provenance.scope_id)
         return await self._resolve(
             content,
             selection=selection,
             selected_revision=selected_revision,
             current=current,
+            evidence_resolver=evidence_resolver,
             evidence_authorizer=evidence_authorizer,
         )
 
@@ -190,6 +197,7 @@ class HandoffService:
             selection="latest",
             selected_revision=current.as_ref(),
             current=current,
+            evidence_resolver=self._evidence_resolver,
             evidence_authorizer=evidence_authorizer,
         )
 
@@ -200,6 +208,7 @@ class HandoffService:
         selection: HandoffResolutionSelection,
         selected_revision: ArtifactRef | None,
         current: Handoff | None,
+        evidence_resolver: HandoffEvidenceResolver,
         evidence_authorizer: HandoffEvidenceAuthorizer | None,
     ) -> HandoffResolution:
         return HandoffResolution(
@@ -209,8 +218,19 @@ class HandoffService:
             selection=selection,
             selected_revision=selected_revision,
             current_revision=None if current is None else current.as_ref(),
-            evidence_checks=await self._evidence_checks(content, evidence_authorizer=evidence_authorizer),
+            evidence_checks=await self._evidence_checks(
+                content,
+                evidence_resolver=evidence_resolver,
+                evidence_authorizer=evidence_authorizer,
+            ),
         )
+
+    def _resolver_for_scope(self, scope_id: str) -> HandoffEvidenceResolver:
+        if scope_id == self.scope_id:
+            return self._evidence_resolver
+        if self._evidence_resolver_for_scope is None:
+            return self._evidence_resolver
+        return self._evidence_resolver_for_scope(scope_id)
 
     @staticmethod
     def render(
@@ -230,9 +250,13 @@ class HandoffService:
         if prepared.scope_id != self.scope_id:
             raise HandoffScopeMismatchError(self.scope_id, prepared.scope_id)
         if prepared.base is not None:
-            self._require_reference(prepared.base)
+            self._require_lifecycle_reference(prepared.base)
 
-    def _require_reference(self, reference: ArtifactRef) -> None:
+    def _require_handoff_reference(self, reference: ArtifactRef) -> None:
+        if reference.family != Handoff.family:
+            raise InvalidHandoffReferenceError(reference)
+
+    def _require_lifecycle_reference(self, reference: ArtifactRef) -> None:
         if reference.family != Handoff.family or reference.artifact_id != self.artifact_id:
             raise InvalidHandoffReferenceError(reference)
 
@@ -263,6 +287,7 @@ class HandoffService:
         self,
         content: HandoffContent,
         *,
+        evidence_resolver: HandoffEvidenceResolver,
         evidence_authorizer: HandoffEvidenceAuthorizer | None,
     ) -> tuple[HandoffEvidenceCheck, ...]:
         checks = [
@@ -270,6 +295,7 @@ class HandoffService:
                 statement.citations,
                 claim="state",
                 state_index=index,
+                evidence_resolver=evidence_resolver,
                 evidence_authorizer=evidence_authorizer,
             )
             for index, statement in enumerate(content.state)
@@ -279,6 +305,7 @@ class HandoffService:
                 await self._check_evidence(
                     content.next_action.citations,
                     claim="next_action",
+                    evidence_resolver=evidence_resolver,
                     evidence_authorizer=evidence_authorizer,
                 )
             )
@@ -290,6 +317,7 @@ class HandoffService:
         *,
         claim: HandoffClaim,
         state_index: int | None = None,
+        evidence_resolver: HandoffEvidenceResolver,
         evidence_authorizer: HandoffEvidenceAuthorizer | None,
     ) -> HandoffEvidenceCheck:
         unavailable: list[HandoffCitation] = []
@@ -298,7 +326,7 @@ class HandoffService:
                 unavailable.append(citation)
                 continue
             try:
-                await self._evidence_resolver.validate(citation)
+                await evidence_resolver.validate(citation)
             except HandoffEvidenceUnavailableError:
                 if citation not in unavailable:
                     unavailable.append(citation)

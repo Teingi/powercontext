@@ -223,7 +223,6 @@ def create_server_app(
         access_control=configured_access_control,
         access_mode=resolved.access.mode,
         authentication_provider=configured_authentication,
-        agent_skill_targets=config.external_skills.agent_targets,
         allow_insecure_remote_http=resolved.allow_insecure_http,
     )
     _mount_optional_web_ui(app, resolved)
@@ -402,7 +401,6 @@ def _mount_optional_web_ui(app: FastAPI, settings: ServerSettings) -> None:
     try:
         mount_web_ui(
             app,
-            scopes={scope.scope_id: scope.display_name for scope in settings.dashboard.scopes},
             dashboard_enabled=settings.dashboard.enabled,
             handoff_report_enabled=settings.handoff_report.enabled,
             authentication_required=settings.access.mode == "enforced",

@@ -298,57 +298,20 @@ revise、retire、replace、提交下一 Revision，或原地覆盖共享内容�
 和 Review lifecycle 产生新 Revision，而不是原地改写 approved Revision。撤销分享会阻止后续访问，但不能删除接收方已经
 看到的内容，也不能自动撤销此前经独立授权创建的 Receipt、projection 或 fork。
 
-## 发布 managed Skill
+## 跨 Scope 发布 Artifact
 
-读取 Skill 内容和把 Skill 发布到配置的 host-local Agent target 是不同 operation。发布请求只接受 exact managed Skill
-`ArtifactReference` 和 Server 配置的 opaque `target_id`，不接受 destination path、Agent home、SSH credential 或任意
-filesystem locator。Server 必须在读取 Skill body、解析 `target_id`、检查 target host 状态或写入 projection 前允许逻辑
-Skill identity 上的 `artifact.read`：
+`POST /v1/artifact-publications` 会把一个精确的 source Artifact Revision 复制成由目标 Scope 独立拥有的新 Artifact。
+因此业务请求包含精确 `ArtifactAddress`，但 Access Resource 仍是没有 Revision 的逻辑 `{family, artifact_id}` identity。
+Server 在读取或复制内容之前必须同时检查：
 
 ```text
-artifact.read on logical family=skill Artifact
+source 逻辑 Artifact 上的 artifact.share
+目标 Scope 上的 scope.admin
 ```
 
-业务请求仍选择一个精确 managed Skill Revision，但 Access Resource 不包含 Revision。`target_id` 是由 `server.admin`
-配置的 opaque operation parameter，不是 `ResourceRef`、Access Binding 或 `/access/resources/list` 中的授权资源。授权通过后，
-Server 才能确认 `target_id` 已注册并把它解析为 host-local Agent projection configuration；未注册或 disabled target 拒绝
-发布。Host ID、destination path、Agent home、credential reference 和 locator 不进入请求、Binding、普通 audit 或公共错误。
-
-普通 publisher 通过 `POST /v1/skills/publication-targets/list` 选择 target。请求携带 `scope_id` 和 exact Skill
-`ArtifactReference`，Server 在授权前把它解析为逻辑 identity；只有 allow 后才读取 Skill Repository 和 target registry。响应
-只列出 enabled target 的 opaque `target_id`、Agent kind、installation scope 和安全 capability，不返回 desired/applied
-state、host path、Agent home、credential reference 或底层错误。该 operation 是 Skill publication domain contract，不是
-Access Resource listing，也不为 target 创建 Binding。
-
-```json
-{
-  "scope_id": "project:payments",
-  "artifact": {"family": "skill", "artifact_id": "retry-runbook", "revision": 4}
-}
-```
-
-```json
-{
-  "artifact": {"family": "skill", "artifact_id": "retry-runbook", "revision": 4},
-  "targets": [
-    {
-      "target_id": "codex-project",
-      "agent_kind": "codex",
-      "installation_scope": "project",
-      "capabilities": ["publish"]
-    }
-  ]
-}
-```
-
-首版不提供 per-target delegation：拥有逻辑 Skill 的 `artifact.read` 后，可以把它的任一选定 Revision 发布到当前
-deployment 中任意 enabled configured target。只有 `server.admin` 能配置、修改或删除 target；target 状态属于受 `server.observe` 或
-`server.admin` 保护的运维信息。若产品需要表达“B 可以发布到 X，但不能发布到 Y”，后续由独立分发 RFC 定义通用
-`execution_target` Resource，而不把 Skill 专用 target 混入 Artifact 分享模型。
-
-发布成功只表示配置的 host-local target projection 接收到该 exact Revision，不授予宿主加载、执行、工具、网络、文件系统
-或 secret 权限。External Skill registration 和 host-local locator 不是可跨主机分享的 Artifact Family Access Profile；
-需要协作时应显式 import/fork 为 managed Skill。Remote Receiver distribution 不属于首版。
+这样授权可以覆盖 source 的历史和后续 Revision，同时每次 publication 仍保留精确 provenance。Binding 本身不会复制
+内容，publication 也不会授予 host path、工具、网络、credential 或后续 target mutation 权限。具体 Artifact Family
+能否完整复制仍由 Runtime 决定；不支持的 complete-state copy 会在授权后失败，但不会放宽 Access 模型。
 
 ## B 真正接手 Workstream
 
@@ -927,20 +890,15 @@ x-powercontext-access:
 Resolver 是 Server-owned、经过单元测试的确定性函数。它只能从已验证 request model 和 route metadata 建立
 AccessRequest，不能读取业务 Repository 后才决定是否授权。
 
-需要从业务参数派生资源的 operation 使用 resolver。Publisher target selection 和 publish 复用同一个逻辑 Skill resolver：
+需要从业务参数派生资源的 operation 使用 resolver。跨 Scope publication 会在一个确定性检查中组合 source 分享和
+target 管理权限：
 
 ```yaml
-/v1/skills/publication-targets/list:
+/v1/artifact-publications:
   post:
-    operationId: list_skill_publication_targets
+    operationId: publish_artifact
     x-powercontext-access:
-      resolver: exact_skill_access
-
-/v1/skills/publish:
-  post:
-    operationId: publish_managed_skill
-    x-powercontext-access:
-      resolver: exact_skill_access
+      resolver: publish_artifact_access
 ```
 
 生成的 `Operation.access` 必须能够表示 static single requirement 或 named resolver。Resolver 的 Server-side return type

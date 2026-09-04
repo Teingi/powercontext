@@ -26,10 +26,10 @@ from fastapi.testclient import TestClient
 from pydantic import SecretStr
 from starlette.middleware import Middleware
 
-from powercontext.artifacts import ArtifactRef
+from powercontext.artifacts import ArtifactAddress, ArtifactRef
 from powercontext.builtin.artifacts.memory import MemoryEntryVersion
-from powercontext.builtin.artifacts.skill import AgentSkillTarget, Skill, SkillContent
 from powercontext.builtin.persistence.sqlite import SQLiteConfig, SQLiteProfile
+from powercontext.builtin.publication import ArtifactPublication, ArtifactPublicationRequest
 from powercontext.builtin.runtime import MemoryEntryRecord
 from powercontext.builtin.runtime.config import RuntimeConfig
 from powercontext.server.app import create_app
@@ -537,28 +537,38 @@ class _MemoryApplication:
         return self.record
 
 
-class _SkillApplication:
-    def __init__(self, result: object | None = None) -> None:
-        self.get_calls = 0
-        self.result = object() if result is None else result
+class _ArtifactPublicationApplication:
+    def __init__(self) -> None:
+        self.requests: list[ArtifactPublicationRequest] = []
 
-    def for_scope(self, scope_id: str) -> Self:
-        del scope_id
-        return self
+    async def publish(self, request: ArtifactPublicationRequest) -> ArtifactPublication:
+        self.requests.append(request)
+        return ArtifactPublication(
+            source=request.source,
+            target=ArtifactAddress(
+                scope_id=request.target_scope_id,
+                artifact=ArtifactRef(family=request.source.artifact.family, artifact_id="published-skill", revision=1),
+            ),
+            content_digest="0" * 64,
+        )
 
-    async def get(self, request) -> object:
-        del request
-        self.get_calls += 1
-        return self.result
 
-
-class _ExternalSkillsApplication:
-    def for_scope(self, scope_id: str) -> Self:
-        del scope_id
-        return self
-
-    async def scan(self) -> object:
-        return object()
+class _DashboardScopeApplication:
+    async def list(self) -> tuple[SimpleNamespace, ...]:
+        return (
+            SimpleNamespace(
+                scope_id="scope-visible",
+                title="Visible",
+                summary="Visible Scope",
+                parent_scope_id=None,
+            ),
+            SimpleNamespace(
+                scope_id="scope-hidden",
+                title="Hidden",
+                summary="Hidden Scope",
+                parent_scope_id=None,
+            ),
+        )
 
 
 def test_access_api_and_handoff_pep_enforce_exact_receiver_visibility() -> None:
@@ -816,7 +826,7 @@ def test_logical_memory_entry_grant_allows_every_entry_version_but_not_scope_lis
     asyncio.run(scenario())
 
 
-def test_skill_publication_uses_the_generic_read_grant_before_target_lookup(tmp_path: Path) -> None:
+def test_artifact_publication_requires_logical_share_and_target_scope_admin() -> None:
     async def scenario() -> None:
         async with SQLiteProfile.open(SQLiteConfig(), tables=ACCESS_TABLES) as profile:
             repository = RelationalAccessRepository(profile.database)
@@ -829,7 +839,7 @@ def test_skill_publication_uses_the_generic_read_grant_before_target_lookup(tmp_
             skill = ResourceRef.artifact("scope-a", family="skill", artifact_id="skill-a")
             await service.establish_artifact_owner(
                 skill,
-                ADMIN,
+                BOB,
                 idempotency_key="owner-skill-a",
                 context=AUDIT,
             )
@@ -837,9 +847,9 @@ def test_skill_publication_uses_the_generic_read_grant_before_target_lookup(tmp_
                 ADMIN,
                 CreateBinding(
                     subject=BOB,
-                    resource=skill,
-                    role=AccessRole.ARTIFACT_VIEWER,
-                    idempotency_key="bob-skill-viewer",
+                    resource=ResourceRef.scope("scope-b"),
+                    role=AccessRole.SCOPE_ADMIN,
+                    idempotency_key="bob-target-scope-admin",
                 ),
                 context=AUDIT,
             )
@@ -853,80 +863,42 @@ def test_skill_publication_uses_the_generic_read_grant_before_target_lookup(tmp_
                 ),
                 context=AUDIT,
             )
-            managed_skill = Skill(
-                artifact_id="skill-a",
-                revision=7,
-                content=SkillContent(
-                    name="safe-publication",
-                    description="Publish one exact managed Skill safely.",
-                    instructions="Use the exact reviewed instructions.",
-                    validation=("The exact revision is preserved.",),
+            await service.create_binding(
+                ADMIN,
+                CreateBinding(
+                    subject=ALICE,
+                    resource=ResourceRef.scope("scope-b"),
+                    role=AccessRole.SCOPE_ADMIN,
+                    idempotency_key="alice-target-scope-admin",
                 ),
+                context=AUDIT,
             )
-            runtime_skill = _SkillApplication(managed_skill)
-            target_path = tmp_path / "private-host-path" / "skills"
-            target = AgentSkillTarget(
-                target_id="codex-project",
-                agent_kind="codex",
-                installation_scope="project",
-                path=target_path,
-                allow_managed_publish=True,
-            )
-            application = SimpleNamespace(skill=runtime_skill, external_skills=_ExternalSkillsApplication())
+            publications = _ArtifactPublicationApplication()
+            application = SimpleNamespace(publications=publications)
             bob_provider = StaticBearerAuthenticationProvider("bob-token", BOB)
             bob_app = create_app(
                 application=application,
                 access_control=service,
                 authentication_provider=bob_provider,
                 middleware=(Middleware(AuthenticationMiddleware, provider=bob_provider),),
-                agent_skill_targets=(target,),
             )
             payload = {
-                "scope_id": "scope-a",
-                "artifact": {"family": "skill", "artifact_id": "skill-a", "revision": 7},
+                "source": {
+                    "scope_id": "scope-a",
+                    "artifact": {"family": "skill", "artifact_id": "skill-a", "revision": 7},
+                },
+                "target_scope_id": "scope-b",
+                "idempotency_key": "publish-skill-a-r7",
             }
             async with _client(bob_app) as bob:
-                targets = await bob.post(
-                    "/v1/skills/publication-targets/list",
+                published = await bob.post(
+                    "/v1/artifact-publications",
                     headers=_auth("bob-token"),
                     json=payload,
                 )
-                assert targets.status_code == 200, targets.json()
-                assert targets.json()["targets"] == [
-                    {
-                        "target_id": "codex-project",
-                        "agent_kind": "codex",
-                        "installation_scope": "project",
-                        "capabilities": ["publish"],
-                    }
-                ]
-                assert str(target_path) not in targets.text
-
-                missing = await bob.post(
-                    "/v1/skills/publish",
-                    headers=_auth("bob-token"),
-                    json=payload | {"target_id": "unknown-target"},
-                )
-                assert missing.status_code == 404
-                assert missing.json()["error"]["code"] == "skill_publication_target_not_found"
-                assert str(target_path) not in missing.text
-
-                published = await bob.post(
-                    "/v1/skills/publish",
-                    headers=_auth("bob-token"),
-                    json=payload | {"target_id": "codex-project"},
-                )
-                assert published.status_code == 200, published.json()
-                assert published.json() == {
-                    "artifact": {"family": "skill", "artifact_id": "skill-a", "revision": 7},
-                    "target_id": "codex-project",
-                    "agent_kind": "codex",
-                    "installation_scope": "project",
-                    "state": "published",
-                    "applied_revision": 7,
-                }
-                assert str(target_path) not in published.text
-                assert target_path.joinpath("safe-publication", "SKILL.md").is_file()
+                assert published.status_code == 201, published.json()
+                assert published.json()["source"] == payload["source"]
+                assert publications.requests[0].source.artifact.revision == 7
 
             alice_provider = StaticBearerAuthenticationProvider("alice-token", ALICE)
             alice_app = create_app(
@@ -934,17 +906,15 @@ def test_skill_publication_uses_the_generic_read_grant_before_target_lookup(tmp_
                 access_control=service,
                 authentication_provider=alice_provider,
                 middleware=(Middleware(AuthenticationMiddleware, provider=alice_provider),),
-                agent_skill_targets=(target,),
             )
-            calls_before = runtime_skill.get_calls
             async with _client(alice_app) as alice:
-                visible = await alice.post(
-                    "/v1/skills/publication-targets/list",
+                denied = await alice.post(
+                    "/v1/artifact-publications",
                     headers=_auth("alice-token"),
                     json=payload,
                 )
-                assert visible.status_code == 200
-            assert runtime_skill.get_calls == calls_before + 1
+                assert denied.status_code == 403
+            assert len(publications.requests) == 1
 
     asyncio.run(scenario())
 
@@ -979,30 +949,34 @@ def test_dashboard_scope_discovery_uses_the_same_principal_and_filters_before_re
                 ),
                 context=AUDIT,
             )
-            app = _app(service, principal=BOB, token="bob-token")  # noqa: S106 - test credential.
+            app = _app(
+                service,
+                principal=BOB,
+                token="bob-token",  # noqa: S106 - test credential.
+                application=SimpleNamespace(scopes=_DashboardScopeApplication()),
+            )
             mount_web_ui(
                 app,
-                scopes={"scope-visible": "Visible", "scope-hidden": "Hidden"},
                 dashboard_enabled=True,
                 authentication_required=True,
             )
             async with _client(app) as client:
                 response = await client.get("/dashboard/scopes", headers=_auth("bob-token"))
-                visible_library = await client.post(
-                    "/dashboard/skills/library",
-                    headers=_auth("bob-token"),
-                    json={"scope_id": "scope-visible"},
-                )
                 hidden_library = await client.post(
                     "/dashboard/skills/library",
                     headers=_auth("bob-token"),
                     json={"scope_id": "scope-hidden"},
                 )
                 assert response.status_code == 200
-                assert response.json() == [{"scope_id": "scope-visible", "display_name": "Visible"}]
+                assert response.json() == [
+                    {
+                        "scope_id": "scope-visible",
+                        "display_name": "Visible",
+                        "summary": "Visible Scope",
+                        "parent_scope_id": None,
+                    }
+                ]
                 assert "scope-hidden" not in response.text
-                assert visible_library.status_code == 503
-                assert visible_library.json()["error"]["code"] == "runtime_not_ready"
                 assert hidden_library.status_code == 403
 
     asyncio.run(scenario())

@@ -66,8 +66,8 @@ When the Dashboard is enabled, the Server navigation contains a **Review** entry
 Opening it loads `/reviews` from the same Server origin. It reuses the Dashboard login and Bearer token behavior; the
 page does not introduce another credential store or authentication flow.
 
-The reviewer first selects one of the scopes configured by `POWERCONTEXT_SERVER_DASHBOARD_SCOPES`. If no scopes are
-configured, the page explains that Review requires at least one Dashboard scope and performs no Candidate request.
+The reviewer first selects one of the durable Scopes returned by the Server. If no Scopes exist, the page explains
+that Review requires at least one Scope and performs no Candidate request.
 
 Changing the scope clears the current list, selected Candidate, pagination cursor, conflict state, and unsaved revision
 draft before loading the new scope. A delayed response from the previous scope must not update the page.

@@ -151,33 +151,10 @@ class AccessControlConfig(BaseModel):
     background_principal_description: str | None = Field(default=None, min_length=1, max_length=255)
 
 
-class DashboardScopeConfig(BaseModel):
-    """One scope exposed by the personal Dashboard."""
-
-    scope_id: str = Field(min_length=1, max_length=255)
-    display_name: str = Field(min_length=1, max_length=80)
-
-    @field_validator("scope_id", "display_name")
-    @classmethod
-    def strip_non_empty_text(cls, value: str) -> str:
-        stripped = value.strip()
-        if not stripped:
-            raise ValueError("Dashboard scope values must not be empty")  # noqa: TRY003
-        return stripped
-
-
 class DashboardConfig(BaseModel):
     """Personal Dashboard served by the local Server."""
 
     enabled: bool = True
-    scopes: list[DashboardScopeConfig] = Field(default_factory=list, max_length=100)
-
-    @model_validator(mode="after")
-    def validate_scopes(self) -> DashboardConfig:
-        scope_ids = [scope.scope_id for scope in self.scopes]
-        if len(scope_ids) != len(set(scope_ids)):
-            raise ValueError("Dashboard scope IDs must be unique")  # noqa: TRY003
-        return self
 
 
 class ServerLoggingConfig(BaseModel):
@@ -331,7 +308,6 @@ __all__ = [
     "AccessControlConfig",
     "BearerAuthConfig",
     "DashboardConfig",
-    "DashboardScopeConfig",
     "HandoffReportConfig",
     "HttpConfig",
     "McpConfig",

@@ -38,6 +38,7 @@ from powercontext.http import (
     CommitHandoffRequest,
     ContinueHandoffRequest,
     CreateAccessBindingRequest,
+    CreateScopeRequest,
     FinalizeHandoffRequest,
     HandoffSelection,
     ListAccessResourcesRequest,
@@ -94,30 +95,36 @@ def test_logical_handoff_grant_and_revoke_cross_the_public_server_boundary(tmp_p
                 _app(database, access_control, ADMIN, "admin-token", tmp_path / "admin-scheduler.db"),
                 "admin-token",
             ) as admin:
+                scope = await admin.create_scope(
+                    CreateScopeRequest(
+                        title="Access control E2E",
+                        summary="Logical Handoff authorization across the public Server boundary.",
+                        idempotency_key="access-control-e2e",
+                    )
+                )
+                scope_id = scope.scope_id
                 captured = await admin.capture_content_source(
                     CaptureContentSourceRequest(
-                        scope_id="access-e2e",
+                        scope_id=scope_id,
                         source_id="handoff-boundary",
                         content="The receiver may read every Revision of one explicitly shared logical Handoff.",
                     )
                 )
                 activation = await admin.activate_handoff(
                     ActivateHandoffRequest(
-                        scope_id="access-e2e",
+                        scope_id=scope_id,
                         boundary_source=captured.source,
                         objective="Transfer one committed logical Handoff.",
                     )
                 )
                 assert activation.draft is not None
                 prepared = await admin.finalize_handoff(
-                    FinalizeHandoffRequest(scope_id="access-e2e", draft=activation.draft)
+                    FinalizeHandoffRequest(scope_id=scope_id, draft=activation.draft)
                 )
-                first_committed = await admin.commit_handoff(
-                    CommitHandoffRequest(scope_id="access-e2e", handoff=prepared)
-                )
+                first_committed = await admin.commit_handoff(CommitHandoffRequest(scope_id=scope_id, handoff=prepared))
                 resource = {
                     "type": "artifact",
-                    "scope_id": "access-e2e",
+                    "scope_id": scope_id,
                     "identity": {
                         "family": first_committed.reference.family,
                         "artifact_id": first_committed.reference.artifact_id,
@@ -139,10 +146,10 @@ def test_logical_handoff_grant_and_revoke_cross_the_public_server_boundary(tmp_p
                     update={"objective": "Transfer the next Revision through the existing logical share."}
                 )
                 revised_prepared = await admin.finalize_handoff(
-                    FinalizeHandoffRequest(scope_id="access-e2e", draft=revised_draft)
+                    FinalizeHandoffRequest(scope_id=scope_id, draft=revised_draft)
                 )
                 committed = await admin.commit_handoff(
-                    CommitHandoffRequest(scope_id="access-e2e", handoff=revised_prepared)
+                    CommitHandoffRequest(scope_id=scope_id, handoff=revised_prepared)
                 )
                 assert committed.reference.revision == first_committed.reference.revision + 1
 
@@ -152,7 +159,7 @@ def test_logical_handoff_grant_and_revoke_cross_the_public_server_boundary(tmp_p
             ) as receiver:
                 exact = await receiver.continue_handoff(
                     ContinueHandoffRequest(
-                        scope_id="access-e2e",
+                        scope_id=scope_id,
                         selection=HandoffSelection.EXACT,
                         revision=first_committed.reference,
                     )
@@ -164,7 +171,7 @@ def test_logical_handoff_grant_and_revoke_cross_the_public_server_boundary(tmp_p
                 assert all(check.status == "available" for check in exact.evidence_checks)
                 receipt = await receiver.acknowledge_handoff(
                     AcknowledgeHandoffRequest.model_validate({
-                        "scope_id": "access-e2e",
+                        "scope_id": scope_id,
                         "source_id": "receiver-acknowledgement",
                         "receiver": RECEIVER.id,
                         "status": "accepted",
@@ -180,14 +187,14 @@ def test_logical_handoff_grant_and_revoke_cross_the_public_server_boundary(tmp_p
                 assert receipt.resolution.selected_revision == first_committed.reference
 
                 latest = await receiver.continue_handoff(
-                    ContinueHandoffRequest(scope_id="access-e2e", selection=HandoffSelection.LATEST)
+                    ContinueHandoffRequest(scope_id=scope_id, selection=HandoffSelection.LATEST)
                 )
                 assert latest.selected_revision == committed.reference
                 assert latest.evidence_checks
                 assert all(check.status == "available" for check in latest.evidence_checks)
                 later_exact = await receiver.continue_handoff(
                     ContinueHandoffRequest(
-                        scope_id="access-e2e",
+                        scope_id=scope_id,
                         selection=HandoffSelection.EXACT,
                         revision=committed.reference,
                     )
@@ -224,7 +231,7 @@ def test_logical_handoff_grant_and_revoke_cross_the_public_server_boundary(tmp_p
                 with pytest.raises(ForbiddenResponseError):
                     await receiver.continue_handoff(
                         ContinueHandoffRequest(
-                            scope_id="access-e2e",
+                            scope_id=scope_id,
                             selection=HandoffSelection.EXACT,
                             revision=committed.reference,
                         )
@@ -262,15 +269,22 @@ def test_scheduled_memory_processing_uses_the_static_service_principal_as_owner(
             candidate_pipeline=_ContentMemoryPipeline(),
         )
         async with _client(app, token) as client:
+            scope = await client.create_scope(
+                CreateScopeRequest(
+                    title="Scheduled Access",
+                    summary="Scheduled Memory ownership under enforced Access control.",
+                    idempotency_key="scheduled-access",
+                )
+            )
             await client.capture_content_source(
                 CaptureContentSourceRequest(
-                    scope_id="scheduled-access",
+                    scope_id=scope.scope_id,
                     source_id="scheduled-source",
                     content="The scheduled service owns this extracted Memory entry.",
                 )
             )
             for _ in range(100):
-                entries = await client.list_memory_entries(ListMemoryEntriesRequest(scope_id="scheduled-access"))
+                entries = await client.list_memory_entries(ListMemoryEntriesRequest(scope_id=scope.scope_id))
                 if entries.entries:
                     break
                 await asyncio.sleep(0.02)

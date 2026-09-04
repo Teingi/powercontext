@@ -56,8 +56,8 @@ curl --fail \
 
 ## Store and search one Memory
 
-Choose a stable `scope_id` for the project or tenant. Reuse it across sessions; a session ID is not a durable project
-identity.
+Set `POWERCONTEXT_SCOPE_ID` to an existing ID returned by `create_scope`. Reuse that Scope across sessions; a Session
+ID is not a durable project identity.
 
 Store one already-curated Memory entry:
 
@@ -66,11 +66,11 @@ curl --fail \
   --request POST \
   --header 'Content-Type: application/json' \
   --header "$POWERCONTEXT_AUTH_HEADER" \
-  --data '{
-    "scope_id": "project:example",
-    "kind": "decision",
-    "text": "Keep the public API asynchronous."
-  }' \
+  --data "{
+    \"scope_id\": \"${POWERCONTEXT_SCOPE_ID}\",
+    \"kind\": \"decision\",
+    \"text\": \"Keep the public API asynchronous.\"
+  }" \
   "$POWERCONTEXT_URL/v1/memory/remember"
 ```
 
@@ -84,11 +84,11 @@ curl --fail \
   --request POST \
   --header 'Content-Type: application/json' \
   --header "$POWERCONTEXT_AUTH_HEADER" \
-  --data '{
-    "scope_id": "project:example",
-    "query": "public API",
-    "limit": 5
-  }' \
+  --data "{
+    \"scope_id\": \"${POWERCONTEXT_SCOPE_ID}\",
+    \"query\": \"public API\",
+    \"limit\": 5
+  }" \
   "$POWERCONTEXT_URL/v1/memory/search"
 ```
 
@@ -135,11 +135,11 @@ the logical identity `{family, artifact_id}` and deliberately contains no Revisi
 and mismatched selectors or roles never create a Binding. `/v1/access/me` reports the current mode, Provider
 capabilities, and each Artifact Family's enabled state.
 
-Managed Skill export and installation do not have separate sharing permissions. Both
-`/v1/skills/publication-targets/list` and `/v1/skills/publish` require `artifact.read` on the logical Skill identity;
-the receiving Principal decides whether and how to install an exact Revision. Requests submit only an opaque
-`target_id`; public responses and errors omit host paths, Agent homes, credentials, and locators. Detailed Dashboard
-publication status is separately protected by `server.observe`.
+Cross-Scope Artifact publication uses `POST /v1/artifact-publications`. The request selects an exact source Revision,
+but authorization checks `artifact.share` on its logical `{family, artifact_id}` identity and `scope.admin` on the
+target Scope. Consequently, one logical sharing grant covers earlier and later source Revisions while every
+publication still records the exact copied Revision and its provenance. Host-local Dashboard projection remains an
+operational surface protected by the corresponding Scope and Artifact checks.
 
 The standard Skill lifecycle uses the same Access boundary. Library listing requires `scope.read`; lifecycle changes
 require `artifact.write`; package manifest/download requires `artifact.read`; package proposals require
@@ -167,7 +167,7 @@ use the same policy enforcement point; MCP tool visibility is not permission.
 | Experience and Skill | `/v1/experience/*`, `/v1/skill/*`, `/v1/skills/*` | Propose, review, package, govern, distribute, and read managed Skill revisions |
 | Review | `/v1/artifact-candidates/*` | List, inspect, revise, approve, or reject pending Candidates |
 | External Skills | `/v1/external-skills/*` | Scan configured targets and resolve or import packages |
-| Handoff Reports | `/v1/handoff-reports/*` | Manage Projects, Workstreams, activities, reports, and workspace bindings |
+| Handoff Reports | `/v1/handoff-reports/*` | Generate a read-only report for a Scope selection |
 | Statistics | `/v1/stats` | Read scoped usage statistics |
 
 The OpenAPI contract defines the complete path list, schemas, limits, and status codes. The higher-level workflow and

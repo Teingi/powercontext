@@ -41,7 +41,9 @@ class _Handler(BaseHTTPRequestHandler):
         if self.path == "/v1/sources/content":
             server.captured.set()
         response: dict[str, Any]
-        if self.path == "/v1/context/prepare":
+        if self.path == "/v1/scope-bindings/resolve":
+            response = {"scope_id": payload.get("explicit_scope_id", "project:test")}
+        elif self.path == "/v1/context/prepare":
             response = {
                 "schema": "powercontext.prepared-context.v1",
                 "status": "empty",

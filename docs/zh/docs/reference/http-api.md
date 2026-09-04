@@ -50,7 +50,8 @@ curl --fail \
 
 ## 保存并搜索一条 Memory
 
-为项目或租户选择稳定的 `scope_id`，并在不同会话中复用。会话 ID 不是持久的项目身份。
+将 `POWERCONTEXT_SCOPE_ID` 设置为 `create_scope` 返回的已有 ID，并在不同会话中复用。会话 ID 不是持久的
+项目身份。
 
 保存一条已经整理好的 Memory：
 
@@ -59,11 +60,11 @@ curl --fail \
   --request POST \
   --header 'Content-Type: application/json' \
   --header "$POWERCONTEXT_AUTH_HEADER" \
-  --data '{
-    "scope_id": "project:example",
-    "kind": "decision",
-    "text": "公开 API 保持异步。"
-  }' \
+  --data "{
+    \"scope_id\": \"${POWERCONTEXT_SCOPE_ID}\",
+    \"kind\": \"decision\",
+    \"text\": \"公开 API 保持异步。\"
+  }" \
   "$POWERCONTEXT_URL/v1/memory/remember"
 ```
 
@@ -76,11 +77,11 @@ curl --fail \
   --request POST \
   --header 'Content-Type: application/json' \
   --header "$POWERCONTEXT_AUTH_HEADER" \
-  --data '{
-    "scope_id": "project:example",
-    "query": "公开 API",
-    "limit": 5
-  }' \
+  --data "{
+    \"scope_id\": \"${POWERCONTEXT_SCOPE_ID}\",
+    \"query\": \"公开 API\",
+    \"limit\": 5
+  }" \
   "$POWERCONTEXT_URL/v1/memory/search"
 ```
 
@@ -124,10 +125,10 @@ Access wire contract 只使用 `server`、`scope` 和 `artifact` 三种 Resource
 未知 Family、未实现 Prompt lifecycle 的 `prompt` 或不匹配的 selector/role 都不会创建 Binding。`/v1/access/me` 会报告
 当前 mode、Provider 能力和每个 Artifact Family 的启用状态。
 
-Managed Skill 的导出和安装不使用单独的分享权限。`/v1/skills/publication-targets/list` 和 `/v1/skills/publish` 都只要求
-逻辑 Skill identity 上的 `artifact.read`；接收者自行决定是否以及如何安装一个精确 Revision。请求只提交不透明的
-`target_id`；公共响应和错误不返回 host path、Agent home、credential 或 locator。详细 Dashboard publication status
-另由 `server.observe` 保护。
+跨 Scope 的 Artifact 发布统一使用 `POST /v1/artifact-publications`。请求选择一个精确 source Revision，但授权检查的是
+其逻辑 `{family, artifact_id}` identity 上的 `artifact.share`，以及目标 Scope 上的 `scope.admin`。因此一个逻辑分享授权
+可以覆盖 source 的历史与后续 Revision，而每次 publication 仍会记录实际复制的精确 Revision 和 provenance。
+host-local Dashboard projection 属于运维界面，由对应的 Scope 与 Artifact 权限保护。
 
 标准 Skill 生命周期复用同一 Access 边界：Library 列表要求 `scope.read`，生命周期变更要求 `artifact.write`，
 package manifest/download 要求 `artifact.read`，package proposal 要求 `scope.contribute`，替换已有 Skill 时还要求
@@ -152,7 +153,7 @@ Principal，并注入 Authorization Provider。HTTP 与 MCP 使用同一个策�
 | Experience 与 Skill | `/v1/experience/*`、`/v1/skill/*`、`/v1/skills/*` | propose、review、打包、治理、分发并读取 managed Skill Revision |
 | 审核 | `/v1/artifact-candidates/*` | 列出、检查、修订、批准或拒绝 pending Candidate |
 | 外部 Skill | `/v1/external-skills/*` | 扫描已配置 target，解析或导入 package |
-| Handoff Report | `/v1/handoff-reports/*` | 管理 Project、Workstream、activity、report 和 workspace binding |
+| Handoff Report | `/v1/handoff-reports/*` | 按 Scope selection 生成只读报告 |
 | 统计 | `/v1/stats` | 读取指定 scope 的使用统计 |
 
 完整路径、schema、限制和状态码以 OpenAPI 契约为准。高层工作流和 Python 示例见[接口](interfaces.md)。

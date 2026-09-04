@@ -29,19 +29,20 @@ from datetime import UTC, datetime
 from functools import wraps
 from time import perf_counter
 from typing import TYPE_CHECKING, Annotated, Any, Literal, Protocol, TypeVar, cast
-from uuid import uuid4
 
-from fastapi import Depends, FastAPI, Query, Request, Response, status
+from fastapi import Depends, FastAPI, Request, Response, status
+from fastapi import Path as PathParameter
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from opentelemetry.trace import SpanKind
+from pydantic import ValidationError as PydanticValidationError
 from scalar_fastapi import AgentScalarConfig, get_scalar_api_reference
 from starlette.middleware import Middleware
 from starlette.middleware.base import RequestResponseEndpoint
 from starlette.types import Lifespan
 
 from powercontext._logging import log_safely
-from powercontext.artifacts import ArtifactRef
+from powercontext.artifacts import ArtifactAddress, ArtifactRef
 from powercontext.builtin.artifacts.experience import Experience
 from powercontext.builtin.artifacts.handoff import (
     HandoffCitation,
@@ -102,43 +103,12 @@ from powercontext.builtin.artifacts.skill.distribution import (
 from powercontext.builtin.artifacts.skill.distribution import (
     RemoteTargetEnrollment as DomainRemoteTargetEnrollment,
 )
-from powercontext.builtin.artifacts.skill.projection import (
-    AgentSkillProjectionConflictError,
-    inspect_skill_projection,
-    publish_skill_projection,
-)
 from powercontext.builtin.artifacts.skill.publication import ManagedSkillPublicationStatus
 from powercontext.builtin.handoff_report import (
     HandoffReportApplication,
-    HandoffReportBusyError,
-    HandoffReportCatalogArgumentError,
     HandoffReportError,
     HandoffReportInconsistentError,
     HandoffReportTooLargeError,
-    ProjectConflictError,
-    ProjectNotFoundError,
-    ReportPeriodInput,
-    ScopeAlreadyGroupedError,
-    WorkspaceBindingConflictError,
-    WorkspaceBindingNotFoundError,
-    WorkstreamConflictError,
-    WorkstreamNotFoundError,
-)
-from powercontext.builtin.handoff_report.models import (
-    ExternalReference as ReportExternalReference,
-)
-from powercontext.builtin.handoff_report.models import (
-    ProjectDescriptor as DomainProjectDescriptor,
-)
-from powercontext.builtin.handoff_report.models import ReportActivityEvent as DomainReportActivityEvent
-from powercontext.builtin.handoff_report.models import RepositoryRef as DomainRepositoryRef
-from powercontext.builtin.handoff_report.models import (
-    WorkstreamDescriptor as DomainWorkstreamDescriptor,
-)
-from powercontext.builtin.handoff_report.repository import (
-    ActivityEventConflictError,
-    InvalidActivityEventError,
-    InvalidActivityRepositoryArgumentError,
 )
 from powercontext.builtin.inference.errors import InferenceTimeoutError, InferenceUnavailableError
 from powercontext.builtin.persistence.agent_skill_targets import RemoteAgentSkillTarget
@@ -153,6 +123,14 @@ from powercontext.builtin.persistence.errors import (
     StoredPayloadConflictError,
 )
 from powercontext.builtin.persistence.skill_publications import SkillPublication
+from powercontext.builtin.publication import (
+    ArtifactPublicationApplication,
+    ArtifactPublicationConflictError,
+    ArtifactPublicationUnsupportedError,
+)
+from powercontext.builtin.publication import (
+    ArtifactPublicationRequest as DomainArtifactPublicationRequest,
+)
 from powercontext.builtin.review import (
     ArtifactTargetConflictError,
     CandidateConflictError,
@@ -259,6 +237,28 @@ from powercontext.builtin.runtime import (
 from powercontext.builtin.runtime import (
     SubmitSourceObservation as RuntimeSubmitSourceObservation,
 )
+from powercontext.builtin.scope import (
+    ScopeApplication,
+    ScopeBindingNotFoundError,
+    ScopeDraft,
+    ScopeIdempotencyConflictError,
+    ScopeMutation,
+    ScopeNotFoundError,
+    ScopeRelationshipError,
+    ScopeVersionConflictError,
+)
+from powercontext.builtin.scope import (
+    ScopeBindingKey as DomainScopeBindingKey,
+)
+from powercontext.builtin.scope import (
+    ScopeDescriptor as DomainScopeDescriptor,
+)
+from powercontext.builtin.scope import (
+    ScopeExternalReference as DomainScopeExternalReference,
+)
+from powercontext.builtin.scope import (
+    ScopeSelection as DomainScopeSelection,
+)
 from powercontext.builtin.sources import (
     ObservedInvocation,
     ObservedOutcome,
@@ -315,20 +315,20 @@ from powercontext.http import (
     ArtifactCandidate,
     ArtifactCandidatePage,
     ArtifactFamilyAccessCapability,
-    AttachHandoffReportWorkspaceRequest,
     Capabilities,
     CaptureContentSourceRequest,
     CaptureContentSourceResponse,
+    ClearScopeBindingRequest,
+    ClearScopeBindingResponse,
     CommitConnectorCheckpointRequest,
     CommitHandoffRequest,
     CommittedHandoff,
     ConnectorCheckpointState,
     ContinueHandoffRequest,
     CreateAccessBindingRequest,
-    CreateHandoffReportProjectRequest,
     CreateRemoteSkillTargetRequest,
+    CreateScopeRequest,
     CreateWorkContractRequest,
-    DetachHandoffReportWorkspaceRequest,
     DownloadRemoteSkillPackageRequest,
     EnrollRemoteSkillTargetRequest,
     ErrorDetail,
@@ -344,24 +344,17 @@ from powercontext.http import (
     GetArtifactCandidateRequest,
     GetConnectorCheckpointRequest,
     GetExperienceRequest,
-    GetHandoffReportProjectRequest,
     GetHandoffReportRequest,
-    GetHandoffReportWorkspaceRequest,
     GetMemoryEntryRequest,
     GetSkillPackageRequest,
     GetSkillRequest,
     GetStatsRequest,
     HandoffAcknowledgement,
     HandoffCurrentWorkRequest,
-    HandoffReportActivity,
-    HandoffReportActivityPage,
     HandoffReportResponse,
-    HandoffReportWorkspaceBinding,
     HandoffSelection,
     HealthResponse,
     ImportExternalSkillRequest,
-    KnownHandoffScope,
-    KnownHandoffScopePage,
     ListAccessAuditRequest,
     ListAccessBindingsRequest,
     ListAccessResourcesRequest,
@@ -369,10 +362,6 @@ from powercontext.http import (
     ListArtifactCandidatesRequest,
     ListExternalSkillsRequest,
     ListExternalSkillsResponse,
-    ListHandoffReportActivitiesRequest,
-    ListHandoffReportKnownScopesRequest,
-    ListHandoffReportProjectsRequest,
-    ListHandoffReportWorkstreamsRequest,
     ListManagedSkillsRequest,
     ListManagedSkillsResponse,
     ListMemoryChangesRequest,
@@ -381,9 +370,6 @@ from powercontext.http import (
     ListMemoryEntriesResponse,
     ListRemoteSkillTargetsRequest,
     ListRemoteSkillTargetsResponse,
-    ListSkillPublicationTargetsRequest,
-    ListSkillPublicationTargetsResponse,
-    ManagedSkillPublication,
     MemoryEntry,
     MemoryEntryAccessSelector,
     MemoryMutationResponse,
@@ -391,24 +377,18 @@ from powercontext.http import (
     PreparedContext,
     PreparedWorkHandoff,
     PrepareHandoffRequest,
-    ProjectDescriptor,
-    ProjectPage,
     ProposeExperienceRequest,
     ProposeSkillPackageRequest,
     ProposeSkillRequest,
-    PublishManagedSkillRequest,
+    PublishArtifactRequest,
     PublishRemoteSkillRequest,
-    PurgeHandoffReportActivitiesRequest,
-    PurgeHandoffReportActivitiesResponse,
     ReadinessResponse,
     ReadinessStatus,
     ReconcileRemoteSkillsRequest,
     ReconcileRemoteSkillsResponse,
-    RecordHandoffReportActivityRequest,
     RecordRemoteSkillReceiptRequest,
     RecordSkillUsageRequest,
     RecordTaskOutcomeRequest,
-    RegisterHandoffReportWorkstreamRequest,
     RegisterSourceDefinitionRequest,
     RejectArtifactCandidateRequest,
     RememberMemoryRequest,
@@ -422,6 +402,8 @@ from powercontext.http import (
     RenameRemoteSkillTargetRequest,
     ReplaceAccessBindingRequest,
     ResolveExternalSkillRequest,
+    ResolveScopeBindingRequest,
+    ResolveScopeSelectionRequest,
     RetireMemoryEntryRequest,
     ReviseArtifactCandidateRequest,
     ReviseMemoryEntryRequest,
@@ -430,27 +412,29 @@ from powercontext.http import (
     ScanExternalSkillsRequest,
     ScanExternalSkillsResponse,
     ScopeAccessResource,
+    ScopeBinding,
+    ScopeBindingKey,
+    ScopeDescriptor,
     ScopedStats,
+    ScopePage,
+    ScopeSelection,
     SearchMemoryRequest,
     SearchMemoryResponse,
     ServerAccessResource,
+    SetDefaultScopeRequest,
+    SetScopeBindingRequest,
     SkillArtifact,
     SkillGovernance,
     SkillPackageDownload,
     SkillPackageFile,
     SkillPackageManifest,
-    SkillPublicationTarget,
     SourceDefinitionManifest,
     SourceObservationReceipt,
-    StoredHandoffReportActivity,
     SubmitSourceObservationRequest,
     UnpublishRemoteSkillRequest,
-    UpdateHandoffReportProjectRequest,
-    UpdateHandoffReportWorkstreamRequest,
+    UpdateScopeRequest,
     UpdateSkillLifecycleRequest,
     WorkSourceReceipt,
-    WorkstreamDescriptor,
-    WorkstreamPage,
 )
 from powercontext.http import (
     AccessBinding as TransportAccessBinding,
@@ -489,13 +473,10 @@ from powercontext.http import (
     AccessSubject as TransportAccessSubject,
 )
 from powercontext.http import (
-    AgentKind as TransportAgentKind,
+    ArtifactPublication as TransportArtifactPublication,
 )
 from powercontext.http import (
     AssignableSubjectType as TransportAssignableSubjectType,
-)
-from powercontext.http import (
-    ExternalSkillInstallationScope as TransportExternalSkillInstallationScope,
 )
 from powercontext.http import (
     HandoffActivation as TransportHandoffActivation,
@@ -516,13 +497,7 @@ from powercontext.http._generated.models import (
     ArtifactFamily as TransportArtifactFamily,
 )
 from powercontext.http._generated.models import (
-    Capability as TransportSkillPublicationCapability,
-)
-from powercontext.http._generated.models import (
     ShareUnit as TransportShareUnit,
-)
-from powercontext.http._generated.models import (
-    State as TransportManagedSkillPublicationState,
 )
 from powercontext.http._generated.models import Type4 as TransportMemoryEntrySelectorType
 from powercontext.http._generated.operations import (
@@ -532,17 +507,16 @@ from powercontext.http._generated.operations import (
     API_TITLE,
     API_VERSION,
     APPROVE_ARTIFACT_CANDIDATE,
-    ATTACH_HANDOFF_REPORT_WORKSPACE,
     CAPTURE_CONTENT_SOURCE,
     CHECK_ACCESS,
+    CLEAR_SCOPE_BINDING,
     COMMIT_CONNECTOR_CHECKPOINT,
     COMMIT_HANDOFF,
     CONTINUE_HANDOFF,
     CREATE_ACCESS_BINDING,
-    CREATE_HANDOFF_REPORT_PROJECT,
     CREATE_REMOTE_SKILL_TARGET,
+    CREATE_SCOPE,
     CREATE_WORK_CONTRACT,
-    DETACH_HANDOFF_REPORT_WORKSPACE,
     DOWNLOAD_REMOTE_SKILL_PACKAGE,
     DOWNLOAD_SKILL_PACKAGE,
     ENROLL_REMOTE_SKILL_TARGET,
@@ -554,13 +528,13 @@ from powercontext.http._generated.operations import (
     GET_ARTIFACT_CANDIDATE,
     GET_CAPABILITIES,
     GET_CONNECTOR_CHECKPOINT,
+    GET_DEFAULT_SCOPE,
     GET_EXPERIENCE,
     GET_HANDOFF_REPORT,
-    GET_HANDOFF_REPORT_PROJECT,
-    GET_HANDOFF_REPORT_WORKSPACE,
     GET_LIVENESS,
     GET_MEMORY_ENTRY,
     GET_READINESS,
+    GET_SCOPE,
     GET_SKILL,
     GET_SKILL_PACKAGE_MANIFEST,
     GET_STATS,
@@ -572,36 +546,31 @@ from powercontext.http._generated.operations import (
     LIST_ACCESS_ROLES,
     LIST_ARTIFACT_CANDIDATES,
     LIST_EXTERNAL_SKILLS,
-    LIST_HANDOFF_REPORT_ACTIVITIES,
-    LIST_HANDOFF_REPORT_KNOWN_SCOPES,
-    LIST_HANDOFF_REPORT_PROJECTS,
-    LIST_HANDOFF_REPORT_WORKSTREAMS,
     LIST_MANAGED_SKILLS,
     LIST_MEMORY_CHANGES,
     LIST_MEMORY_ENTRIES,
     LIST_REMOTE_SKILL_TARGETS,
-    LIST_SKILL_PUBLICATION_TARGETS,
+    LIST_SCOPES,
     OPENAPI_VERSION,
     PREPARE_CONTEXT,
     PREPARE_HANDOFF,
     PROPOSE_EXPERIENCE,
     PROPOSE_SKILL,
     PROPOSE_SKILL_PACKAGE,
-    PUBLISH_MANAGED_SKILL,
+    PUBLISH_ARTIFACT,
     PUBLISH_REMOTE_SKILL,
-    PURGE_HANDOFF_REPORT_ACTIVITIES,
     RECONCILE_REMOTE_SKILLS,
-    RECORD_HANDOFF_REPORT_ACTIVITY,
     RECORD_REMOTE_SKILL_RECEIPT,
     RECORD_SKILL_USAGE,
     RECORD_TASK_OUTCOME,
-    REGISTER_HANDOFF_REPORT_WORKSTREAM,
     REGISTER_SOURCE_DEFINITION,
     REJECT_ARTIFACT_CANDIDATE,
     REMEMBER_MEMORY,
     RENAME_REMOTE_SKILL_TARGET,
     REPLACE_ACCESS_BINDING,
     RESOLVE_EXTERNAL_SKILL,
+    RESOLVE_SCOPE_BINDING,
+    RESOLVE_SCOPE_SELECTION,
     RETIRE_MEMORY_ENTRY,
     REVISE_ARTIFACT_CANDIDATE,
     REVISE_MEMORY_ENTRY,
@@ -609,10 +578,11 @@ from powercontext.http._generated.operations import (
     REVOKE_REMOTE_SKILL_TARGET,
     SCAN_EXTERNAL_SKILLS,
     SEARCH_MEMORY,
+    SET_DEFAULT_SCOPE,
+    SET_SCOPE_BINDING,
     SUBMIT_SOURCE_OBSERVATION,
     UNPUBLISH_REMOTE_SKILL,
-    UPDATE_HANDOFF_REPORT_PROJECT,
-    UPDATE_HANDOFF_REPORT_WORKSTREAM,
+    UPDATE_SCOPE,
     UPDATE_SKILL_LIFECYCLE,
     AccessRequirement,
     Operation,
@@ -678,6 +648,7 @@ CapabilityProvider = Callable[[], Capabilities]
 ReadinessProbe = Callable[[], Awaitable[ReadinessResponse]]
 _RequestT = TypeVar("_RequestT")
 _ResponseT = TypeVar("_ResponseT")
+_ScopePathId = Annotated[str, PathParameter(min_length=1, max_length=256, pattern=r".*\S.*")]
 
 
 class _ScopedSourceApplication(Protocol):
@@ -963,8 +934,17 @@ class _ScopedStatisticsApplication(Protocol):
 class _StatisticsApplication(Protocol):
     def for_scope(self, scope_id: str, /) -> _ScopedStatisticsApplication: ...
 
+    async def overview(
+        self,
+        selection: DomainScopeSelection,
+        *,
+        period: RuntimeStatisticsPeriod,
+    ) -> RuntimeStatistics: ...
+
 
 class ServerApplication(Protocol):
+    scopes: ScopeApplication | None
+    publications: ArtifactPublicationApplication | None
     sources: _SourceApplication
     ingestion: _RemoteIngestionApplication
     context: _ContextApplication
@@ -984,18 +964,6 @@ class _RuntimeNotReadyError(RuntimeError):
     """Raised when an application operation is called without a Runtime binding."""
 
 
-class _SkillPublicationTargetNotFoundError(PowerContextError):
-    """Raised after authorization when an opaque target is unknown or disabled."""
-
-
-class _SkillPublicationConflictError(PowerContextError):
-    """Raised when a host-local projection cannot be replaced safely."""
-
-
-class _SkillPublicationFailedError(PowerContextError):
-    """Raised when an authorized projection fails without exposing host details."""
-
-
 def create_app(
     *,
     application: ServerApplication | None = None,
@@ -1009,7 +977,6 @@ def create_app(
     access_control: AccessControlService | None = None,
     access_mode: Literal["disabled", "enforced"] | None = None,
     authentication_provider: AuthenticationProvider | None = None,
-    agent_skill_targets: Sequence[AgentSkillTarget] = (),
     allow_insecure_remote_http: bool = False,
 ) -> FastAPI:
     """Build the HTTP adapter around an optional Runtime application binding."""
@@ -1032,7 +999,6 @@ def create_app(
     app.state.access_mode = (
         ("disabled" if access_control is None else access_control.mode) if access_mode is None else access_mode
     )
-    app.state.agent_skill_targets = tuple(target for target in agent_skill_targets if target.allow_managed_publish)
     app.state.metrics = metrics
     app.state.tracing = tracing
     app.state.allow_insecure_remote_http = allow_insecure_remote_http
@@ -1062,7 +1028,11 @@ def create_app(
         return response
 
     @app.exception_handler(RequestValidationError)
-    async def invalid_request(request: Request, error: RequestValidationError) -> JSONResponse:
+    @app.exception_handler(PydanticValidationError)
+    async def invalid_request(
+        request: Request,
+        error: RequestValidationError | PydanticValidationError,
+    ) -> JSONResponse:
         return _error_response(
             status.HTTP_422_UNPROCESSABLE_CONTENT,
             code="invalid_request",
@@ -1095,6 +1065,17 @@ def create_app(
     _add_route(app, GET_LIVENESS, get_liveness)
     _add_route(app, GET_READINESS, get_readiness)
     _add_route(app, GET_CAPABILITIES, get_capabilities)
+    _add_route(app, LIST_SCOPES, list_scopes)
+    _add_route(app, CREATE_SCOPE, create_scope)
+    _add_route(app, GET_DEFAULT_SCOPE, get_default_scope)
+    _add_route(app, SET_DEFAULT_SCOPE, set_default_scope)
+    _add_route(app, GET_SCOPE, get_scope)
+    _add_route(app, UPDATE_SCOPE, update_scope)
+    _add_route(app, RESOLVE_SCOPE_SELECTION, resolve_scope_selection)
+    _add_route(app, RESOLVE_SCOPE_BINDING, resolve_scope_binding)
+    _add_route(app, SET_SCOPE_BINDING, set_scope_binding)
+    _add_route(app, CLEAR_SCOPE_BINDING, clear_scope_binding)
+    _add_route(app, PUBLISH_ARTIFACT, publish_artifact)
     _add_route(app, GET_STATS, get_stats)
     _add_route(app, GET_ACCESS_PRINCIPAL, get_access_principal)
     _add_route(app, CHECK_ACCESS, check_access)
@@ -1106,20 +1087,6 @@ def create_app(
     _add_route(app, REPLACE_ACCESS_BINDING, replace_access_binding)
     _add_route(app, LIST_ACCESS_AUDIT, list_access_audit)
     if handoff_report_enabled:
-        _add_route(app, CREATE_HANDOFF_REPORT_PROJECT, create_handoff_report_project)
-        _add_route(app, GET_HANDOFF_REPORT_PROJECT, get_handoff_report_project)
-        _add_route(app, UPDATE_HANDOFF_REPORT_PROJECT, update_handoff_report_project)
-        _add_route(app, LIST_HANDOFF_REPORT_PROJECTS, list_handoff_report_projects)
-        _add_route(app, LIST_HANDOFF_REPORT_KNOWN_SCOPES, list_handoff_report_known_scopes)
-        _add_route(app, REGISTER_HANDOFF_REPORT_WORKSTREAM, register_handoff_report_workstream)
-        _add_route(app, LIST_HANDOFF_REPORT_WORKSTREAMS, list_handoff_report_workstreams)
-        _add_route(app, UPDATE_HANDOFF_REPORT_WORKSTREAM, update_handoff_report_workstream)
-        _add_route(app, RECORD_HANDOFF_REPORT_ACTIVITY, record_handoff_report_activity)
-        _add_route(app, LIST_HANDOFF_REPORT_ACTIVITIES, list_handoff_report_activities)
-        _add_route(app, PURGE_HANDOFF_REPORT_ACTIVITIES, purge_handoff_report_activities)
-        _add_route(app, GET_HANDOFF_REPORT_WORKSPACE, get_handoff_report_workspace)
-        _add_route(app, ATTACH_HANDOFF_REPORT_WORKSPACE, attach_handoff_report_workspace)
-        _add_route(app, DETACH_HANDOFF_REPORT_WORKSPACE, detach_handoff_report_workspace)
         _add_route(app, GET_HANDOFF_REPORT, get_handoff_report)
     _add_route(app, CAPTURE_CONTENT_SOURCE, capture_content_source)
     _add_route(app, REGISTER_SOURCE_DEFINITION, register_source_definition)
@@ -1150,8 +1117,6 @@ def create_app(
     _add_route(app, PROPOSE_SKILL, propose_skill)
     _add_route(app, GENERATE_SKILL, generate_skill)
     _add_route(app, GET_SKILL, get_skill)
-    _add_route(app, LIST_SKILL_PUBLICATION_TARGETS, list_skill_publication_targets)
-    _add_route(app, PUBLISH_MANAGED_SKILL, publish_managed_skill)
     _add_route(app, LIST_MANAGED_SKILLS, list_managed_skills)
     _add_route(app, UPDATE_SKILL_LIFECYCLE, update_skill_lifecycle)
     _add_route(app, GET_SKILL_PACKAGE_MANIFEST, get_skill_package_manifest)
@@ -1589,192 +1554,141 @@ async def list_access_audit(payload: ListAccessAuditRequest, request: Request) -
     )
 
 
+async def list_scopes(
+    scopes: Annotated[ScopeApplication, Depends(_require_scope_application)],
+) -> ScopePage:
+    return ScopePage(items=[_scope_descriptor_response(scope) for scope in await scopes.list()])
+
+
+async def create_scope(
+    request: CreateScopeRequest,
+    scopes: Annotated[ScopeApplication, Depends(_require_scope_application)],
+) -> ScopeDescriptor:
+    created = await scopes.create(
+        ScopeDraft(
+            title=request.title,
+            summary=request.summary,
+            parent_scope_id=request.parent_scope_id,
+            context_references=tuple(reference.root for reference in request.context_references),
+            external_references=tuple(
+                DomainScopeExternalReference(kind=reference.kind, value=reference.value)
+                for reference in request.external_references
+            ),
+            idempotency_key=request.idempotency_key,
+        )
+    )
+    return _scope_descriptor_response(created)
+
+
+async def get_scope(
+    scope_id: _ScopePathId,
+    scopes: Annotated[ScopeApplication, Depends(_require_scope_application)],
+) -> ScopeDescriptor:
+    return _scope_descriptor_response(await scopes.get(scope_id))
+
+
+async def update_scope(
+    scope_id: _ScopePathId,
+    request: UpdateScopeRequest,
+    scopes: Annotated[ScopeApplication, Depends(_require_scope_application)],
+) -> ScopeDescriptor:
+    updated = await scopes.update(
+        scope_id,
+        ScopeMutation(
+            expected_version=request.expected_version,
+            title=request.title,
+            summary=request.summary,
+            parent_scope_id=request.parent_scope_id,
+            context_references=tuple(reference.root for reference in request.context_references),
+            external_references=tuple(
+                DomainScopeExternalReference(kind=reference.kind, value=reference.value)
+                for reference in request.external_references
+            ),
+        ),
+    )
+    return _scope_descriptor_response(updated)
+
+
+async def get_default_scope(
+    scopes: Annotated[ScopeApplication, Depends(_require_scope_application)],
+) -> ScopeDescriptor:
+    current = await scopes.default_scope()
+    if current is None:
+        raise ScopeBindingNotFoundError
+    return _scope_descriptor_response(current)
+
+
+async def set_default_scope(
+    request: SetDefaultScopeRequest,
+    scopes: Annotated[ScopeApplication, Depends(_require_scope_application)],
+) -> ScopeDescriptor:
+    return _scope_descriptor_response(await scopes.set_default(request.scope_id))
+
+
+async def resolve_scope_selection(
+    request: ResolveScopeSelectionRequest,
+    scopes: Annotated[ScopeApplication, Depends(_require_scope_application)],
+) -> ScopePage:
+    selection = _domain_scope_selection(request.selection)
+    return ScopePage(items=[_scope_descriptor_response(scope) for scope in await scopes.resolve_selection(selection)])
+
+
+async def resolve_scope_binding(
+    request: ResolveScopeBindingRequest,
+    scopes: Annotated[ScopeApplication, Depends(_require_scope_application)],
+) -> ScopeDescriptor:
+    resolved = await scopes.resolve_binding(
+        explicit_scope_id=request.explicit_scope_id,
+        binding_keys=tuple(_domain_binding_key(key) for key in request.binding_keys),
+    )
+    return _scope_descriptor_response(resolved)
+
+
+async def set_scope_binding(
+    request: SetScopeBindingRequest,
+    scopes: Annotated[ScopeApplication, Depends(_require_scope_application)],
+) -> ScopeBinding:
+    binding = await scopes.bind(_domain_binding_key(request.root.key), request.root.scope_id)
+    return ScopeBinding(
+        key=_transport_binding_key(binding.key),
+        scope_id=binding.scope_id,
+    )
+
+
+async def clear_scope_binding(
+    request: ClearScopeBindingRequest,
+    scopes: Annotated[ScopeApplication, Depends(_require_scope_application)],
+) -> ClearScopeBindingResponse:
+    return ClearScopeBindingResponse(cleared=await scopes.clear_binding(_domain_binding_key(request.key)))
+
+
+async def publish_artifact(
+    request: PublishArtifactRequest,
+    publications: Annotated[ArtifactPublicationApplication, Depends(_require_publication_application)],
+) -> TransportArtifactPublication:
+    result = await publications.publish(
+        DomainArtifactPublicationRequest(
+            source=ArtifactAddress(
+                scope_id=request.source.scope_id,
+                artifact=ArtifactRef.model_validate(request.source.artifact.model_dump(mode="json")),
+            ),
+            target_scope_id=request.target_scope_id,
+            idempotency_key=request.idempotency_key,
+        )
+    )
+    return TransportArtifactPublication.model_validate(result.model_dump(mode="json"))
+
+
 async def get_stats(
-    request: Annotated[GetStatsRequest, Query()],
+    request: GetStatsRequest,
     response: Response,
     application: Annotated[ServerApplication, Depends(_require_application)],
 ) -> ScopedStats:
     response.headers["Cache-Control"] = "no-store"
-    result = await application.statistics.for_scope(request.scope_id).overview(
-        period=RuntimeStatisticsPeriod(request.period.value)
+    result = await application.statistics.overview(
+        _domain_scope_selection(request.selection), period=RuntimeStatisticsPeriod(request.period.value)
     )
     return mapping.statistics_response(result)
-
-
-async def create_handoff_report_project(
-    request: CreateHandoffReportProjectRequest,
-    report: Annotated[HandoffReportApplication, Depends(_require_handoff_report_application)],
-) -> ProjectDescriptor:
-    result = await report.create_project(
-        project_key=request.project_key,
-        title=request.title,
-        description=request.description,
-        default_locale=request.default_locale.value,
-        timezone=request.timezone,
-    )
-    return _project_descriptor_response(result)
-
-
-async def get_handoff_report_project(
-    request: GetHandoffReportProjectRequest,
-    report: Annotated[HandoffReportApplication, Depends(_require_handoff_report_application)],
-) -> ProjectDescriptor:
-    return _project_descriptor_response(await report.get_project(request.project_id))
-
-
-async def update_handoff_report_project(
-    request: UpdateHandoffReportProjectRequest,
-    report: Annotated[HandoffReportApplication, Depends(_require_handoff_report_application)],
-) -> ProjectDescriptor:
-    descriptor = DomainProjectDescriptor.model_validate_json(request.project.model_dump_json(by_alias=True))
-    return _project_descriptor_response(await report.update_project(descriptor, request.expected_version))
-
-
-async def list_handoff_report_projects(
-    request: ListHandoffReportProjectsRequest,
-    report: Annotated[HandoffReportApplication, Depends(_require_handoff_report_application)],
-) -> ProjectPage:
-    result = await report.list_projects(
-        cursor=request.cursor,
-        limit=request.limit,
-        include_archived=request.include_archived,
-    )
-    return ProjectPage(
-        items=[_project_descriptor_response(item) for item in result.items],
-        next_cursor=result.next_cursor,
-    )
-
-
-async def list_handoff_report_known_scopes(
-    request: ListHandoffReportKnownScopesRequest,
-    report: Annotated[HandoffReportApplication, Depends(_require_handoff_report_application)],
-) -> KnownHandoffScopePage:
-    result = await report.list_known_scopes(cursor=request.cursor, limit=request.limit)
-    return KnownHandoffScopePage(
-        items=[KnownHandoffScope(scope_id=scope_id) for scope_id in result.items],
-        next_cursor=result.next_cursor,
-    )
-
-
-async def register_handoff_report_workstream(
-    request: RegisterHandoffReportWorkstreamRequest,
-    report: Annotated[HandoffReportApplication, Depends(_require_handoff_report_application)],
-) -> WorkstreamDescriptor:
-    values = request.model_dump(mode="json")
-    result = await report.register_workstream(
-        project_id=request.project_id,
-        scope_id=request.scope_id,
-        title=request.title,
-        kind=request.kind.value,
-        key=request.key,
-        catalog_state=request.catalog_state.value,
-        external_refs=tuple(ReportExternalReference.model_validate(value) for value in values["external_refs"]),
-        labels=tuple(str(value) for value in values["labels"]),
-    )
-    return _workstream_descriptor_response(result)
-
-
-async def list_handoff_report_workstreams(
-    request: ListHandoffReportWorkstreamsRequest,
-    report: Annotated[HandoffReportApplication, Depends(_require_handoff_report_application)],
-) -> WorkstreamPage:
-    result = await report.list_workstreams(
-        request.project_id,
-        cursor=request.cursor,
-        limit=request.limit,
-        include_archived=request.include_archived,
-    )
-    return WorkstreamPage(
-        items=[_workstream_descriptor_response(item) for item in result.items],
-        next_cursor=result.next_cursor,
-    )
-
-
-async def update_handoff_report_workstream(
-    request: UpdateHandoffReportWorkstreamRequest,
-    report: Annotated[HandoffReportApplication, Depends(_require_handoff_report_application)],
-) -> WorkstreamDescriptor:
-    descriptor = DomainWorkstreamDescriptor.model_validate_json(request.workstream.model_dump_json(by_alias=True))
-    return _workstream_descriptor_response(await report.update_workstream(descriptor, request.expected_version))
-
-
-async def record_handoff_report_activity(
-    request: RecordHandoffReportActivityRequest,
-    report: Annotated[HandoffReportApplication, Depends(_require_handoff_report_application)],
-) -> StoredHandoffReportActivity:
-    values = request.model_dump(mode="json")
-    event = DomainReportActivityEvent.model_validate_json(
-        json.dumps({
-            **values,
-            "event_id": f"evt_{uuid4().hex}",
-            "observed_at": datetime.now(UTC).isoformat(),
-            "trust": "untrusted_observation",
-        })
-    )
-    stored = await report.record_activity(event)
-    return StoredHandoffReportActivity(
-        cursor=stored.cursor,
-        event=HandoffReportActivity.model_validate(stored.payload),
-    )
-
-
-async def list_handoff_report_activities(
-    request: ListHandoffReportActivitiesRequest,
-    report: Annotated[HandoffReportApplication, Depends(_require_handoff_report_application)],
-) -> HandoffReportActivityPage:
-    page = await report.list_activities(
-        request.project_id,
-        period_start=request.period_start,
-        period_end=request.period_end,
-        sources=None if request.sources is None else tuple(value.value for value in request.sources),
-        after_cursor=request.after_cursor,
-        through_cursor=request.through_cursor,
-        limit=request.limit,
-    )
-    return HandoffReportActivityPage(
-        items=[
-            HandoffReportActivity.model_validate(item.model_dump(mode="json", by_alias=True)) for item in page.items
-        ],
-        next_cursor=page.next_cursor,
-        high_watermark=page.high_watermark,
-    )
-
-
-async def purge_handoff_report_activities(
-    request: PurgeHandoffReportActivitiesRequest,
-    report: Annotated[HandoffReportApplication, Depends(_require_handoff_report_application)],
-) -> PurgeHandoffReportActivitiesResponse:
-    deleted = await report.purge_activities(request.project_id, request.observed_before)
-    return PurgeHandoffReportActivitiesResponse(deleted_count=deleted)
-
-
-async def get_handoff_report_workspace(
-    request: GetHandoffReportWorkspaceRequest,
-    report: Annotated[HandoffReportApplication, Depends(_require_handoff_report_application)],
-) -> HandoffReportWorkspaceBinding:
-    binding = await report.get_workspace_binding(request.workspace_instance_id)
-    return HandoffReportWorkspaceBinding.model_validate(binding.model_dump(mode="json", by_alias=True))
-
-
-async def attach_handoff_report_workspace(
-    request: AttachHandoffReportWorkspaceRequest,
-    report: Annotated[HandoffReportApplication, Depends(_require_handoff_report_application)],
-) -> HandoffReportWorkspaceBinding:
-    binding = await report.attach_workspace_binding(
-        workspace_instance_id=request.workspace_instance_id,
-        project_id=request.project_id,
-        repository_ref=DomainRepositoryRef.model_validate(request.repository_ref.model_dump(mode="json")),
-        expected_version=request.expected_version,
-    )
-    return HandoffReportWorkspaceBinding.model_validate(binding.model_dump(mode="json", by_alias=True))
-
-
-async def detach_handoff_report_workspace(
-    request: DetachHandoffReportWorkspaceRequest,
-    report: Annotated[HandoffReportApplication, Depends(_require_handoff_report_application)],
-) -> HandoffReportWorkspaceBinding:
-    binding = await report.detach_workspace_binding(request.workspace_instance_id, request.expected_version)
-    return HandoffReportWorkspaceBinding.model_validate(binding.model_dump(mode="json", by_alias=True))
 
 
 async def get_handoff_report(
@@ -1782,23 +1696,7 @@ async def get_handoff_report(
     response: Response,
     report: Annotated[HandoffReportApplication, Depends(_require_handoff_report_application)],
 ) -> HandoffReportResponse | Response:
-    result = await report.get_report(
-        request.scope_id,
-        locale=None if request.locale is None else request.locale.value,
-        include_evidence_checks=request.include_evidence_checks,
-        report_format=request.format.value,
-        include_archived=request.include_archived,
-        period=(
-            None
-            if request.period is None
-            else ReportPeriodInput(
-                start=request.period.start,
-                end=request.period.end,
-                timezone=request.period.timezone,
-                compare_to_previous_period=request.period.compare_to_previous_period,
-            )
-        ),
-    )
+    result = await report.get_report(_domain_scope_selection(request.selection))
     selection_digest = cast(str, result.selection_digest)
     report_digest = cast(str, result.report_digest)
     response.headers["Cache-Control"] = "no-store"
@@ -1848,8 +1746,7 @@ def _require_report_size(estimated_bytes: int, report: Any) -> None:
         return
     raise HandoffReportTooLargeError(
         estimated_bytes=estimated_bytes,
-        selected_workstreams=report.coverage.selected_workstreams,
-        selected_activities=len(report.activity_selection),
+        selected_scopes=len(report.scopes),
     )
 
 
@@ -2221,29 +2118,6 @@ async def get_skill(
 ) -> SkillArtifact:
     result = await application.skill.for_scope(request.scope_id).get(mapping.get_skill_request(request))
     return mapping.skill_response(result)
-
-
-async def list_skill_publication_targets(
-    request: ListSkillPublicationTargetsRequest,
-    http_request: Request,
-    application: Annotated[ServerApplication, Depends(_require_application)],
-) -> ListSkillPublicationTargetsResponse:
-    await application.skill.for_scope(request.scope_id).get(
-        RuntimeGetSkillRequest(artifact=mapping.runtime_artifact_reference(request.artifact))
-    )
-    targets: tuple[AgentSkillTarget, ...] = http_request.app.state.agent_skill_targets
-    return ListSkillPublicationTargetsResponse(
-        artifact=request.artifact,
-        targets=[
-            SkillPublicationTarget(
-                target_id=target.target_id,
-                agent_kind=TransportAgentKind(target.agent_kind),
-                installation_scope=TransportExternalSkillInstallationScope(target.installation_scope),
-                capabilities=[TransportSkillPublicationCapability.PUBLISH],
-            )
-            for target in targets
-        ],
-    )
 
 
 async def list_managed_skills(
@@ -2631,52 +2505,6 @@ def _skill_package_manifest(package: SkillPackageSnapshot) -> SkillPackageManife
     )
 
 
-async def publish_managed_skill(
-    request: PublishManagedSkillRequest,
-    http_request: Request,
-    application: Annotated[ServerApplication, Depends(_require_application)],
-) -> ManagedSkillPublication:
-    skill = await application.skill.for_scope(request.scope_id).get(
-        RuntimeGetSkillRequest(artifact=mapping.runtime_artifact_reference(request.artifact))
-    )
-    targets: tuple[AgentSkillTarget, ...] = http_request.app.state.agent_skill_targets
-    target = next((candidate for candidate in targets if candidate.target_id == request.target_id), None)
-    if target is None:
-        raise _SkillPublicationTargetNotFoundError
-    expected = await asyncio.to_thread(inspect_skill_projection, skill.as_ref(), skill.content, target)
-    try:
-        published = await asyncio.to_thread(
-            publish_skill_projection,
-            skill.as_ref(),
-            skill.content,
-            target,
-            expected=expected,
-        )
-    except AgentSkillProjectionConflictError as error:
-        raise _SkillPublicationConflictError from error
-    except (OSError, UnicodeError, ValueError) as error:
-        raise _SkillPublicationFailedError from error
-    try:
-        await application.external_skills.for_scope(request.scope_id).scan()
-    except Exception:
-        log_safely(
-            logger,
-            logging.WARNING,
-            "PowerContext external Skill scan failed after publication",
-            extra={"error_code": "external_skill_scan_failed"},
-        )
-    return ManagedSkillPublication(
-        artifact=request.artifact,
-        target_id=target.target_id,
-        agent_kind=TransportAgentKind(target.agent_kind),
-        installation_scope=TransportExternalSkillInstallationScope(target.installation_scope),
-        state=TransportManagedSkillPublicationState.PUBLISHED,
-        applied_revision=published.published_artifact.revision
-        if published.published_artifact is not None
-        else request.artifact.revision,
-    )
-
-
 async def _validate_shareable_resource(application: ServerApplication | None, resource: ResourceRef) -> None:
     if resource.type is not AccessResourceType.ARTIFACT:
         return
@@ -2945,6 +2773,20 @@ def _require_application(request: Request) -> ServerApplication:
     return application
 
 
+def _require_scope_application(request: Request) -> ScopeApplication:
+    application = _require_application(request)
+    if application.scopes is None:
+        raise _RuntimeNotReadyError
+    return application.scopes
+
+
+def _require_publication_application(request: Request) -> ArtifactPublicationApplication:
+    application = _require_application(request)
+    if application.publications is None:
+        raise _RuntimeNotReadyError
+    return application.publications
+
+
 def _require_handoff_report_application(request: Request) -> HandoffReportApplication:
     application = _require_application(request)
     if application.handoff_report is None:
@@ -3134,12 +2976,28 @@ def _binding_administrative_check(
     return action, parent
 
 
-def _project_descriptor_response(value: DomainProjectDescriptor) -> ProjectDescriptor:
-    return ProjectDescriptor.model_validate(value.model_dump(mode="json", by_alias=True))
+def _scope_descriptor_response(value: DomainScopeDescriptor) -> ScopeDescriptor:
+    return ScopeDescriptor.model_validate(value.model_dump(mode="json"))
 
 
-def _workstream_descriptor_response(value: DomainWorkstreamDescriptor) -> WorkstreamDescriptor:
-    return WorkstreamDescriptor.model_validate(value.model_dump(mode="json", by_alias=True))
+def _domain_binding_key(value: ScopeBindingKey) -> DomainScopeBindingKey:
+    return DomainScopeBindingKey(
+        integration=value.integration,
+        kind=value.kind,
+        external_id=value.external_id,
+    )
+
+
+def _domain_scope_selection(value: ScopeSelection) -> DomainScopeSelection:
+    return DomainScopeSelection.model_validate(value.root.model_dump(mode="json"))
+
+
+def _transport_binding_key(value: DomainScopeBindingKey) -> ScopeBindingKey:
+    return ScopeBindingKey(
+        integration=value.integration,
+        kind=value.kind,
+        external_id=value.external_id,
+    )
 
 
 def _add_route(
@@ -3190,10 +3048,11 @@ def _authorization_dependency(
 
 
 async def _authorization_payload(request: Request, operation: Operation[Any, Any]) -> Mapping[str, Any]:
+    path_values = dict(request.path_params)
     if operation.request_type is None:
-        return {}
+        return path_values
     if operation.request_location == "query":
-        return request.query_params
+        return {**path_values, **request.query_params}
     try:
         value = await request.json()
     except (UnicodeDecodeError, ValueError) as error:
@@ -3207,7 +3066,7 @@ async def _authorization_payload(request: Request, operation: Operation[Any, Any
         validated = request_type.model_validate(value)
     except ValueError as error:
         raise AccessInvalidRequestError("resource") from error
-    return cast(Mapping[str, Any], validated.model_dump(mode="json"))
+    return {**path_values, **cast(Mapping[str, Any], validated.model_dump(mode="json"))}
 
 
 def _resolve_access_requirements(
@@ -3405,6 +3264,70 @@ def _publish_remote_skill_access(
     )
 
 
+def _path_scope_access(
+    payload: Mapping[str, Any],
+    *,
+    action: AccessAction,
+) -> tuple[tuple[AccessAction, ResourceRef], ...]:
+    return ((action, ResourceRef.scope(_nested_request_value(payload, "scope_id"))),)
+
+
+def _path_scope_read_access(
+    payload: Mapping[str, Any],
+    _deployment_id: str,
+) -> tuple[tuple[AccessAction, ResourceRef], ...]:
+    return _path_scope_access(payload, action=AccessAction.SCOPE_READ)
+
+
+def _path_scope_admin_access(
+    payload: Mapping[str, Any],
+    _deployment_id: str,
+) -> tuple[tuple[AccessAction, ResourceRef], ...]:
+    return _path_scope_access(payload, action=AccessAction.SCOPE_ADMIN)
+
+
+def _scope_selection_read_access(
+    payload: Mapping[str, Any],
+    deployment_id: str,
+) -> tuple[tuple[AccessAction, ResourceRef], ...]:
+    selection = payload.get("selection")
+    if not isinstance(selection, Mapping):
+        raise AccessInvalidRequestError("scope-selection")
+    mode = _mapping_text(selection, "mode")
+    if mode != "exact":
+        return ((AccessAction.SERVER_OBSERVE, ResourceRef.server(deployment_id)),)
+    scope_ids = selection.get("scope_ids")
+    if (
+        not isinstance(scope_ids, list)
+        or not scope_ids
+        or not all(isinstance(item, str) and item for item in scope_ids)
+    ):
+        raise AccessInvalidRequestError("scope-selection")
+    return tuple((AccessAction.SCOPE_READ, ResourceRef.scope(scope_id)) for scope_id in scope_ids)
+
+
+def _publish_artifact_access(
+    payload: Mapping[str, Any],
+    _deployment_id: str,
+) -> tuple[tuple[AccessAction, ResourceRef], ...]:
+    source = payload.get("source")
+    if not isinstance(source, Mapping):
+        raise AccessInvalidRequestError("artifact-reference")
+    artifact = source.get("artifact")
+    if not isinstance(artifact, Mapping):
+        raise AccessInvalidRequestError("artifact-reference")
+    source_resource = ResourceRef.artifact(
+        _mapping_text(source, "scope_id"),
+        family=_mapping_text(artifact, "family"),
+        artifact_id=_mapping_text(artifact, "artifact_id"),
+    )
+    target_scope = ResourceRef.scope(_nested_request_value(payload, "target_scope_id"))
+    return (
+        (AccessAction.ARTIFACT_SHARE, source_resource),
+        (AccessAction.SCOPE_ADMIN, target_scope),
+    )
+
+
 def _continue_handoff_resolver(
     payload: Mapping[str, Any],
     _deployment_id: str,
@@ -3431,7 +3354,11 @@ _NAMED_ACCESS_RESOLVERS: dict[
     "exact_experience_access": _exact_experience_access,
     "exact_memory_access": _exact_memory_access,
     "exact_skill_access": _exact_skill_access,
+    "path_scope_admin_access": _path_scope_admin_access,
+    "path_scope_read_access": _path_scope_read_access,
+    "publish_artifact_access": _publish_artifact_access,
     "publish_remote_skill_access": _publish_remote_skill_access,
+    "scope_selection_read_access": _scope_selection_read_access,
     "skill_candidate_write_access": _skill_candidate_write_access,
     "skill_identity_write_access": _skill_identity_write_access,
     "skill_usage_access": _skill_usage_access,
@@ -3476,6 +3403,7 @@ def _observe_application_operation(
         started_at = perf_counter()
         span = _start_application_span(app, operation)
         try:
+            await _validate_current_scope(app, operation, args, kwargs)
             result = await endpoint(*args, **kwargs)
         except asyncio.CancelledError:
             _observe_application(app, operation, "cancelled", started_at)
@@ -3516,12 +3444,29 @@ def _sensitive_operation_error(error: Exception) -> bool:
         error,
         (
             AccessControlError,
-            _SkillPublicationTargetNotFoundError,
-            _SkillPublicationConflictError,
-            _SkillPublicationFailedError,
             RemoteSkillDistributionError,
         ),
     )
+
+
+async def _validate_current_scope(
+    app: FastAPI,
+    operation: Operation[Any, Any],
+    args: tuple[Any, ...],
+    kwargs: dict[str, Any],
+) -> None:
+    if operation.scope_mode != "current" or operation.request_type is None:
+        return
+    scopes = getattr(app.state.application, "scopes", None)
+    if scopes is None:
+        return
+    request = next(
+        (value for value in (*args, *kwargs.values()) if isinstance(value, operation.request_type)),
+        None,
+    )
+    scope_id = getattr(request, "scope_id", None)
+    if isinstance(scope_id, str):
+        await scopes.get(scope_id)
 
 
 def _start_application_span(app: FastAPI, operation: Operation[Any, Any]) -> Any | None:
@@ -3601,11 +3546,11 @@ def _error_response(
     return JSONResponse(status_code=response_status, content=error.model_dump(mode="json"))
 
 
-def _validation_error_details(error: RequestValidationError) -> list[Any]:
+def _validation_error_details(error: RequestValidationError | PydanticValidationError) -> list[Any]:
     details: list[Any] = []
     for item in error.errors():
         if isinstance(item, dict):
-            details.append({key: value for key, value in item.items() if key != "input"})
+            details.append({key: value for key, value in item.items() if key not in {"ctx", "input", "url"}})
         else:
             details.append(item)
     return details
@@ -3615,9 +3560,6 @@ def _map_error(error: Exception) -> tuple[int, str, str, dict[str, Any] | None]:
     access_error = _map_access_error(error)
     if access_error is not None:
         return access_error
-    publication_error = _map_skill_publication_error(error)
-    if publication_error is not None:
-        return publication_error
     service_error = _map_service_error(error)
     return _map_domain_error(error) if service_error is None else service_error
 
@@ -3641,6 +3583,9 @@ def _map_service_error(error: Exception) -> tuple[int, str, str, dict[str, Any] 
     governance_error = _map_governance_error(error)
     if governance_error is not None:
         return governance_error
+    scope_error = _map_scope_error(error)
+    if scope_error is not None:
+        return scope_error
     candidate_error = _map_candidate_error(error)
     if candidate_error is not None:
         return candidate_error
@@ -3699,31 +3644,6 @@ def _map_governance_error(error: Exception) -> tuple[int, str, str, dict[str, An
     return None
 
 
-def _map_skill_publication_error(error: Exception) -> tuple[int, str, str, dict[str, Any] | None] | None:
-    if isinstance(error, _SkillPublicationTargetNotFoundError):
-        return (
-            status.HTTP_404_NOT_FOUND,
-            "skill_publication_target_not_found",
-            "The publication target was not found.",
-            None,
-        )
-    if isinstance(error, _SkillPublicationConflictError):
-        return (
-            status.HTTP_409_CONFLICT,
-            "skill_publication_conflict",
-            "The publication target changed or conflicts.",
-            None,
-        )
-    if isinstance(error, _SkillPublicationFailedError):
-        return (
-            status.HTTP_503_SERVICE_UNAVAILABLE,
-            "skill_publication_failed",
-            "Skill publication failed.",
-            None,
-        )
-    return None
-
-
 def _map_access_error(error: Exception) -> tuple[int, str, str, dict[str, Any] | None] | None:
     if isinstance(error, AccessIdentityRequiredError):
         return status.HTTP_401_UNAUTHORIZED, "unauthorized", "An authenticated Principal is required.", None
@@ -3737,6 +3657,47 @@ def _map_access_error(error: Exception) -> tuple[int, str, str, dict[str, Any] |
         return status.HTTP_422_UNPROCESSABLE_CONTENT, "invalid_access_request", "The Access request is invalid.", None
     if isinstance(error, AccessUnavailableError):
         return status.HTTP_503_SERVICE_UNAVAILABLE, error.code, "Access Control is unavailable.", None
+    return None
+
+
+def _map_scope_error(error: Exception) -> tuple[int, str, str, dict[str, Any] | None] | None:
+    if isinstance(error, ArtifactPublicationUnsupportedError):
+        return (
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            "artifact_publication_unsupported",
+            "The Artifact family cannot be published as complete target state.",
+            {"family": error.family},
+        )
+    if isinstance(error, ArtifactPublicationConflictError):
+        return (
+            status.HTTP_409_CONFLICT,
+            "artifact_publication_conflict",
+            "The publication key identifies a different source Artifact.",
+            None,
+        )
+    if isinstance(error, (ScopeNotFoundError, ScopeBindingNotFoundError)):
+        return status.HTTP_404_NOT_FOUND, "scope_not_found", "The requested Scope was not found.", None
+    if isinstance(error, ScopeVersionConflictError):
+        return (
+            status.HTTP_409_CONFLICT,
+            "scope_version_conflict",
+            "The Scope metadata version is stale.",
+            {"expected_version": error.expected, "current_version": error.actual},
+        )
+    if isinstance(error, ScopeIdempotencyConflictError):
+        return (
+            status.HTTP_409_CONFLICT,
+            "scope_idempotency_conflict",
+            "The Scope creation key identifies different parameters.",
+            None,
+        )
+    if isinstance(error, ScopeRelationshipError):
+        return (
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            "invalid_scope_relationship",
+            "The Scope relationship is invalid.",
+            {"relationship": error.relationship, "issue": error.issue},
+        )
     return None
 
 
@@ -3770,46 +3731,14 @@ def _map_candidate_error(error: Exception) -> tuple[int, str, str, dict[str, Any
 
 
 def _map_report_error(error: Exception) -> tuple[int, str, str, dict[str, Any] | None] | None:
-    if isinstance(error, (ProjectNotFoundError, WorkstreamNotFoundError, WorkspaceBindingNotFoundError)):
-        return status.HTTP_404_NOT_FOUND, error.code, "The requested Handoff Report catalog value was not found.", None
-    if isinstance(
-        error,
-        (ProjectConflictError, WorkstreamConflictError, ScopeAlreadyGroupedError, WorkspaceBindingConflictError),
-    ):
-        details = {
-            name: getattr(error, name)
-            for name in ("expected_version", "current_version", "project_id", "scope_id", "workspace_instance_id")
-            if hasattr(error, name)
-        }
-        return (
-            status.HTTP_409_CONFLICT,
-            error.code,
-            "The Handoff Report catalog value is stale or conflicting.",
-            details,
-        )
-    if isinstance(error, ActivityEventConflictError):
-        return (
-            status.HTTP_409_CONFLICT,
-            "activity_event_conflict",
-            "The Activity idempotency key already identifies different content.",
-            {"source": error.source, "source_event_id": error.source_event_id},
-        )
-    if isinstance(error, HandoffReportBusyError):
-        return (
-            status.HTTP_409_CONFLICT,
-            "handoff_report_busy",
-            "Handoff heads changed while the report was being assembled.",
-            {"attempts": error.attempts},
-        )
     if isinstance(error, HandoffReportTooLargeError):
         return (
             status.HTTP_413_CONTENT_TOO_LARGE,
             "handoff_report_too_large",
-            "The Handoff Report is too large; narrow the Workstream or Activity selection.",
+            "The Handoff Report is too large; narrow the Scope selection.",
             {
                 "estimated_bytes": error.estimated_bytes,
-                "selected_workstreams": error.selected_workstreams,
-                "selected_activities": error.selected_activities,
+                "selected_scopes": error.selected_scopes,
             },
         )
     if isinstance(error, HandoffReportInconsistentError):
@@ -3819,11 +3748,6 @@ def _map_report_error(error: Exception) -> tuple[int, str, str, dict[str, Any] |
             "The frozen Handoff selection could not be read consistently.",
             {"scope_id": error.scope_id},
         )
-    if isinstance(
-        error,
-        (HandoffReportCatalogArgumentError, InvalidActivityEventError, InvalidActivityRepositoryArgumentError),
-    ):
-        return status.HTTP_422_UNPROCESSABLE_CONTENT, "invalid_request", "The request is invalid.", None
     if isinstance(error, HandoffReportError):
         return status.HTTP_503_SERVICE_UNAVAILABLE, "handoff_report_unavailable", "Handoff Report is unavailable.", None
     return None

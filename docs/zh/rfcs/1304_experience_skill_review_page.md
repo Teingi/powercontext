@@ -58,8 +58,8 @@ Dashboard pending count
 Dashboard 启用时，Server 主导航会在 Dashboard 和 Handoff Report 旁增加 **Review** 入口。打开后从同一个 Server
 origin 加载 `/reviews`。它复用 Dashboard 的登录方式和 Bearer token 行为，不会引入另一套凭据存储或认证流程。
 
-审核者首先从 `POWERCONTEXT_SERVER_DASHBOARD_SCOPES` 配置的 scope 中选择一个。如果没有配置 scope，页面会说明
-Review 至少需要一个 Dashboard scope，并且不会发出 Candidate 请求。
+审核者首先从 Server 返回的持久 Scope 中选择一个。如果没有 Scope，页面会说明 Review 至少需要一个 Scope，
+并且不会发出 Candidate 请求。
 
 切换 scope 时，页面会在加载新 scope 前清空当前列表、选中的 Candidate、pagination cursor、冲突状态和未保存的修改
 draft。来自前一个 scope 的延迟响应不能更新页面。

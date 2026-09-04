@@ -29,7 +29,6 @@ from powercontext.server.settings import (
     AccessControlConfig,
     BearerAuthConfig,
     DashboardConfig,
-    DashboardScopeConfig,
     McpConfig,
     ServerSettings,
 )
@@ -43,7 +42,6 @@ def test_dashboard_is_enabled_by_default_without_authentication_or_scopes(tmp_pa
         "POWERCONTEXT_SERVER_ACCESS_MODE",
         "POWERCONTEXT_SERVER_AUTH_TOKEN",
         "POWERCONTEXT_SERVER_DASHBOARD_ENABLED",
-        "POWERCONTEXT_SERVER_DASHBOARD_SCOPES",
         "POWERCONTEXT_SERVER_PUBLIC_URL",
         "POWERCONTEXT_SERVER_ALLOW_INSECURE_HTTP",
     ):
@@ -61,12 +59,13 @@ def test_dashboard_is_enabled_by_default_without_authentication_or_scopes(tmp_pa
         scopes = client.get("/dashboard/scopes")
 
     assert settings.dashboard.enabled is True
-    assert settings.dashboard.scopes == []
     assert home.status_code == 200
     assert skills.status_code == 200
     assert review.status_code == 200
     assert scopes.status_code == 200
-    assert scopes.json() == []
+    assert scopes.json()[0]["display_name"] == "Default"
+    assert scopes.json()[0]["summary"] == "Default context"
+    assert scopes.json()[0]["parent_scope_id"] is None
 
 
 def test_dashboard_exposes_explicit_insecure_http_enrollment_guidance(tmp_path) -> None:
@@ -137,19 +136,23 @@ def test_dashboard_is_the_authenticated_server_ui_entry(tmp_path) -> None:
             public_url="https://powercontext.example.com/base/",
             auth=BearerAuthConfig(token=SecretStr("dashboard-secret")),
             access=AccessControlConfig(mode="enforced"),
-            dashboard=DashboardConfig(
-                enabled=True,
-                scopes=[
-                    DashboardScopeConfig(scope_id="person:psiace", display_name="PsiACE"),
-                    DashboardScopeConfig(scope_id="project:powercontext", display_name="PowerContext"),
-                ],
-            ),
+            dashboard=DashboardConfig(enabled=True),
             database=SQLiteConfig(url=f"sqlite+aiosqlite:///{tmp_path / 'dashboard.db'}"),
             mcp=McpConfig(enabled=False),
         )
     )
 
     with TestClient(app) as client:
+        first_scope = client.post(
+            "/v1/scopes",
+            headers=_AUTH_HEADERS,
+            json={"title": "PsiACE", "summary": "Personal context", "idempotency_key": "psiace"},
+        ).json()
+        second_scope = client.post(
+            "/v1/scopes",
+            headers=_AUTH_HEADERS,
+            json={"title": "PowerContext", "summary": "Repository context", "idempotency_key": "powercontext"},
+        ).json()
         home = client.get("/")
         skills = client.get("/skills")
         review = client.get("/reviews")
@@ -163,10 +166,54 @@ def test_dashboard_is_the_authenticated_server_ui_entry(tmp_path) -> None:
     assert removed_dashboard_alias.status_code == 404
     assert missing_scopes.status_code == 401
     assert scopes.status_code == 200
-    assert scopes.json() == [
-        {"scope_id": "person:psiace", "display_name": "PsiACE"},
-        {"scope_id": "project:powercontext", "display_name": "PowerContext"},
-    ]
+    assert 'data-server-session="missing"' in home.text
+    assert 'id="auth-shell"' in home.text
+    assert 'id="auth-shell" hidden' not in home.text
+    assert 'id="page-status" hidden' in home.text
+    assert 'class="server-content" id="dashboard"' in home.text
+    assert 'id="dashboard" hidden' not in home.text
+    assert 'data-server-auth-required="true"' in home.text
+    assert 'data-i18n-aria-label="brandHomeLabel"' in home.text
+    assert 'data-i18n-aria-label="primaryNavigation"' in home.text
+    assert 'data-i18n-aria-label="scopeOverview"' in home.text
+    assert 'data-i18n-aria-label="activityAria"' in home.text
+    assert "dashboard.js?v=product-language-v4" in home.text
+    assert 'data-i18n="skillsTitle"' in skills.text
+    assert 'aria-current="page" data-i18n="skillsTitle"' in skills.text
+    assert 'id="skills-scope-search"' in skills.text
+    assert 'role="combobox"' in skills.text
+    assert 'aria-controls="skills-scope-options"' in skills.text
+    assert 'id="skills-scope-options" role="listbox"' in skills.text
+    assert 'id="skills-search"' in skills.text
+    assert 'id="skills-authority-filter"' in skills.text
+    assert 'id="skills-list" role="listbox"' in skills.text
+    assert 'id="skills-managed-content"' in skills.text
+    assert 'id="skills-delivery"' in skills.text
+    assert 'id="skills-create-revision"' in skills.text
+    assert 'id="skills-publish-dialog"' in skills.text
+    assert "skills.js?v=remote-target-names-v1" in skills.text
+    assert 'data-i18n="reviewTitle"' in review.text
+    assert 'aria-current="page" data-i18n="reviewTitle"' in review.text
+    assert 'id="review-scope-select"' not in review.text
+    assert 'id="review-scope-search"' in review.text
+    assert 'role="combobox"' in review.text
+    assert 'aria-controls="review-scope-options"' in review.text
+    assert 'id="review-scope-options" role="listbox"' in review.text
+    assert 'id="review-family-filter"' in review.text
+    assert 'id="review-status-filter"' in review.text
+    assert 'id="review-list" role="listbox"' in review.text
+    assert 'id="review-revision-form" hidden' in review.text
+    assert 'id="review-approve-dialog"' in review.text
+    assert 'id="review-reject-dialog"' in review.text
+    assert 'id="review-publication"' in review.text
+    assert 'id="review-create-skill-revision"' in review.text
+    assert 'id="review-revision-title"' in review.text
+    assert 'id="review-publish-dialog"' in review.text
+    assert "review.js?v=standard-packages-v1" in review.text
+    returned = {item["scope_id"]: item for item in scopes.json()}
+    assert returned[first_scope["scope_id"]]["display_name"] == "PsiACE"
+    assert returned[first_scope["scope_id"]]["summary"] == "Personal context"
+    assert returned[second_scope["scope_id"]]["display_name"] == "PowerContext"
 
 
 def test_publication_status_exposes_a_standard_package_blocker_for_a_legacy_skill() -> None:
@@ -218,10 +265,7 @@ def test_skill_library_exposes_external_takeover_machine_through_later_revisions
     settings = ServerSettings(
         auth=BearerAuthConfig(token=SecretStr("dashboard-secret")),
         access=AccessControlConfig(mode="enforced"),
-        dashboard=DashboardConfig(
-            enabled=True,
-            scopes=[DashboardScopeConfig(scope_id="project:powercontext", display_name="PowerContext")],
-        ),
+        dashboard=DashboardConfig(enabled=True),
         database=SQLiteConfig(url=f"sqlite+aiosqlite:///{tmp_path / 'skill-origin.db'}"),
         external_skills=ExternalSkillsConfig(
             host_id="build-machine-07",
@@ -232,17 +276,22 @@ def test_skill_library_exposes_external_takeover_machine_through_later_revisions
     app = create_server_app(settings=settings)
 
     with TestClient(app) as client:
+        scope_id = client.post(
+            "/v1/scopes",
+            headers=_AUTH_HEADERS,
+            json={"title": "PowerContext", "summary": "Repository context", "idempotency_key": "powercontext"},
+        ).json()["scope_id"]
         scanned = client.post(
             "/v1/external-skills/scan",
             headers=_AUTH_HEADERS,
-            json={"scope_id": "project:powercontext"},
+            json={"scope_id": scope_id},
         ).json()
         registration = scanned["registrations"][0]
         candidate = client.post(
             "/v1/external-skills/import",
             headers=_AUTH_HEADERS,
             json={
-                "scope_id": "project:powercontext",
+                "scope_id": scope_id,
                 "external_skill_id": registration["external_skill_id"],
                 "fingerprint": registration["fingerprint"],
                 "mode": "import",
@@ -252,7 +301,7 @@ def test_skill_library_exposes_external_takeover_machine_through_later_revisions
             "/v1/artifact-candidates/approve",
             headers=_AUTH_HEADERS,
             json={
-                "scope_id": "project:powercontext",
+                "scope_id": scope_id,
                 "candidate_id": candidate["candidate_id"],
                 "expected_version": candidate["version"],
             },
@@ -261,7 +310,7 @@ def test_skill_library_exposes_external_takeover_machine_through_later_revisions
             "/v1/sources/content",
             headers=_AUTH_HEADERS,
             json={
-                "scope_id": "project:powercontext",
+                "scope_id": scope_id,
                 "source_id": "origin-revision",
                 "content": "Keep the original takeover evidence visible after a managed revision.",
             },
@@ -270,7 +319,7 @@ def test_skill_library_exposes_external_takeover_machine_through_later_revisions
             "/v1/skill/propose",
             headers=_AUTH_HEADERS,
             json={
-                "scope_id": "project:powercontext",
+                "scope_id": scope_id,
                 "proposal": candidate["proposal"],
                 "source_refs": [revision_source],
                 "artifact_refs": [approved["result_artifact"]],
@@ -281,7 +330,7 @@ def test_skill_library_exposes_external_takeover_machine_through_later_revisions
             "/v1/artifact-candidates/approve",
             headers=_AUTH_HEADERS,
             json={
-                "scope_id": "project:powercontext",
+                "scope_id": scope_id,
                 "candidate_id": revision_candidate["candidate_id"],
                 "expected_version": revision_candidate["version"],
             },
@@ -289,7 +338,7 @@ def test_skill_library_exposes_external_takeover_machine_through_later_revisions
         library = client.post(
             "/dashboard/skills/library",
             headers=_AUTH_HEADERS,
-            json={"scope_id": "project:powercontext", "include_deprecated": True},
+            json={"scope_id": scope_id, "include_deprecated": True},
         )
 
     assert library.status_code == 200
@@ -314,21 +363,23 @@ def test_review_publishes_an_approved_managed_skill_into_default_project_targets
         workspace=workspace,
         auth=BearerAuthConfig(token=SecretStr("dashboard-secret")),
         access=AccessControlConfig(mode="enforced"),
-        dashboard=DashboardConfig(
-            enabled=True,
-            scopes=[DashboardScopeConfig(scope_id="project:powercontext", display_name="PowerContext")],
-        ),
+        dashboard=DashboardConfig(enabled=True),
         database=SQLiteConfig(url=f"sqlite+aiosqlite:///{tmp_path / 'managed-skill-publish.db'}"),
         mcp=McpConfig(enabled=False),
     )
     app = create_server_app(settings=settings)
 
     with TestClient(app) as client:
+        scope_id = client.post(
+            "/v1/scopes",
+            headers=_AUTH_HEADERS,
+            json={"title": "PowerContext", "summary": "Repository context", "idempotency_key": "powercontext"},
+        ).json()["scope_id"]
         source = client.post(
             "/v1/sources/content",
             headers=_AUTH_HEADERS,
             json={
-                "scope_id": "project:powercontext",
+                "scope_id": scope_id,
                 "source_id": "managed-skill-evidence",
                 "content": "The contract workflow was reviewed and its validation passed.",
             },
@@ -337,7 +388,7 @@ def test_review_publishes_an_approved_managed_skill_into_default_project_targets
             "/v1/skill/propose",
             headers=_AUTH_HEADERS,
             json={
-                "scope_id": "project:powercontext",
+                "scope_id": scope_id,
                 "proposal": {
                     "name": "review-contract-change",
                     "description": "Use when changing the reviewed public contract.",
@@ -352,13 +403,13 @@ def test_review_publishes_an_approved_managed_skill_into_default_project_targets
             "/v1/artifact-candidates/approve",
             headers=_AUTH_HEADERS,
             json={
-                "scope_id": "project:powercontext",
+                "scope_id": scope_id,
                 "candidate_id": candidate["candidate_id"],
                 "expected_version": candidate["version"],
             },
         ).json()
         selection = {
-            "scope_id": "project:powercontext",
+            "scope_id": scope_id,
             "candidate_id": approved["candidate_id"],
             "artifact": approved["result_artifact"],
         }
@@ -389,13 +440,13 @@ def test_review_publishes_an_approved_managed_skill_into_default_project_targets
         registered = client.post(
             "/v1/external-skills/list",
             headers=_AUTH_HEADERS,
-            json={"scope_id": "project:powercontext", "include_unavailable": False},
+            json={"scope_id": scope_id, "include_unavailable": False},
         )
         revision_source = client.post(
             "/v1/sources/content",
             headers=_AUTH_HEADERS,
             json={
-                "scope_id": "project:powercontext",
+                "scope_id": scope_id,
                 "source_id": "managed-skill-revision-evidence",
                 "content": "The packaged contract must also be verified after regeneration.",
             },
@@ -404,7 +455,7 @@ def test_review_publishes_an_approved_managed_skill_into_default_project_targets
             "/v1/skill/propose",
             headers=_AUTH_HEADERS,
             json={
-                "scope_id": "project:powercontext",
+                "scope_id": scope_id,
                 "proposal": {
                     "name": "review-contract-change",
                     "description": "Use when changing the reviewed public contract.",
@@ -421,7 +472,7 @@ def test_review_publishes_an_approved_managed_skill_into_default_project_targets
             "/v1/artifact-candidates/approve",
             headers=_AUTH_HEADERS,
             json={
-                "scope_id": "project:powercontext",
+                "scope_id": scope_id,
                 "candidate_id": revision_candidate["candidate_id"],
                 "expected_version": revision_candidate["version"],
             },
@@ -429,10 +480,10 @@ def test_review_publishes_an_approved_managed_skill_into_default_project_targets
         library = client.post(
             "/dashboard/skills/library",
             headers=_AUTH_HEADERS,
-            json={"scope_id": "project:powercontext", "include_deprecated": True},
+            json={"scope_id": scope_id, "include_deprecated": True},
         )
         revision_selection = {
-            "scope_id": "project:powercontext",
+            "scope_id": scope_id,
             "candidate_id": revision_approved["candidate_id"],
             "artifact": revision_approved["result_artifact"],
         }
@@ -536,10 +587,7 @@ def test_publish_reports_success_when_post_publish_scan_fails(tmp_path, caplog) 
     settings = ServerSettings(
         auth=BearerAuthConfig(token=SecretStr("dashboard-secret")),
         access=AccessControlConfig(mode="enforced"),
-        dashboard=DashboardConfig(
-            enabled=True,
-            scopes=[DashboardScopeConfig(scope_id="project:powercontext", display_name="PowerContext")],
-        ),
+        dashboard=DashboardConfig(enabled=True),
         database=SQLiteConfig(url=f"sqlite+aiosqlite:///{tmp_path / 'publish-scan-failure.db'}"),
         external_skills=ExternalSkillsConfig(
             host_id="dashboard-test",
@@ -558,11 +606,12 @@ def test_publish_reports_success_when_post_publish_scan_fails(tmp_path, caplog) 
     app = create_server_app(settings=settings)
 
     with TestClient(app) as client, caplog.at_level(logging.WARNING):
+        scope_id = client.get("/v1/scopes/default", headers=_AUTH_HEADERS).json()["scope_id"]
         source = client.post(
             "/v1/sources/content",
             headers=_AUTH_HEADERS,
             json={
-                "scope_id": "project:powercontext",
+                "scope_id": scope_id,
                 "source_id": "managed-skill-evidence",
                 "content": "The contract workflow was reviewed and its validation passed.",
             },
@@ -571,7 +620,7 @@ def test_publish_reports_success_when_post_publish_scan_fails(tmp_path, caplog) 
             "/v1/skill/propose",
             headers=_AUTH_HEADERS,
             json={
-                "scope_id": "project:powercontext",
+                "scope_id": scope_id,
                 "proposal": {
                     "name": "review-contract-change",
                     "description": "Use when changing the reviewed public contract.",
@@ -586,13 +635,13 @@ def test_publish_reports_success_when_post_publish_scan_fails(tmp_path, caplog) 
             "/v1/artifact-candidates/approve",
             headers=_AUTH_HEADERS,
             json={
-                "scope_id": "project:powercontext",
+                "scope_id": scope_id,
                 "candidate_id": candidate["candidate_id"],
                 "expected_version": candidate["version"],
             },
         ).json()
         selection = {
-            "scope_id": "project:powercontext",
+            "scope_id": scope_id,
             "candidate_id": approved["candidate_id"],
             "artifact": approved["result_artifact"],
         }
@@ -642,10 +691,7 @@ def test_publish_reports_stale_discovery_when_registry_database_is_unavailable(t
     settings = ServerSettings(
         auth=BearerAuthConfig(token=SecretStr("dashboard-secret")),
         access=AccessControlConfig(mode="enforced"),
-        dashboard=DashboardConfig(
-            enabled=True,
-            scopes=[DashboardScopeConfig(scope_id="project:powercontext", display_name="PowerContext")],
-        ),
+        dashboard=DashboardConfig(enabled=True),
         database=SQLiteConfig(url=f"sqlite+aiosqlite:///{tmp_path / 'publish-registry-down.db'}"),
         external_skills=ExternalSkillsConfig(
             host_id="dashboard-test",
@@ -664,11 +710,12 @@ def test_publish_reports_stale_discovery_when_registry_database_is_unavailable(t
     app = create_server_app(settings=settings)
 
     with TestClient(app) as client, caplog.at_level(logging.WARNING):
+        scope_id = client.get("/v1/scopes/default", headers=_AUTH_HEADERS).json()["scope_id"]
         source = client.post(
             "/v1/sources/content",
             headers=_AUTH_HEADERS,
             json={
-                "scope_id": "project:powercontext",
+                "scope_id": scope_id,
                 "source_id": "managed-skill-evidence",
                 "content": "The contract workflow was reviewed and its validation passed.",
             },
@@ -677,7 +724,7 @@ def test_publish_reports_stale_discovery_when_registry_database_is_unavailable(t
             "/v1/skill/propose",
             headers=_AUTH_HEADERS,
             json={
-                "scope_id": "project:powercontext",
+                "scope_id": scope_id,
                 "proposal": {
                     "name": "review-contract-change",
                     "description": "Use when changing the reviewed public contract.",
@@ -692,13 +739,13 @@ def test_publish_reports_stale_discovery_when_registry_database_is_unavailable(t
             "/v1/artifact-candidates/approve",
             headers=_AUTH_HEADERS,
             json={
-                "scope_id": "project:powercontext",
+                "scope_id": scope_id,
                 "candidate_id": candidate["candidate_id"],
                 "expected_version": candidate["version"],
             },
         ).json()
         selection = {
-            "scope_id": "project:powercontext",
+            "scope_id": scope_id,
             "candidate_id": approved["candidate_id"],
             "artifact": approved["result_artifact"],
         }
@@ -728,22 +775,19 @@ def test_handoff_report_page_is_available_without_the_statistics_dashboard(tmp_p
         disabled_page = client.get("/handoff-reports")
     with TestClient(enabled_app) as client:
         enabled_page = client.get("/handoff-reports")
-        disabled_skills = client.get("/skills")
-        disabled_review = client.get("/reviews")
-        disabled_dashboard = client.get("/")
-        disabled_dashboard_scopes = client.get("/dashboard/scopes", headers=_AUTH_HEADERS)
-        protected_scopes = client.post(
-            "/v1/handoff-reports/scopes/list-known",
-            json={"limit": 100},
-        )
+        scopes = client.get("/dashboard/scopes", headers=_AUTH_HEADERS)
 
     assert disabled_page.status_code == 404
     assert enabled_page.status_code == 200
-    assert disabled_skills.status_code == 404
-    assert disabled_review.status_code == 404
-    assert disabled_dashboard.status_code == 404
-    assert disabled_dashboard_scopes.status_code == 404
-    assert protected_scopes.status_code == 401
+    assert scopes.status_code == 200
+    assert scopes.json()[0]["display_name"] == "Default"
+    assert 'class="server-content" id="handoff-report"' in enabled_page.text
+    assert 'id="scope-select"' in enabled_page.text
+    assert 'id="scope-report-rows"' in enabled_page.text
+    assert 'id="download-report"' in enabled_page.text
+    assert 'data-i18n-aria-label="handoffSummary"' in enabled_page.text
+    assert '<details class="report-metadata">' in enabled_page.text
+    assert "handoff-report.js?v=scope-selection-v2" in enabled_page.text
 
 
 def _handoff_report_settings(database_path: Path, *, enabled: bool) -> ServerSettings:
