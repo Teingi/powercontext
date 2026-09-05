@@ -291,10 +291,16 @@ The primary key supports loading one target's tags. The first secondary index su
 second supports a cross-family Scope query. Implementations must use binary identity comparison or application-built
 `tag_key` values rather than depending on database-default case or locale collation.
 
-One table cannot express conditional foreign keys to both `pc_artifact_heads` and `pc_memory_entry_heads`. The owning
-Artifact foreign key is enforced for every row. For `memory_entry`, the repository must additionally lock and validate
-the current `(scope_id, memory_artifact_id, entry_id)` head in the same transaction before changing assignments. The
-transaction rejects a missing entry. This is an explicit application invariant, not a best-effort cleanup rule.
+The owning Artifact foreign key is enforced for every row. For `memory_entry`, the repository must lock the owning
+`(scope_id, family="memory", artifact_id)` Artifact head, load the exact Revision it points to, and validate `entry_id`
+against that Revision's authoritative `MemoryContent.manifest.entries` in the same transaction before changing
+assignments. Both `active` and `inactive` manifest entries are valid targets. An entry absent from that manifest is
+rejected even if an older Revision or immutable entry-version row contains it.
+
+`pc_memory_entry_heads` contains only active search projections. Deactivation removes an entry's projection while
+retaining its logical identity and content in the authoritative manifest. Tag reads and mutations must not require a
+row in that table, and tag assignments must not reference it through a foreign key. Projection cleanup and rebuilding
+must leave tag assignments unchanged.
 
 Inactive Memory entries and deprecated or retired Artifacts retain their assignments. Tag queries apply the existing
 visibility and lifecycle selection before returning results. A caller with the target's write authority may reorganize
@@ -355,7 +361,8 @@ query(
 `replace` performs the following steps in one transaction:
 
 1. Resolve and authorize the target without returning hidden existence details.
-2. Lock the owning Artifact head. For a Memory entry, also lock and validate its current entry head.
+2. Lock the owning Artifact head and load the exact Revision it points to. For a Memory entry, validate `entry_id`
+   against that Revision's manifest, accepting either `active` or `inactive` state.
 3. Load the complete current tag set and calculate its digest.
 4. Reject a mismatched expected digest as a failed precondition.
 5. Validate and normalize the complete replacement set.
@@ -368,6 +375,9 @@ compare-and-swap behavior.
 
 If the current canonical set equals the requested set, `replace` is an idempotent success and changes no rows or
 `assigned_at` values.
+
+`get` uses the same authoritative manifest membership rule for Memory entries. An authorized caller can read,
+replace, or clear an inactive entry's tags without reactivating it or requiring a search projection.
 
 ## HTTP contract
 
@@ -452,6 +462,12 @@ by `(family, target_type, artifact_id, target_id)` using UTF-8 byte order. The o
 tag keys, match mode, selected families, target types, lifecycle selection, caller, expiration, and last ordering key.
 An invalid or filter-mismatched cursor returns `400 Bad Request`; an expired cursor returns `410 Gone`.
 
+For each Memory entry target matched by the tag assignments, resolve the owning Artifact head once and load that
+exact Revision's manifest. Use the manifest entry's state for lifecycle selection and its `entry_version_id`, together
+with that same Memory Revision, to build the citation. With `include_inactive=true`, eligible inactive entries remain
+discoverable without a `pc_memory_entry_heads` row. Do not use an inner join to active projections to determine their
+existence or citation. Apply manifest membership, lifecycle selection, and authorization before the page limit.
+
 Tag mutations between pages can change membership. Pagination guarantees deterministic keyset traversal for each
 query but does not claim a database snapshot across requests.
 
@@ -469,6 +485,10 @@ The parameters or field are absent by default and therefore preserve existing be
 at least one tag. `tag_match` without `tag` is invalid. Artifact-head listing only matches `artifact` targets.
 Memory-entry list and search only match `memory_entry` targets. Artifact-list cursors additionally bind the normalized
 tags and match mode; the RFC 1437 invalid, mismatched, and expired cursor statuses remain unchanged.
+
+Memory-entry listing with `include_inactive=true` uses the same manifest-based membership, state, and citation rules
+as the dedicated tag query. Memory search retains its existing active-entry eligibility; inactive catalog discovery
+does not make an entry searchable.
 
 Existing Artifact-list, Memory-entry-list, and Memory-search item schemas do not gain a `tags` field; their tag filter
 changes eligibility only. The dedicated tag query includes current tags, and callers can GET the logical target's tag
@@ -574,13 +594,21 @@ The RFC is implemented only when all of the following observable scenarios pass:
 14. Existing unfiltered API behavior and exact historical content responses remain unchanged.
 15. Schema, repository, HTTP contract, generated-client, and supported backend tests pass through repository-standard
     commands.
+16. After a tagged Memory entry is deactivated and its search projection disappears, an authorized caller can still
+    read and replace its tags. A matching tag query and Memory-entry list with `include_inactive=true` return it with
+    a citation resolved from the current manifest; their default requests and Memory search exclude it. Rebuilding
+    projections preserves these behaviors and assignments. Clearing the tags then returns an empty tag set, removes
+    it from matching tag queries, and leaves its inactive state, Memory Revision, and entry version unchanged.
+17. A Memory-entry tag target absent from the current manifest is rejected even when its immutable entry version
+    remains stored. An authorized GET of such a target returns `404`, replacement creates no assignments, and tag
+    queries omit it.
 
 # Drawbacks
 
-A polymorphic assignment table cannot use one ordinary conditional foreign key to validate both Artifact and Memory
-entry targets. The repository must enforce Memory-entry existence transactionally. A universal catalog-item registry
-would provide a single foreign key, but it would add another persistent identity layer and another table before any
-other feature needs one.
+A relational foreign key validates the owning Artifact, but it cannot enforce logical Memory-entry membership in
+that Artifact's current manifest. The repository must enforce that membership transactionally. A universal
+catalog-item registry would provide a single foreign key, but it would add another persistent identity layer and
+another table before any other feature needs one.
 
 Current logical tags are not reconstructible at an earlier time. Exact Artifact content remains reproducible, but the
 tag set is only current catalog state. Deployments requiring historical taxonomy audit need an additional event or
@@ -608,9 +636,10 @@ backends. It is rejected.
 
 ## Add one table for Artifacts and another for Memory entries
 
-This provides direct foreign keys and simple family-local joins. It fragments cross-family queries and duplicates tag
-normalization, mutation, pagination, and API behavior. The single polymorphic table keeps one assignment contract and
-accepts one explicit application-level Memory-entry invariant.
+Separate assignment tables simplify family-local joins but fragment cross-family queries and duplicate tag
+normalization, mutation, pagination, and API behavior. A separate Memory-entry tag table would still need current
+manifest validation unless a durable logical-entry registry were also added. The single polymorphic table keeps one
+assignment contract and the same explicit application-level Memory-entry invariant.
 
 ## Add a universal catalog-item registry
 

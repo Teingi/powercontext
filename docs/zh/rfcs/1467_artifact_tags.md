@@ -277,10 +277,14 @@ pc_artifact_tags
 primary key 支持加载一个 target 的标签；第一个 secondary index 支持 family-specific 过滤，第二个支持 Scope 内跨 Family
 查询。实现必须使用 binary identity comparison 或应用构造的 `tag_key`，不能依赖数据库默认大小写或 locale collation。
 
-一张表无法用普通 conditional foreign key 同时校验 `pc_artifact_heads` 和 `pc_memory_entry_heads`。每一行都强制所属
-Artifact foreign key。对于 `memory_entry`，repository 还必须在同一个 transaction 中锁定并校验当前
-`(scope_id, memory_artifact_id, entry_id)` head，再修改分配关系；缺少 entry 时 transaction 拒绝请求。这是明确的
-application invariant，不是 best-effort cleanup rule。
+每一行都强制所属 Artifact foreign key。对于 `memory_entry`，repository 必须在同一个 transaction 中锁定所属
+`(scope_id, family="memory", artifact_id)` Artifact head，加载其指向的精确 Revision，并根据该 Revision 的权威
+`MemoryContent.manifest.entries` 校验 `entry_id`，再修改分配关系。manifest 中 `active` 和 `inactive` entry 都是有效
+target。当前 manifest 中不存在的 entry 必须被拒绝，即使旧 Revision 或不可变 entry-version row 中仍保留该 entry。
+
+`pc_memory_entry_heads` 只包含 active search projection。停用 entry 会删除它的 projection，但其逻辑身份与内容仍保留在
+权威 manifest 中。标签读取与变更不能要求该表中存在对应 row，标签分配也不能通过 foreign key 引用该表。projection
+清理与重建必须保持标签分配不变。
 
 inactive Memory entry 与 deprecated 或 retired Artifact 保留其分配关系。标签查询先应用现有 visibility 和 lifecycle
 selection，再返回结果。拥有 target write authority 的调用方可以重新组织标签，而不会重新激活或修订 content。
@@ -339,7 +343,8 @@ query(
 `replace` 在一个 transaction 内执行以下步骤：
 
 1. 解析并授权 target，同时不返回隐藏的存在性细节。
-2. 锁定所属 Artifact head；对于 Memory entry，还要锁定并校验其 current entry head。
+2. 锁定所属 Artifact head，加载其指向的精确 Revision；对于 Memory entry，根据该 Revision 的 manifest 校验
+   `entry_id`，接受 `active` 或 `inactive` 状态。
 3. 加载完整 current tag set 并计算 digest。
 4. expected digest 不匹配时，按 precondition failure 拒绝请求。
 5. 校验并规范化完整 replacement set。
@@ -350,6 +355,9 @@ query(
 process-local lock，因为二者都不能提供所需的分布式 compare-and-swap 行为。
 
 如果当前 canonical set 与请求集合相同，`replace` 幂等成功，并且不修改任何 row 或 `assigned_at` 值。
+
+`get` 对 Memory entry 使用相同的权威 manifest 成员校验规则。授权调用方可以读取、替换或清空 inactive entry 的标签，
+无需重新激活 entry，也不要求存在 search projection。
 
 ## HTTP contract
 
@@ -434,6 +442,12 @@ Artifact target 的 `current` 使用 `ArtifactReference`；Memory entry target �
 key、match mode、所选 family、target type、lifecycle selection、caller、expiration 和最后一个 ordering key。非法或
 filter 不匹配的 cursor 返回 `400 Bad Request`；过期 cursor 返回 `410 Gone`。
 
+对于每个标签分配命中的 Memory entry target，只解析一次所属 Artifact head，并加载该精确 Revision 的 manifest。使用
+manifest entry 的 state 进行 lifecycle selection，再用它的 `entry_version_id` 和同一个 Memory Revision 构造 citation。
+当 `include_inactive=true` 时，符合条件的 inactive entry 即使没有 `pc_memory_entry_heads` row，也仍可被发现。不能通过
+与 active projection 的 inner join 判断其存在性或解析 citation。manifest 成员校验、lifecycle selection 和 authorization
+必须在 page limit 之前应用。
+
 page 之间发生的标签变更可能改变成员关系。pagination 为每次查询提供确定性 keyset traversal，但不承诺跨请求数据库
 snapshot。
 
@@ -449,6 +463,9 @@ snapshot。
 parameter 或 field 默认缺失，因此保留现有行为。filter 存在时必须至少包含一个标签；没有 `tag` 时设置 `tag_match` 属于
 非法请求。Artifact-head listing 只匹配 `artifact` target；Memory-entry list 和 search 只匹配 `memory_entry` target。
 Artifact-list cursor 还要绑定 normalized tag 与 match mode；RFC 1437 的非法、不匹配和过期 cursor status 保持不变。
+
+Memory-entry listing 在 `include_inactive=true` 时，使用与专用 tag query 相同的 manifest 成员校验、state 与 citation
+规则。Memory search 保持现有的 active-entry eligibility；inactive 条目的 catalog discovery 不会使它进入搜索结果。
 
 现有 Artifact-list、Memory-entry-list 和 Memory-search item schema 不新增 `tags` 字段；tag filter 只改变 eligibility。
 专用 tag query 包含 current tags；需要 current catalog metadata 时，调用方可以 GET logical target 的 tag subresource。
@@ -546,12 +563,18 @@ table；需要完整标签变更账本的 deployment 必须禁用该能力，或
 13. raw tag value 不进入 telemetry，Dashboard 将恶意值作为 inert text 渲染。
 14. 现有未过滤 API 行为和精确历史 content response 保持不变。
 15. schema、repository、HTTP contract、generated Client 与受支持 backend test 通过仓库标准命令。
+16. 带标签的 Memory entry 停用且其 search projection 消失后，授权调用方仍能读取和替换它的标签。匹配的 tag query 与
+    Memory-entry list 在 `include_inactive=true` 时返回该 entry，citation 从 current manifest 解析；默认请求和
+    Memory search 不返回它。重建 projection 后，这些行为与标签分配保持不变。随后清空标签会返回空 tag set，使该 entry
+    不再命中相应 tag query，同时保持其 inactive 状态、Memory Revision 和 entry version 不变。
+17. 当前 manifest 中不存在的 Memory-entry tag target 会被拒绝，即使其不可变 entry version 仍保留在存储中。授权 GET
+    返回 `404`，replacement 不创建 assignment，tag query 不返回该 target。
 
 # Drawbacks
 
-一张多态 assignment table 无法使用一个普通 conditional foreign key 同时校验 Artifact 和 Memory entry target。
-Repository 必须在 transaction 内强制 Memory-entry 存在。universal catalog-item registry 可以提供一个外键，但会在没有
-其他功能需要它之前增加另一层持久身份和另一张表。
+关系型 foreign key 可以校验所属 Artifact，但无法强制 logical Memory entry 属于该 Artifact 的 current manifest。
+Repository 必须在 transaction 内校验该成员关系。universal catalog-item registry 可以提供一个外键，但会在没有其他功能
+需要它之前增加另一层持久身份和另一张表。
 
 无法重建过去某一时刻的 current logical tag。精确 Artifact content 仍可复现，但 tag set 只是 current catalog state。
 需要历史 taxonomy audit 的 deployment 需要额外 event 或 history 设计。
@@ -575,9 +598,9 @@ lineage expectation、CAS behavior 和 derived index。因此不用于 user-mana
 
 ## 分别给 Artifact 和 Memory entry 增加一张表
 
-该方案具有直接 foreign key 和简单的 family-local join，但会分裂 cross-family query，并重复标签规范化、mutation、
-pagination 与 API behavior。单张多态表保留一个 assignment contract，同时接受一个显式 application-level Memory-entry
-invariant。
+分开的 assignment table 可以简化 family-local join，但会分裂 cross-family query，并重复标签规范化、mutation、
+pagination 与 API behavior。除非再增加持久的 logical-entry registry，否则独立的 Memory-entry tag table 仍需要校验
+current manifest。单张多态表保留一个 assignment contract，并承担相同的显式 application-level Memory-entry invariant。
 
 ## 增加 universal catalog-item registry
 
