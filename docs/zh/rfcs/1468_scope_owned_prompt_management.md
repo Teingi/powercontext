@@ -58,10 +58,13 @@ Runtime extension boundary。
 
 ## 用户模型
 
-Dashboard 为当前 Scope 展示一个配置页。每个已注册 prompt key 有两种 mode：
+Dashboard 为当前 Scope 展示一个配置页。每个支持自定义的 built-in prompt key 有两种 mode：
 
 - **Auto** 使用部署 Runtime 选定的内置 instructions；
 - **Custom** 使用 Scope-owned instructions 与 demonstrations。
+
+禁用的 operation 和不支持自定义的注入组件显示为不可用，并说明原因。不能仅因为 key 已注册，就把它展示为可配置的
+Auto/Custom operation。
 
 对于 `memory.extract`，custom editor 可以展示三个区域：
 
@@ -86,7 +89,8 @@ Definition 根据合法 expected output 判断它会产生结果还是 no-op。�
         "evidence": [
           {
             "evidence_id": "source-1",
-            "text": "每次发布前我都会执行核心链路的冒烟测试，耗时大约 20 分钟。"
+            "evidence_type": "source",
+            "content": "每次发布前我都会执行核心链路的冒烟测试，耗时大约 20 分钟。"
           }
         ],
         "current_entries": []
@@ -104,7 +108,13 @@ Definition 根据合法 expected output 判断它会产生结果还是 no-op。�
     },
     {
       "input": {
-        "evidence": [{"evidence_id": "source-2", "text": "请把上一条消息中的代码发给我。"}],
+        "evidence": [
+          {
+            "evidence_id": "source-2",
+            "evidence_type": "source",
+            "content": "请把上一条消息中的代码发给我。"
+          }
+        ],
         "current_entries": []
       },
       "expected_output": {"candidates": []}
@@ -170,8 +180,9 @@ Content-Type: application/json
 }
 ```
 
-Server 使用 `prompt_key` 作为 `artifact_id` 并提交 revision 1。未知或被禁用的 prompt key 会被拒绝。调用方不能
-自行分配任意 operational Prompt identity。
+Server 使用 `prompt_key` 作为 `artifact_id` 并提交 revision 1。未知 key 会被拒绝；Custom 写入还要求实际组件支持
+自定义。已注册 key 始终允许写入 Auto，以便操作者在 operation 不可用时清除 custom selection。调用方不能自行分配
+任意 operational Prompt identity。
 
 更新 Prompt 使用已有 conditional replacement 操作：
 
@@ -212,11 +223,11 @@ Content-Type: application/json
 ```json
 {
   "instructions": "保留持久的测试偏好和已经验证的失败经验。",
-  "demonstration_count": 6
+  "demonstration_count": 1
 }
 ```
 
-响应包含恰好六条符合 schema 的 demonstrations：
+响应包含恰好一条符合 schema 的 demonstration：
 
 ```json
 {
@@ -230,8 +241,8 @@ Content-Type: application/json
 }
 ```
 
-上面的缩短数组只用于展示 item 结构。该接口不会创建或替换 Artifact，不推进 head，也不会把输出静默合并到 current
-content。调用方评审并编辑这些建议后，再通过正常 Artifact create 或 replace 操作保存。
+该接口不会创建或替换 Artifact，不推进 head，也不会把输出静默合并到 current content。调用方评审并编辑这些建议后，
+再通过正常 Artifact create 或 replace 操作保存。
 
 ## 查看历史与回滚
 
@@ -310,8 +321,30 @@ class PromptDefinition(Protocol):
 - demonstration no-op classification；
 - 与 Prompt content schema version 的兼容规则。
 
-两个 Definition 不能注册相同 key。未知 key、重复 key、不兼容 Definition 或缺少 built-in selection 时，Runtime
-composition 必须失败，而不是接受 untyped configuration。
+两个 Definition 不能注册相同 key。重复 key、Definition 内部不一致或缺少 built-in selection 时，Runtime composition
+必须失败，而不是接受 untyped configuration。注册描述已知 contract，不代表实际组件支持自定义；后文的 capabilities
+负责报告这一区别。
+
+### Definition compatibility
+
+`schema_version` 标识持久化 Prompt envelope，`definition_version` 标识部署中的 operation contract，
+`builtin_version` 标识默认 guidance。三者不能混用。V1 保留四字段 Prompt content，不为每条 revision 再保存一个
+版本选择字段，而是采用以下兼容策略：
+
+- 同一 prompt key 和 content schema version 下，Definition 更新必须继续接受所有之前合法的 demonstration，并保持
+  input 与 expected output 的含义。调整默认 guidance 不一定改变 typed contract。在同一 key 下破坏类型或语义兼容
+  不属于 v1 支持的升级。
+- 历史读取返回不可变的存储 content 和原始 digest，不使用当前 Definition 重新校验 demonstration。Operation 被禁用、
+  替换为注入组件或出现不兼容时，历史仍可读。Resolution 校验不能改写历史 content，也不能向存储表示中插入新默认值。
+- 写入，包括复制旧 content 回滚，使用部署中的兼容 Definition 校验。遇到不兼容 payload，返回 `422` 和
+  `prompt_definition_incompatible`，head 不变。解析不兼容的已有 custom head 时，受影响 operation 返回 `503` 和
+  相同 code，不能静默回退 Auto。管理读取和显式替换为 Auto 始终可用于恢复。
+- 升级前，用目标 Definition 检查已有 custom head。不兼容 head 必须先显式迁移为新 revision，或切回 Auto，才能启用
+  受影响 operation。迁移可能改变 content 和 digest，不等于 exact-content rollback。
+
+同一部署的所有 worker 必须使用相同的 Definition、built-in profile/version 和 compiler version。V1 不支持混合版本
+worker；部署工具必须先排空旧 worker 再切换版本。Version identifier 和 compiled digest 用于诊断，本身不能协调滚动
+升级。恢复 Prompt content 只恢复 custom guidance，不恢复旧 model、compiler 或部署，也不保证推理输出完全相同。
 
 ## Prompt Artifact content
 
@@ -341,8 +374,9 @@ class PromptContent(BaseModel):
 - 每条 demonstration 的 canonical JSON 最多 64 KiB；
 - 完整 canonical Prompt content 最多 256 KiB。
 
-Demonstration 只包含期望行为。反例通过一个 input 及其对应的 operation no-op `expected_output` 表示，而不是存储故意
-错误的 output。这样 compiler 不会教给模型无效行为，而且 representation 可以统一覆盖全部 prompt key。
+Demonstration 只包含期望行为。Operation 有合法 no-op result 时，反例使用该结果作为 `expected_output`，而不是故意
+错误的 output。没有合法 no-op 的 operation 只使用普通 input/output demonstration，其 classifier 始终返回 false，
+UI 不虚构空结果或反例分组。`memory.extract` 通过非空和空 `candidates` 支持正反两组。
 
 ## Persistence 与 identity
 
@@ -363,9 +397,9 @@ vocabulary。重命名 key 属于兼容性变更；alias 需要显式的未来 m
 
 RFC 1437 为其四种 family 生成 Artifact ID，并把 Create outer shape 固定为 `family` 加 `content`，其中 Handoff 是
 Server 已知 singleton 的例外。本 RFC 只为新增 Prompt family 局部修订该规则。`CreatePromptArtifactRequest` 增加必填
-顶层 `prompt_key`；family writer 使用固定 registry 校验它，并把它作为 `artifact_id`。已有 family 的 request shape
-不变。调用方只能选择已知 operation，仍不能分配任意 Artifact ID。把该 resource selector 隐藏在 Prompt content 中会
-重复 identity，也会使 replacement content 依赖 Create transport shape。
+顶层 `prompt_key`；family writer 使用固定 registry 校验它，并把它作为 `artifact_id`。已有 generic Create family 的
+request shape 不变。调用方只能选择已知 operation，仍不能分配任意 Artifact ID。把该 resource selector 隐藏在 Prompt
+content 中会重复 identity，也会使 replacement content 依赖 Create transport shape。
 
 ## Revision semantics
 
@@ -401,7 +435,8 @@ class ResolvedPrompt(BaseModel):
     demonstrations: tuple[PromptDemonstration, ...]
 ```
 
-解析算法如下：
+支持自定义的 built-in component 使用以下算法。注入或禁用组件在分派前遵循后文的可用性规则；注册本身不会让它们
+接收 resolved Prompt。
 
 1. 为 operation 选择已注册 Prompt Definition；
 2. 读取 `(scope_id, prompt_key)` 对应的 current `family=prompt` head；
@@ -415,16 +450,16 @@ class ResolvedPrompt(BaseModel):
 在执行中的 extraction、rerank、generation 或 Handoff operation 期间修改 head，只影响下一个逻辑 operation。Memory
 flush 在处理其 bounded Source window 前冻结 Prompt。Prompt head 变更不会自动重新生成已有 Memory 或其他 Artifact。
 
-Compiler 绝不把 custom text 拼接到更高优先级 invariant 之前。如果 inference adapter 支持 typed example message，
-则通过该机制传入 demonstrations；否则使用 Server-owned delimiter 与 canonical JSON encoding 序列化，user text 无法
-结束或重新解释该边界。
+Compiler 保留 Server-owned instruction 及其 message priority。如果 inference adapter 支持 typed example message，
+则通过该机制传入 demonstrations；否则使用 canonical JSON 和经过转义的 Server-owned delimiter。转义保护序列化
+边界；delimiter 和 message priority 都不能证明模型会遵守语义指令。推理后仍需执行代码层校验。
 
 实现可以按 `(definition_version, selection identity, compiled_digest)` 缓存 compiled prompt。它必须按照 Artifact
 current read 相同的一致性规则使 head lookup 失效，也绝不能使用另一个 Scope 的 head。
 
 ## Provenance 与 observability
 
-每个 inference span 记录：
+每个托管 inference span 记录：
 
 - `powercontext.prompt.key`；
 - `powercontext.prompt.selection`，值为 `built_in` 或 `artifact`；
@@ -441,12 +476,48 @@ requirement，也不能让 Prompt instructions 支撑事实声明。Built-in sel
 built-in version 与 compiled digest 标识。Memory rerank decision 等 ephemeral output 只在 operation trace 中记录相同
 identity。
 
+### Handoff generation 经 finalize 到 commit
+
+Handoff prepare、finalize 和 commit 可以是独立请求。Prepare 选定的 Prompt 必须随 draft 传递；finalize 和 commit
+不能读取届时的 current Prompt head 来重建 generation provenance。
+
+已有 Handoff transport value 增加可缺省的 `generation` envelope，与可编辑 draft text 分离。它包含 Server 可验证
+的 receipt，绑定 Scope、exact custom Prompt reference 或 built-in selection、Definition 与 built-in version、
+compiled digest，以及原始 generated draft 的 digest。Server 在生成成功后签发 receipt；调用方不能仅提交一个原始
+Prompt reference 就获得已验证 provenance。用途绑定的签名 receipt 不需要新表。Receipt 必须能够跨部署 worker 验证，
+密钥轮换时继续支持尚未完成的 draft。私有签名材料不能向客户端暴露。
+
+生命周期如下：
+
+1. Prepare 冻结 selection，返回 generated draft 及其 `generation` envelope。
+2. Finalize 验证 receipt 和 Scope，正常校验编辑后的 draft，并把 envelope 传入 `PreparedHandoff`。Commit 再次验证，
+   不信任客户端提交的 prepared value。
+3. Commit 比较最终可编辑字段与原始 draft digest。持久化 generation metadata 记录 `unchanged` 或 `edited`。编辑后的
+   Handoff 保留生成来源，但不声称最终文本由模型原样生成。已有 evidence、citation、authorization 和 optimistic
+   concurrency 校验仍然适用。
+4. 已验证的 exact custom Prompt reference 进入 configuration lineage。Generation metadata 保存于已有 Handoff
+   Artifact JSON，参与 canonical content digest 和 no-op 比较；receipt 字节与签名密钥不写入 Artifact。即使可见
+   文本相同，不同 generation origin 也不能错误继承旧来源。
+
+上述检查同样适用于 generic Handoff write 和内部 activation 路径。持久化 generation metadata 由 Server 推导，复制
+读取响应中的 metadata 不能代替合法 receipt。没有 receipt 时，writer 拒绝调用方提供的已验证 metadata，只接受
+明确未归因的 content。
+
+例如，使用 Prompt revision 2 生成的 draft，在 commit 时即使 current 已是 revision 3，仍记录 revision 2。中间的
+Prompt 更新不会使 draft 失效。Envelope 缺省表示手工或未归因 content，不推断 Prompt lineage；已提供但无效、被篡改
+或跨 Scope 的 envelope 返回 `422`，不能静默降级。丢弃 envelope 会失去已验证归因，不会获得额外权限。
+
+这要求同步扩展 strict Handoff Python model、已有 HTTP request/response schema、mapper 与客户端，以及持久化 Handoff
+generation metadata 的读取方。不含该字段的旧 payload 仍合法。不保留该字段的旧客户端无法提供已验证 generation
+provenance。这是已有 Handoff contract 和 JSON storage 的扩展，不增加 endpoint 或数据库表。
+
 ## HTTP contract
 
 完整 v1 HTTP surface 为：
 
 | 状态 | Method 与 path | operationId | 用途 |
 | --- | --- | --- | --- |
+| 已有，扩展 | `GET /v1/capabilities` | `get_capabilities` | 报告各 key 的实际自定义支持状态和部署内置标识 |
 | 已有，扩展 | `POST /v1/scopes/{scope_id}/artifacts` | `create_artifact` | 接受 `family=prompt` 与已注册 `prompt_key` |
 | 已有，扩展 | `GET /v1/scopes/{scope_id}/artifacts/prompt` | `list_artifacts` | 列出 Scope 中 current Prompt heads |
 | 已有，扩展 | `GET /v1/scopes/{scope_id}/artifacts/prompt/{prompt_key}` | `get_artifact` | 读取 current Prompt head 与 ETag |
@@ -457,6 +528,8 @@ identity。
 
 新增 endpoint 数量恰好是两个。不存在 Prompt-specific list、get、create、update、rollback、publish、validate、
 preview、activate 或 delete endpoint。
+
+已有 Handoff prepare/finalize/commit payload 同样按前文约定携带 `generation`，route 与 operation ID 不变。
 
 新增的 Create union member 为：
 
@@ -504,6 +577,10 @@ demonstrations。Server 在响应前校验并规范化 model output。它只会�
 | replace 缺少 `If-Match` | `428 Precondition Required` |
 | `If-Match` stale 或不匹配 | `412 Precondition Failed` |
 | 未知 prompt key、无效 mode/content、demonstration 不符合 schema，或不支持的 family/key 组合 | `422 Unprocessable Entity` |
+| Custom 写入或生成建议的目标组件被禁用或不支持自定义 | `422`，code 为 `prompt_customization_unavailable` |
+| replacement 的历史 content 与部署 Definition 不兼容 | `422`，code 为 `prompt_definition_incompatible`；head 不变 |
+| 实际组件或 Definition 无法执行已有 custom head | `503`，code 为 `prompt_customization_unavailable` 或 `prompt_definition_incompatible` |
+| Handoff generation receipt 无效或属于其他 Scope | `422`，code 为 `invalid_handoff_generation` |
 | pagination cursor 无效或过期 | 已有 `400` 或 `410` cursor semantics |
 | demonstration generation 需要的 inference provider 不可用 | `503 Service Unavailable` |
 | provider output 在 request budget 内始终无效 | `500 Internal Server Error`，并返回稳定 public error code |
@@ -514,37 +591,85 @@ Error 不回显 Prompt 或 demonstration body。调用方无法通过响应细�
 
 Operational Prompt configuration 会改变一个 Scope 中所有兼容 inference operation 的行为。在 access-control model
 下，current read、history list 与 exact read 需要相应 Scope read authority；create、replace 与 demonstration
-generation 需要 `scope.admin`。Legacy static bearer 继续映射到配置的 administrative Principal。Family-specific writer
-执行这个更严格的 mutation rule，不会削弱所有 generic Artifact write。
+generation 需要 `scope.admin`。Legacy static bearer 继续映射到配置的 administrative Principal。Server 的 policy
+enforcement point 在分派到 writer 前检查 Prompt family mutation rule；其他 generic Artifact write 保留各自授权规则。
 
 Runtime 内部使用 current Scope Prompt 是已授权 domain operation 的组成部分，不是隐式 exact-resource share。本 RFC
 不允许通过 `prompt.user` 共享 operational Prompt revision，其 Prompt access profile 不声明可授予的 exact role。
 
-Custom Prompt content 是不可信 configuration。它不能：
+Custom Prompt content 是不可信 configuration，执行边界如下：
 
-- 覆盖 evidence-as-data、citation requirement、secret exclusion 或 identity allocation rule；
-- 修改已注册 input/output schema；
-- 选择 model、provider、credential、header、timeout、retry budget 或 token budget；
-- 启用 tool、network、filesystem access、publication 或其他 capability；
-- 隐式解析或引用另一个 Scope；
-- 在没有显式 Artifact write 的情况下保存生成的 demonstrations。
+| 代码强制约束 | 必需机制 |
+| --- | --- |
+| Prompt 不能替换已注册 schema 或 operation contract | Strict request model 与已注册 input/output 校验 |
+| Prompt 不能修改 credential、model setting、resource budget、tool 或 authority | Prompt content 不含这些配置入口，仅由 Server composition 与 authorization 决定 |
+| Prompt 不能分配 identity、越过 Scope 或引用任意缺失 evidence | 已有 family writer、Scope-bound resolution 与 operation-specific reference/identity check |
+| 建议不能自行保存 | Generator 没有 Artifact write action；持久化需要单独授权的写入 |
+| Prompt 不能从编译请求中移除 Server instruction | Server-owned compiler 控制 message role 与 instruction assembly |
 
-Demonstration generator 把 supplied instructions 当作 Server-owned meta-prompt 中的数据。生成案例接受与手工案例相同的
-secret 与 size validation。
+Evidence-as-data、引用是否真实支持声明，以及任意自然语言输出中的 secret exclusion，还依赖模型行为。Instruction
+不可编辑不等于模型保证遵守。尤其是 Memory output validation 检查结构和 evidence reference，但自由文本 candidate
+不具备通用的语义 secret 检测能力。V1 将 secret exclusion 明确为 best-effort，不承诺对 instructions、demonstrations
+或 generated content 提供万能 secret filter。Credential 必须留在 model input 之外，操作者不得把 secret 写入 Prompt
+content。部署专用的过滤器必须说明覆盖范围与漏检限制。
+
+Demonstration generator 把 supplied instructions 放在 Server-owned meta-prompt 中作为数据，并执行与手工案例相同的
+typed validation 和 size limit。对抗测试必须分别覆盖 schema/authority 修改尝试、instruction injection，以及合成的
+secret-like evidence。报告被拒绝的结构违规，也报告真实模型上观察到的语义泄漏；schema 接受某段文本不能单独证明
+模型被绕过，有限测试集通过也不能证明绝对不泄密。
 
 ## 非 HTTP surface
 
 Dashboard 使用上述 HTTP 操作。其 Agent 或用户 selector 会先解析为 Scope，再读写 Prompt state。三段式 editor 只是
 一个 `PromptContent` 的展示方式，不是另一套 API contract。
 
+Dashboard 内置六个固定 key 的标签与 editor metadata，通过扩展已有 `GET /v1/capabilities` 响应中的 `prompts` map
+获得部署支持状态。无论是否存在 Prompt Artifact，每个已注册 key 都有一条记录：
+
+| 字段 | Contract |
+| --- | --- |
+| `status` | `supported`、`disabled` 或 `unsupported`，依据实际 composed component |
+| `reason` | supported 时为 `null`；否则为 `operation_disabled`、`provider_not_configured` 或 `injected_component` 等稳定原因 |
+| `definition_version` | 部署中已注册 contract version |
+| `builtin_version` | 部署的内置 guidance version；不表示注入组件使用它 |
+| `builtin_profile` | Memory extraction 为 `coding` 或 `conversation`，其他 key 为 `null` |
+
+`supported` 表示 Custom selection 和 demonstration generation 都已接入 built-in implementation；provider 临时故障
+仍返回 `503`，不改变配置契约。该响应不包含 Scope-owned content、head、credential 或 model secret，不需要另加 Prompt
+discovery endpoint。
+
+对 supported key，Dashboard 将上述 metadata 与 Scope 的通用 Prompt Artifact list 合并：没有 head 或 head 为 Auto
+时，展示报告的 built-in selection；Custom 时展示已存 revision。对 disabled/unsupported key，禁用 Custom 和生成建议
+操作，显示原因，仍允许读取已存内容和历史。无法执行的已有 custom head 显示为 blocked，并提供显式切回 Auto 操作。
+注入组件标记为外部管理，不能误称它正在使用所报告的 built-in profile。
+
 Python Runtime 增加本 RFC 所述 Prompt Definition registry、Scope Prompt resolver、compiler 与 family writer。Public
 Python caller 可以使用已有 generic Artifact client 做 persistence。V1 不增加 MCP tool、CLI command 或 host-specific
 configuration file。
 
+### 注入的 Runtime 组件
+
+`open_builtin_runtime` 已支持注入 Memory/Experience candidate pipeline、Experience/Skill generator、Handoff
+pipeline 和 Memory reranker。它们现有的 protocol 不接收 `ResolvedPrompt`。V1 不修改这些 protocol，也不要求第三方
+实现参与托管 Prompt 自定义。
+
+- 只有实际 built-in component 接收 Scope-resolved selection，key 才是 `supported`。仅配置 model 不足以证明支持。
+  只向兼容 built-in pipeline 注入底层 inference provider，不会使该 pipeline 变成 unsupported。
+- 被替换的 pipeline/generator/reranker 为 `unsupported`，reason 是 `injected_component`；未配置的 operation 为
+  `disabled`。两种状态都拒绝 Custom create/replace 和 demonstration generation，不能保存成功后静默忽略 Custom。
+- History 和 current read 始终可用。任何已注册 key 都允许写入 Auto。Head 不存在或为 Auto 时，注入组件保持原有行为，
+  不生成虚假的 built-in Prompt selection 记录。
+- 如果部署把此前托管的 key 切换成注入或禁用组件，而某 Scope 仍有 Custom head，则在调用组件前以
+  `prompt_customization_unavailable` 拒绝 operation。操作者必须显式选择 Auto，或恢复兼容 built-in component，
+  不删除或改写历史。
+
+第三方主动接入 Prompt 的扩展 protocol 不在 v1 范围内；明确报告 unsupported 即可。
+
 ## Compatibility 与 migration
 
-对没有 Prompt Artifact 的 Scope，本设计保持向后兼容。它们继续使用与当前完全相同的 built-in selection，包括已配置
-的 `memory_extraction_profile` 和 rerank enablement。
+对没有 Prompt Artifact 的 Scope，built-in component 保留当前 selection，包括已配置的 `memory_extraction_profile`
+和 rerank enablement；注入组件保留原有行为。Transport 和 Handoff content model 扩展仍要求 schema/client 同步更新，
+不能据此声称旧 strict reader 会接受新 response field。
 
 实现需要：
 
@@ -553,9 +678,11 @@ configuration file。
 2. 注册六个 Prompt Definition；
 3. 在 base Artifact family contract、generated HTTP model、mapper、repository type registry 与 family management
    writer registry 中增加 `prompt`；
-4. 在六个 inference entry point 中按 Scope 解析 Prompt state；
-5. 增加两个 OpenAPI operation 并重新生成 checked-in HTTP sources；
-6. 在 tracing，以及适用时 generated Artifact lineage 中发出 Prompt identity 与 digest。
+4. 在六个 inference entry point 中按 Scope 解析 Prompt state，并检查实际组件支持状态；
+5. 增加两个 OpenAPI operation，扩展已有 capabilities 与 Handoff payload，重新生成 checked-in HTTP sources 和
+   client mapping；
+6. 在 prepare/finalize/commit 间传递已验证的 Handoff generation metadata，记录 configuration lineage；
+7. 在 tracing 中记录 Prompt identity 与 digest，并在部署升级前校验目标 Definition。
 
 不需要 SQL migration 或 content backfill。已有部署不需要 Prompt row。在启用 custom mode 前，实现必须证明 Auto mode
 编译出的 instructions 在行为上与当前实现等价。
@@ -568,12 +695,21 @@ configuration file。
 - Agent 或 user binding 在 Prompt lookup 前解析到预期 Scope；
 - 缺省和显式 Auto configuration 都保持当前 built-in behavior；
 - custom instructions 与 typed demonstrations 只进入正确 generator；
-- 六个注册 key 均可解析，未知 key fail closed；
+- 六个注册 key 均报告实际支持状态，支持的组件解析其 Prompt，未知 key fail closed；
 - revision 不可变、history pagination 稳定、exact read 不跟随 head；
 - stale replacement 失败，rollback 创建新 revision 且不删除历史；
+- 兼容的 Definition 升级接受已有 custom head 并允许 exact-content rollback；不兼容 replacement 不改变 head，
+  不兼容 resolution 失败而不回退 Auto；
+- 部署 Definition 无法执行某 revision 时，其历史仍然可读；
 - operation 执行期间修改 Prompt，只被下一次 operation 使用；
+- Handoff 用 revision 2 生成、head 随后变成 revision 3，commit 仍记录 revision 2 来源；跨独立请求的编辑 draft、
+  receipt 缺省、篡改、跨 Scope 重放、密钥轮换及考虑 provenance 的 no-op 比较都符合上述生命周期；
 - generated demonstrations 符合已注册 input/output schema，且绝不隐式持久化；
-- custom content 无法修改 invariant instruction、structured schema、model setting、tool 或 authority；
+- 各适用 key 的注入实现均报告 unsupported 并拒绝 Custom 写入和生成建议；组件切换后已有 custom head 阻止调用，
+  head 不存在或为 Auto 时仍保留注入行为；
+- Prompt Artifact list 为空时仍展示全部 key、实际支持状态和部署的 extraction profile；
+- 代码拒绝 schema、authority 和 Scope 违规；真实模型对抗测试单独报告语义遵守情况和合成 secret 泄漏，
+  不假设 Prompt instruction 能强制保证二者；
 - trace 包含 exact Prompt identity 或 built-in version 与 digest，但不包含 Prompt body；
 - OpenAPI contract、generated HTTP sources、unit tests 与至少一个真实 Runtime end-to-end scenario 通过。
 
