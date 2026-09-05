@@ -51,7 +51,7 @@ from powercontext.http import (
 )
 from powercontext.server.authentication import StaticBearerAuthenticationProvider
 from powercontext.server.authz import AccessControlService, MemoryEntrySelector, PrincipalRef, ResourceRef
-from powercontext.server.authz.composition import open_builtin_access_control
+from powercontext.server.authz.composition import open_builtin_access_control, open_casbin_access_control
 from powercontext.server.factory import create_server_app
 from powercontext.server.settings import (
     AccessControlConfig,
@@ -472,6 +472,205 @@ def test_scheduled_memory_processing_uses_the_static_service_principal_as_owner(
             resource = visible.items[0].model_dump(mode="json")
             assert resource["identity"]["family"] == "memory"
             assert resource["selector"]["entry_id"] == entries.entries[0].citation.entry_id
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("provider", ["builtin", "casbin"])
+@pytest.mark.parametrize("family", ["experience", "skill"])
+def test_resource_discovery_includes_base_artifacts_under_scope_grants(
+    tmp_path: Path, provider: str, family: str
+) -> None:
+    async def scenario() -> None:
+        database = SQLiteConfig(url=f"sqlite+aiosqlite:///{tmp_path / 'discovery.db'}")
+        open_access = open_builtin_access_control if provider == "builtin" else open_casbin_access_control
+        async with open_access(
+            database, bootstrap_administrators=(ADMIN,), deployment_id=DEPLOYMENT_ID
+        ) as access_control:
+            async with _client(
+                _app(database, access_control, ADMIN, "admin-token", tmp_path / "admin-scheduler.db"),
+                "admin-token",
+            ) as admin:
+                scopes = [
+                    await admin.create_scope(
+                        CreateScopeRequest(title=title, summary="Resource discovery", idempotency_key=title)
+                    )
+                    for title in ("visible", "hidden")
+                ]
+                content = (
+                    {
+                        "situation": "An Artifact was created through the base API.",
+                        "action": "Discover it through a Scope grant.",
+                        "outcome": "The readable Artifact appears in the list.",
+                        "lesson": "Discovery includes every committed Artifact.",
+                    }
+                    if family == "experience"
+                    else {
+                        "name": "resource-discovery",
+                        "description": "Check inherited Artifact access",
+                        "instructions": "Compare exact reads with resource discovery.",
+                        "validation": ["Authorized Artifacts appear in the list"],
+                    }
+                )
+                artifacts = [
+                    await admin.create_artifact(
+                        scope.scope_id,
+                        CreateArtifactRequest.model_validate({"family": family, "content": content}),
+                    )
+                    for scope in (scopes[0], scopes[0], scopes[1])
+                ]
+                await admin.create_access_binding(
+                    CreateAccessBindingRequest.model_validate({
+                        "subject": {"type": VIEWER.type, "id": VIEWER.id},
+                        "resource": {"type": "scope", "scope_id": scopes[0].scope_id},
+                        "role": "scope.viewer",
+                        "idempotency_key": "visible-scope-viewer",
+                    })
+                )
+                for principal in (VIEWER, RECEIVER):
+                    await admin.create_access_binding(
+                        CreateAccessBindingRequest.model_validate({
+                            "subject": {"type": principal.type, "id": principal.id},
+                            "resource": {
+                                "type": "artifact",
+                                "scope_id": scopes[0].scope_id,
+                                "identity": {"family": family, "artifact_id": artifacts[0].artifact_id},
+                            },
+                            "role": "artifact.viewer",
+                            "idempotency_key": f"direct-viewer-{principal.id}",
+                        })
+                    )
+
+            query = ListAccessResourcesRequest(
+                action=AccessAction.ARTIFACT_READ,
+                resource_type=AccessResourceType.ARTIFACT,
+                family=family,
+                limit=1,
+            )
+            async with _client(
+                _app(database, access_control, VIEWER, "viewer-token", tmp_path / "viewer-scheduler.db"),
+                "viewer-token",
+            ) as viewer:
+                assert await viewer.get_artifact(scopes[0].scope_id, family, artifacts[1].artifact_id) is not None
+                first = await viewer.list_access_resources(query)
+                assert first.total == 2
+                assert len(first.items) == 1
+                assert first.next_cursor is not None
+                second = await viewer.list_access_resources(query.model_copy(update={"cursor": first.next_cursor}))
+                assert second.total == 2
+                assert len(second.items) == 1
+                assert second.next_cursor is None
+                assert {
+                    item.model_dump(mode="json")["identity"]["artifact_id"] for item in first.items + second.items
+                } == {artifact.artifact_id for artifact in artifacts[:2]}
+                with pytest.raises(ForbiddenResponseError):
+                    await viewer.get_artifact(scopes[1].scope_id, family, artifacts[2].artifact_id)
+
+            async with _client(
+                _app(database, access_control, RECEIVER, "receiver-token", tmp_path / "receiver-scheduler.db"),
+                "receiver-token",
+            ) as receiver:
+                direct = await receiver.list_access_resources(query)
+                assert direct.total == 1
+                assert direct.items[0].model_dump(mode="json")["identity"]["artifact_id"] == artifacts[0].artifact_id
+                with pytest.raises(ForbiddenResponseError):
+                    await receiver.get_artifact(scopes[0].scope_id, family, artifacts[1].artifact_id)
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("provider", ["builtin", "casbin"])
+def test_server_administrators_discover_managed_resources_without_content_access(tmp_path: Path, provider: str) -> None:
+    async def scenario() -> None:
+        database = SQLiteConfig(url=f"sqlite+aiosqlite:///{tmp_path / 'admin-discovery.db'}")
+        open_access = open_builtin_access_control if provider == "builtin" else open_casbin_access_control
+        async with open_access(
+            database, bootstrap_administrators=(ADMIN,), deployment_id=DEPLOYMENT_ID
+        ) as access_control:
+            async with _client(
+                _app(database, access_control, ADMIN, "admin-token", tmp_path / "admin-scheduler.db"),
+                "admin-token",
+            ) as admin:
+                scope = await admin.create_scope(
+                    CreateScopeRequest(title="Managed Scope", summary="Admin discovery", idempotency_key="managed")
+                )
+                expected_scopes = {item.scope_id for item in (await admin.list_scopes()).items}
+                artifact = await admin.create_artifact(
+                    scope.scope_id,
+                    CreateArtifactRequest.model_validate({
+                        "family": "experience",
+                        "content": {
+                            "situation": "A server administrator needs to manage access.",
+                            "action": "List manageable resources.",
+                            "outcome": "Resource identities are visible without content access.",
+                            "lesson": "Administration does not imply content read.",
+                        },
+                    }),
+                )
+                await admin.create_access_binding(
+                    CreateAccessBindingRequest.model_validate({
+                        "subject": {"type": RECEIVER.type, "id": RECEIVER.id},
+                        "resource": {"type": "server", "deployment_id": DEPLOYMENT_ID},
+                        "role": "server.admin",
+                        "idempotency_key": "bob-server-admin",
+                    })
+                )
+                for principal in (RECEIVER, VIEWER):
+                    await admin.create_access_binding(
+                        CreateAccessBindingRequest.model_validate({
+                            "subject": {"type": principal.type, "id": principal.id},
+                            "resource": {"type": "scope", "scope_id": scope.scope_id},
+                            "role": "scope.admin",
+                            "idempotency_key": f"scope-admin-{principal.id}",
+                        })
+                    )
+
+            query = ListAccessResourcesRequest(
+                action=AccessAction.SCOPE_ADMIN, resource_type=AccessResourceType.SCOPE, limit=1
+            )
+            async with _client(
+                _app(database, access_control, RECEIVER, "receiver-token", tmp_path / "receiver-scheduler.db"),
+                "receiver-token",
+            ) as receiver:
+                discovered: list[str] = []
+                while True:
+                    page = await receiver.list_access_resources(query)
+                    assert page.total == len(expected_scopes)
+                    assert len(page.items) == 1
+                    discovered.extend(item.model_dump(mode="json")["scope_id"] for item in page.items)
+                    if page.next_cursor is None:
+                        break
+                    query = query.model_copy(update={"cursor": page.next_cursor})
+                assert set(discovered) == expected_scopes
+                assert len(discovered) == len(expected_scopes)
+                manageable = await receiver.list_access_resources(
+                    ListAccessResourcesRequest(
+                        action=AccessAction.ARTIFACT_SHARE,
+                        resource_type=AccessResourceType.ARTIFACT,
+                        family="experience",
+                    )
+                )
+                assert manageable.total == 1
+                assert manageable.items[0].model_dump(mode="json")["identity"]["artifact_id"] == artifact.artifact_id
+                for action, resource_type in (
+                    (AccessAction.SCOPE_READ, AccessResourceType.SCOPE),
+                    (AccessAction.ARTIFACT_READ, AccessResourceType.ARTIFACT),
+                ):
+                    readable = await receiver.list_access_resources(
+                        ListAccessResourcesRequest(action=action, resource_type=resource_type)
+                    )
+                    assert readable.total == 0
+                    assert readable.items == []
+                with pytest.raises(ForbiddenResponseError):
+                    await receiver.get_artifact(scope.scope_id, "experience", artifact.artifact_id)
+
+            async with _client(
+                _app(database, access_control, VIEWER, "viewer-token", tmp_path / "viewer-scheduler.db"),
+                "viewer-token",
+            ) as viewer:
+                direct = await viewer.list_access_resources(query.model_copy(update={"cursor": None}))
+                assert direct.total == 1
+                assert direct.items[0].model_dump(mode="json")["scope_id"] == scope.scope_id
 
     asyncio.run(scenario())
 

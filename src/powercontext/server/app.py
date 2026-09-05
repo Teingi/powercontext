@@ -172,7 +172,6 @@ from powercontext.builtin.review import (
     CandidateTerminalError,
     InvalidCandidateError,
 )
-from powercontext.builtin.review import CandidateStatus as RuntimeCandidateStatus
 from powercontext.builtin.review.generation import (
     GeneratedCandidateResult as RuntimeGeneratedCandidateResult,
 )
@@ -1445,27 +1444,41 @@ async def _query_authorized_resources(
     resources = {resource.key: resource for resource in authorized.exact_resources}
     if not authorized.parent_constraints:
         return tuple(resources.values())
-    if resource_type is not AccessResourceType.ARTIFACT or any(
-        parent.type is not AccessResourceType.SCOPE for parent in authorized.parent_constraints
-    ):
+    if resource_type not in {AccessResourceType.SCOPE, AccessResourceType.ARTIFACT}:
         raise AccessUnavailableError("safe_resource_filtering_unavailable")
 
     application = _require_application(request)
     access = _require_access_control(request)
+    scope_ids = await _authorized_scope_ids(request, authorized.parent_constraints)
     families = (family,) if family is not None else ("handoff", "memory", "experience", "skill")
-
-    for parent in authorized.parent_constraints:
-        scope_id = parent.scope_id
-        if scope_id is None:
-            raise AccessUnavailableError("safe_resource_filtering_unavailable")
-        for selected_family in families:
-            discovered = await _discover_scope_artifact_resources(application, scope_id, selected_family)
-            for resource in discovered:
-                if await access.artifact_owner(resource) is not None:
-                    resources[resource.key] = resource
-                if len(resources) > authorized.max_direct_resource_keys:
-                    raise AccessUnavailableError("resource_filter_limit_exceeded")
+    for scope_id in scope_ids:
+        if resource_type is AccessResourceType.SCOPE:
+            resource = ResourceRef.scope(scope_id)
+            resources[resource.key] = resource
+        else:
+            for selected_family in families:
+                discovered = await _discover_scope_artifact_resources(application, scope_id, selected_family)
+                for resource in discovered:
+                    if await access.artifact_owner(resource) is not None:
+                        resources[resource.key] = resource
+                    if len(resources) > authorized.max_direct_resource_keys:
+                        raise AccessUnavailableError("resource_filter_limit_exceeded")
+        if len(resources) > authorized.max_direct_resource_keys:
+            raise AccessUnavailableError("resource_filter_limit_exceeded")
     return tuple(resources.values())
+
+
+async def _authorized_scope_ids(request: Request, parents: Sequence[ResourceRef]) -> tuple[str, ...]:
+    access = _require_access_control(request)
+    scope_ids: set[str] = set()
+    for parent in parents:
+        if parent.type is AccessResourceType.SERVER and parent.deployment_id == access.deployment_id:
+            scope_ids.update(scope.scope_id for scope in await _require_scope_application(request).list())
+        elif parent.type is AccessResourceType.SCOPE and parent.scope_id is not None:
+            scope_ids.add(parent.scope_id)
+        else:
+            raise AccessUnavailableError("safe_resource_filtering_unavailable")
+    return tuple(sorted(scope_ids))
 
 
 async def _discover_scope_artifact_resources(
@@ -1489,7 +1502,7 @@ async def _discover_scope_artifact_resources(
             for entry in entries.entries
         )
     if family in {"experience", "skill"}:
-        return await _approved_artifact_resources(
+        return await _committed_artifact_resources(
             application,
             scope_id,
             cast(Literal["experience", "skill"], family),
@@ -1497,7 +1510,7 @@ async def _discover_scope_artifact_resources(
     raise AccessInvalidRequestError("artifact-family")
 
 
-async def _approved_artifact_resources(
+async def _committed_artifact_resources(
     application: ServerApplication,
     scope_id: str,
     family: Literal["experience", "skill"],
@@ -1505,18 +1518,14 @@ async def _approved_artifact_resources(
     resources: list[ResourceRef] = []
     cursor: str | None = None
     while True:
-        page = await application.review.for_scope(scope_id).list(
-            RuntimeListArtifactCandidatesRequest(
-                status=RuntimeCandidateStatus.APPROVED,
-                family=family,
-                cursor=cursor,
-                limit=100,
-            )
+        page = await application.records.for_scope(scope_id).query_artifacts(
+            family,
+            cursor=cursor,
+            limit=100,
         )
         resources.extend(
             ResourceRef.artifact(scope_id, family=artifact.family, artifact_id=artifact.artifact_id)
-            for candidate in page.candidates
-            if (artifact := candidate.result_artifact) is not None
+            for artifact in page.items
         )
         cursor = page.next_cursor
         if cursor is None:
