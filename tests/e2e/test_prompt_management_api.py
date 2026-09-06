@@ -20,6 +20,7 @@ from pathlib import Path
 
 import httpx
 import pytest
+from pydantic import SecretStr
 from pydantic_ai.messages import ModelResponse, TextPart, UserPromptPart
 from pydantic_ai.models.function import FunctionModel
 
@@ -36,7 +37,7 @@ from powercontext.http import (
     ReplaceArtifactRequest,
 )
 from powercontext.server.factory import create_server_app
-from powercontext.server.settings import BearerAuthConfig, McpConfig, ServerSettings
+from powercontext.server.settings import AccessControlConfig, BearerAuthConfig, McpConfig, ServerSettings
 
 
 def _content(instructions: str = "", *, mode: str = "auto") -> dict[str, object]:
@@ -48,7 +49,12 @@ def _content(instructions: str = "", *, mode: str = "auto") -> dict[str, object]
     }
 
 
-def test_prompt_http_history_generation_and_scoped_inference(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize("access_mode", ["disabled", "enforced"])
+def test_prompt_http_history_generation_and_scoped_inference(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, access_mode: str
+) -> None:
+    token = "prompt-test-token"  # noqa: S105 - disposable test credential
+
     def respond(messages, info) -> ModelResponse:
         request = next(
             json.loads(part.content)
@@ -87,7 +93,10 @@ def test_prompt_http_history_generation_and_scoped_inference(tmp_path: Path, mon
         settings=ServerSettings(
             database=SQLiteConfig(url=f"sqlite+aiosqlite:///{tmp_path / 'prompts.db'}"),
             inference=InferenceConfig(generation_model="test:prompt"),
-            auth=BearerAuthConfig(enabled=False),
+            auth=BearerAuthConfig(
+                enabled=access_mode == "enforced", token=SecretStr(token) if access_mode == "enforced" else None
+            ),
+            access=AccessControlConfig.model_validate({"mode": access_mode}),
             mcp=McpConfig(enabled=False),
         )
     )
@@ -95,9 +104,15 @@ def test_prompt_http_history_generation_and_scoped_inference(tmp_path: Path, mon
     async def scenario() -> None:
         async with (
             app.router.lifespan_context(app),
-            httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://testserver") as transport,
+            httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app),
+                base_url="http://testserver",
+                headers={"Authorization": "Bearer prompt-test-token"},
+            ) as transport,
         ):
-            client = PowerContextClient("http://testserver", http_client=transport, trust_transport_security=True)
+            client = PowerContextClient(
+                "http://testserver", token=token, http_client=transport, trust_transport_security=True
+            )
             scopes = [
                 (
                     await client.create_scope(

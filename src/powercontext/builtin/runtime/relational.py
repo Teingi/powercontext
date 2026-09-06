@@ -1378,16 +1378,18 @@ class _RelationalExperienceIncubator:
             selection = current_prompt("experience.incubate")
             prompt_refs = () if selection is None or selection.artifact is None else (selection.artifact,)
             _validate_experience_plans(plans, eligible_rows)
+            candidate_ids: list[str] = []
             async with self._services.database.transaction() as connection:
                 review = self._services.review(connection)
                 for plan in plans:
-                    await review.propose_experience(
+                    candidate = await review.propose_experience(
                         plan.proposal,
                         sources=plan.sources,
                         artifacts=prompt_refs,
                         target=None,
                         reason=plan.reason,
                     )
+                    candidate_ids.append(candidate.candidate_id)
                 await self._services.repositories.cursors.save(
                     connection,
                     self._services.scope_id,
@@ -1401,6 +1403,7 @@ class _RelationalExperienceIncubator:
                 current_cursor=action.through,
                 source_count=len(eligible_rows),
                 candidate_count=len(plans),
+                candidate_ids=tuple(candidate_ids),
             )
 
     async def _sources(

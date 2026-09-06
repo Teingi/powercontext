@@ -21,7 +21,7 @@ import {createPageUi, createRequestGate} from "./page-ui.js?v=locale-complete";
 
 const translations = {
   en: {
-    pageTitle: "PowerContext Prompts", promptsTitle: "Prompts", dashboardTitle: "Overview", skillsTitle: "Skills",
+    pageTitle: "PowerContext Prompts", promptsTitle: "Prompts", sharedTitle: "Shared with me", dashboardTitle: "Overview", skillsTitle: "Skills",
     reviewTitle: "Review", handoffReportTitle: "Handoff Report", brandHomeLabel: "PowerContext Overview",
     primaryNavigation: "Primary navigation", maintainedBy: "Maintained by OceanBase.", signOut: "Sign out",
     switchDark: "Switch to dark mode", switchLight: "Switch to light mode", switchChinese: "Switch to Chinese",
@@ -52,7 +52,7 @@ const translations = {
     "skill.generate": "Skill generation", "handoff.generate": "Handoff generation"
   },
   zh: {
-    pageTitle: "PowerContext 提示词", promptsTitle: "提示词", dashboardTitle: "概览", skillsTitle: "技能",
+    pageTitle: "PowerContext 提示词", promptsTitle: "提示词", sharedTitle: "与我共享", dashboardTitle: "概览", skillsTitle: "技能",
     reviewTitle: "审核", handoffReportTitle: "交接报告", brandHomeLabel: "PowerContext 概览",
     primaryNavigation: "主导航", maintainedBy: "由 OceanBase 维护。", signOut: "退出登录",
     switchDark: "切换深色模式", switchLight: "切换浅色模式", switchChinese: "切换中文",
@@ -261,9 +261,12 @@ async function loadCurrent() {
   $("prompt-more").hidden = true;
   renderKeys();
   renderState();
-  let result;
-  try { result = await request(path()); }
-  catch (error) { if (error.status !== 404) throw error; result = {value: null, etag: null}; }
+  // The authorized collection establishes absence without probing an unowned identity.
+  let result = {value: null, etag: null};
+  if (state.heads.has(state.key)) {
+    try { result = await request(path()); }
+    catch (error) { if (error.status !== 404) throw error; }
+  }
   if (!ticket.isCurrent()) return;
   state.head = result.value;
   state.etag = result.etag;
@@ -335,7 +338,7 @@ $("prompt-form").addEventListener("submit", (event) => {
   if (!state.loaded) return;
   void busy(async () => save(editedContent()));
 });
-$("prompt-reload").addEventListener("click", () => { if (discard()) void busy(loadCurrent); });
+$("prompt-reload").addEventListener("click", () => { if (discard()) void busy(loadScope); });
 $("prompt-scope").addEventListener("change", () => {
   if (!discard()) { $("prompt-scope").value = state.scope; return; }
   state.scope = $("prompt-scope").value;

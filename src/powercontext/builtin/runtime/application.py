@@ -42,6 +42,7 @@ from powercontext.builtin.artifacts.handoff import (
     HandoffAudience,
     HandoffCitation,
     HandoffDraft,
+    HandoffEvidenceAuthorizer,
     HandoffOmission,
     HandoffResolution,
     HandoffService,
@@ -107,6 +108,7 @@ from powercontext.builtin.records import (
     ArtifactRevisionPage,
     ArtifactWrite,
     BaseValueConflictError,
+    LogicalArtifactRecord,
     RecordService,
     ScopeSummaryPage,
     SourceRecord,
@@ -262,6 +264,8 @@ SkillUsageRecorder = Callable[[str, SkillUsageCapture], Awaitable[SourceReceipt]
 StatisticsServiceFactory = Callable[[str], RelationalScopedStatistics]
 RecallTokenEstimator = Callable[[str, PreparedContextBuild], Awaitable[RecallTokenMeasurement | None]]
 Clock = Callable[[], datetime]
+ScheduledSourceRunner = Callable[[str, "BuiltinRuntime"], Awaitable[MemoryFlushResult]]
+ScheduledExperienceRunner = Callable[[str, "BuiltinRuntime"], Awaitable[ExperienceIncubationResult]]
 _MEMORY_SEARCH_ATTEMPTS = 3
 
 
@@ -403,6 +407,14 @@ class ScopedRecordApplication:
             return await self._runtime._records().list_artifact_revisions(
                 self.scope_id, family, artifact_id, limit=limit, cursor=cursor
             )
+
+    async def current_memory_entry(self, artifact_id: str, entry_id: str, /) -> MemoryEntryVersion:
+        async with self._runtime._scope_operation(self.scope_id):
+            return await self._runtime._records().current_memory_entry(self.scope_id, artifact_id, entry_id)
+
+    async def logical_artifacts(self) -> tuple[LogicalArtifactRecord, ...]:
+        async with self._runtime._scope_operation(self.scope_id):
+            return await self._runtime._records().logical_artifacts(self.scope_id)
 
     async def query_artifacts(
         self,
@@ -1222,13 +1234,22 @@ class ScopedHandoffApplication:
         self,
         handoff: PreparedHandoff | ArtifactRef,
         /,
+        *,
+        evidence_authorizer: HandoffEvidenceAuthorizer | None = None,
     ) -> HandoffResolution:
         async with self._runtime._context(self.scope_id) as context:
-            return await context.artifacts.handoff.continue_from(handoff)
+            return await context.artifacts.handoff.continue_from(
+                handoff,
+                evidence_authorizer=evidence_authorizer,
+            )
 
-    async def continue_latest(self) -> HandoffResolution:
+    async def continue_latest(
+        self,
+        *,
+        evidence_authorizer: HandoffEvidenceAuthorizer | None = None,
+    ) -> HandoffResolution:
         async with self._runtime._context(self.scope_id) as context:
-            return await context.artifacts.handoff.continue_latest()
+            return await context.artifacts.handoff.continue_latest(evidence_authorizer=evidence_authorizer)
 
     async def latest(self) -> Handoff | None:
         async with self._runtime._context(self.scope_id) as context:
@@ -1719,7 +1740,12 @@ class ScheduledSourceProcessor:
                     operation="process_source_window",
                 ) as span:
                     try:
-                        result = await self._runtime.memory.for_scope(scope_id).flush()
+                        runner = self._runtime._scheduled_source_runner
+                        result = (
+                            await self._runtime.memory.for_scope(scope_id).flush()
+                            if runner is None
+                            else await runner(scope_id, self._runtime)
+                        )
                     except asyncio.CancelledError:
                         _log_scheduled_processing(
                             "cancelled",
@@ -1769,7 +1795,12 @@ class ScheduledExperienceProcessor:
                     operation="incubate_experience_candidates",
                 ) as span:
                     try:
-                        result = await self._runtime.experience.for_scope(scope_id).incubate()
+                        runner = self._runtime._scheduled_experience_runner
+                        result = (
+                            await self._runtime.experience.for_scope(scope_id).incubate()
+                            if runner is None
+                            else await runner(scope_id, self._runtime)
+                        )
                     except asyncio.CancelledError:
                         _log_scheduled_processing(
                             "cancelled",
@@ -1872,6 +1903,8 @@ class BuiltinRuntime:
         readiness: RuntimeReadinessChecks | None = None,
         clock: Clock | None = None,
         tracing: RuntimeTracing | None = None,
+        scheduled_source_runner: ScheduledSourceRunner | None = None,
+        scheduled_experience_runner: ScheduledExperienceRunner | None = None,
         remote_ingestion: RemoteIngestion | None = None,
     ) -> None:
         if source_window_limit < 1:
@@ -1906,6 +1939,8 @@ class BuiltinRuntime:
         self._readiness = RuntimeReadinessChecks() if readiness is None else readiness
         self._clock = _utc_now if clock is None else clock
         self._tracing = tracing
+        self._scheduled_source_runner = scheduled_source_runner
+        self._scheduled_experience_runner = scheduled_experience_runner
         self.source_window_limit = source_window_limit
         self._scope_cache = ScopeCache(
             scope_cache_size,
