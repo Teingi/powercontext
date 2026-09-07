@@ -6349,6 +6349,54 @@ components:
           minimum: 512
           maximum: 32768
           default: 8000
+        assembly:
+          $ref: "#/components/schemas/ContextAssembly"
+    ContextAssemblySection:
+      type: object
+      additionalProperties: false
+      required: [family, limit]
+      properties:
+        family:
+          $ref: "#/components/schemas/ContextAssemblyFamily"
+        limit:
+          type: integer
+          minimum: 1
+          maximum: 8
+          description: Maximum included entries. Experience is limited to two; all section limits together must not exceed eight.
+    ContextAssembly:
+      type: object
+      additionalProperties: false
+      description: Explicitly opt into grouped Markdown context. Omit assembly to preserve the existing context format; null is invalid.
+      properties:
+        format:
+          allOf:
+            - $ref: "#/components/schemas/ContextAssemblyFormat"
+          default: markdown
+        sections:
+          type: array
+          maxItems: 2
+          description: Unique families in output and byte-budget priority order. An empty array disables candidate recall.
+          default:
+            - {family: memory, limit: 6}
+            - {family: experience, limit: 2}
+          items:
+            $ref: "#/components/schemas/ContextAssemblySection"
+        show:
+          type: array
+          maxItems: 2
+          uniqueItems: true
+          default: []
+          items:
+            $ref: "#/components/schemas/ContextAssemblyMetadata"
+    ContextAssemblyFamily:
+      type: string
+      enum: [memory, experience]
+    ContextAssemblyFormat:
+      type: string
+      enum: [markdown]
+    ContextAssemblyMetadata:
+      type: string
+      enum: [confidence, recall_rank]
     ProposeExperienceRequest:
       type: object
       additionalProperties: false

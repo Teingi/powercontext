@@ -17,6 +17,8 @@
 from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from powercontext.http import ContextAssembly
+
 
 class PowerContextLangChainSettings(BaseSettings):
     """PowerContext settings read from ``POWERCONTEXT_LANGCHAIN_*`` variables."""
@@ -34,6 +36,7 @@ class PowerContextLangChainSettings(BaseSettings):
     scope_id: str | None = None
     timeout: float = Field(default=10.0, gt=0)
     max_bytes: int = Field(default=8000, ge=512, le=32768)
+    context_assembly: ContextAssembly | None = None
 
 
 __all__ = ["PowerContextLangChainSettings"]

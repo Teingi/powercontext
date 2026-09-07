@@ -15,6 +15,7 @@
  */
 
 export interface PluginConfig {
+  contextAssembly?: Record<string, unknown>
   baseUrl?: string
   authorization?: string
   scopeId?: string
@@ -27,6 +28,7 @@ export interface PluginConfig {
 }
 
 export interface ResolvedConfig {
+  contextAssembly?: Record<string, unknown>
   baseUrl: string
   authorization: string | undefined
   scopeId: string | undefined
@@ -72,6 +74,20 @@ function optionalText(value: string | undefined): string | undefined {
   return trimmed ? trimmed : undefined
 }
 
+function contextAssembly(raw: string | undefined, fallback?: Record<string, unknown>): Record<string, unknown> | undefined {
+  let value: unknown
+  try {
+    value = raw === undefined ? fallback : JSON.parse(raw)
+  } catch {
+    throw new Error('PowerContext context assembly must be a JSON object')
+  }
+  if (value === undefined) return undefined
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('PowerContext context assembly must be a JSON object')
+  }
+  return structuredClone(value as Record<string, unknown>)
+}
+
 export function resolveConfig(
   config: PluginConfig = {},
   env: NodeJS.ProcessEnv = process.env,
@@ -81,6 +97,7 @@ export function resolveConfig(
     throw new Error('maxBytes must be between 512 and 32768')
   }
   return {
+    contextAssembly: contextAssembly(envString(env, 'POWERCONTEXT_DSH_CONTEXT_ASSEMBLY'), config.contextAssembly),
     baseUrl: stripSlash(envString(env, 'POWERCONTEXT_DSH_BASE_URL') ?? config.baseUrl ?? DEFAULTS.baseUrl),
     authorization: envString(env, 'POWERCONTEXT_DSH_AUTHORIZATION') ?? optionalText(config.authorization),
     scopeId: envString(env, 'POWERCONTEXT_DSH_SCOPE_ID') ?? optionalText(config.scopeId),

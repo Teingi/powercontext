@@ -19,6 +19,8 @@ from __future__ import annotations
 from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from powercontext.http import ContextAssembly
+
 
 class PowerContextLangGraphSettings(BaseSettings):
     """PowerContext settings read from the environment.
@@ -37,3 +39,4 @@ class PowerContextLangGraphSettings(BaseSettings):
     scope_id: str | None = None
     timeout: float = 10.0
     max_bytes: int = Field(default=8000, ge=512, le=32768)
+    context_assembly: ContextAssembly | None = None

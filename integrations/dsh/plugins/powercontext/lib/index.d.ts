@@ -18,6 +18,7 @@ import { Context } from "@deepseek-ai/cordis";
 
 //#region src/config.d.ts
 interface PluginConfig {
+  contextAssembly?: Record<string, unknown>;
   baseUrl?: string;
   authorization?: string;
   scopeId?: string;
@@ -29,6 +30,7 @@ interface PluginConfig {
   flushMaxCalls?: number;
 }
 interface ResolvedConfig {
+  contextAssembly?: Record<string, unknown>;
   baseUrl: string;
   authorization: string | undefined;
   scopeId: string | undefined;

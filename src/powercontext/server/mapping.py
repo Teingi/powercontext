@@ -624,7 +624,7 @@ def search_request(value: SearchMemoryRequest) -> RuntimeSearchMemoryRequest:
 
 
 def prepare_context_request(value: TransportPrepareContextRequest) -> PrepareContextRequest:
-    return PrepareContextRequest(query=value.query, max_bytes=value.max_bytes)
+    return PrepareContextRequest.model_validate_json(value.model_dump_json(exclude={"scope_id"}, exclude_unset=True))
 
 
 def activate_handoff_request(value: ActivateHandoffRequest) -> ActivateHandoff:

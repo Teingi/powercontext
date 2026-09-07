@@ -25,7 +25,7 @@ import httpx
 from pydantic import SecretStr
 
 from powercontext.client import PowerContextClient
-from powercontext.http import ResolveScopeBindingRequest
+from powercontext.http import ContextAssembly, ResolveScopeBindingRequest
 
 from .scope import PowerContextScope
 from .settings import PowerContextLangChainSettings
@@ -44,6 +44,7 @@ class ResolvedConfig:
     token: str | None = field(repr=False)
     timeout: float
     max_bytes: int
+    context_assembly: ContextAssembly | None = None
 
 
 def resolve_config(
@@ -62,6 +63,7 @@ def resolve_config(
         token=token,
         timeout=resolved_scope.timeout if resolved_scope.timeout is not None else resolved_settings.timeout,
         max_bytes=resolved_settings.max_bytes,
+        context_assembly=resolved_settings.context_assembly,
     )
 
 

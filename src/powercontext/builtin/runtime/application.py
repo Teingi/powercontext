@@ -577,13 +577,28 @@ class ScopedContextApplication:
         self._runtime = runtime
         self.scope_id = validate_scope_id(scope_id)
 
-    async def prepare(self, request: PrepareContextRequest, /) -> PreparedContext:
+    async def prepare(
+        self,
+        request: PrepareContextRequest,
+        /,
+        *,
+        authorize_scopes: Callable[[tuple[str, ...]], Awaitable[None]] | None = None,
+    ) -> PreparedContext:
         async with self._runtime._scope_operation(self.scope_id) as scope:
+            if request.assembly is not None and not request.assembly.sections:
+                return PreparedContextBuilder().empty()
+            if authorize_scopes is not None:
+                await authorize_scopes((self.scope_id, *scope.context_references))
             return await self._prepare(request, scope)
 
     async def _prepare(self, request: PrepareContextRequest, scope: ScopeDescriptor, /) -> PreparedContext:
         builder = PreparedContextBuilder()
         scope_ids = [self.scope_id, *scope.context_references]
+        families = (
+            {section.family for section in request.assembly.sections}
+            if request.assembly is not None
+            else {"memory", "experience"}
+        )
 
         memory_candidates: list[PreparedMemoryCandidates] = []
         experience_candidates: list[PreparedExperienceCandidates] = []
@@ -591,8 +606,8 @@ class ScopedContextApplication:
             memory, experiences = await self._recall_scope(
                 scope_id,
                 request,
-                memory_limit=builder.memory_candidate_limit,
-                experience_limit=builder.experience_candidate_limit,
+                memory_limit=builder.memory_candidate_limit if "memory" in families else 0,
+                experience_limit=builder.experience_candidate_limit if "experience" in families else 0,
             )
             memory_candidates.append(memory)
             experience_candidates.append(experiences)
@@ -654,8 +669,13 @@ class ScopedContextApplication:
         memory_limit: int,
         experience_limit: int,
     ) -> tuple[PreparedMemoryCandidates, PreparedExperienceCandidates]:
+        context_manager = (
+            self._runtime._context(scope_id, embedding_purpose=ModelUsagePurpose.MEMORY_RECALL)
+            if memory_limit > 0
+            else self._runtime._scoped_operation(scope_id, embedding_purpose=ModelUsagePurpose.MEMORY_RECALL)
+        )
         async with (
-            self._runtime._context(scope_id, embedding_purpose=ModelUsagePurpose.MEMORY_RECALL) as context,
+            context_manager as context,
             self._runtime._locked(scope_id),
         ):
             with self._runtime._stage(
@@ -665,19 +685,21 @@ class ScopedContextApplication:
                     _MEMORY_SEARCH_LIMIT: memory_limit,
                 },
             ) as span:
-                service = context.artifacts.memory
-                current = await _head_or_none(service, context.artifacts.memory_artifact_id)
+                current = None
                 memory_hits = ()
                 search_mode: str | None = None
-                if current is not None and memory_limit > 0:
-                    result = await service.search(
-                        request.query,
-                        memories=(current,),
-                        limit=memory_limit,
-                        mode="auto",
-                    )
-                    memory_hits = result.hits
-                    search_mode = result.mode
+                if context is not None:
+                    service = context.artifacts.memory
+                    current = await _head_or_none(service, context.artifacts.memory_artifact_id)
+                    if current is not None:
+                        result = await service.search(
+                            request.query,
+                            memories=(current,),
+                            limit=memory_limit,
+                            mode="auto",
+                        )
+                        memory_hits = result.hits
+                        search_mode = result.mode
                 if span is not None:
                     attributes: dict[str, TraceAttribute] = {
                         _MEMORY_SEARCH_MEMORY_PRESENT: current is not None,

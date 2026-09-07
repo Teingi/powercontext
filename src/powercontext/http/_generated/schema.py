@@ -5164,11 +5164,85 @@ OPENAPI_SCHEMA: dict[str, JsonValue] = {
                     "scope_id": {"type": "string", "maxLength": 256, "minLength": 1, "pattern": ".*\\S.*"},
                     "query": {"type": "string", "maxLength": 8192, "minLength": 1, "pattern": ".*\\S.*"},
                     "max_bytes": {"type": "integer", "maximum": 32768.0, "minimum": 512.0, "default": 8000},
+                    "assembly": {"$ref": "#/components/schemas/ContextAssembly"},
                 },
                 "additionalProperties": False,
                 "type": "object",
                 "required": ["scope_id", "query"],
             },
+            "ContextAssemblySection": {
+                "properties": {
+                    "family": {"$ref": "#/components/schemas/ContextAssemblyFamily"},
+                    "limit": {
+                        "type": "integer",
+                        "maximum": 8.0,
+                        "minimum": 1.0,
+                        "description": "Maximum "
+                        "included "
+                        "entries. "
+                        "Experience "
+                        "is "
+                        "limited "
+                        "to "
+                        "two; "
+                        "all "
+                        "section "
+                        "limits "
+                        "together "
+                        "must "
+                        "not "
+                        "exceed "
+                        "eight.",
+                    },
+                },
+                "additionalProperties": False,
+                "type": "object",
+                "required": ["family", "limit"],
+            },
+            "ContextAssembly": {
+                "properties": {
+                    "format": {
+                        "allOf": [{"$ref": "#/components/schemas/ContextAssemblyFormat"}],
+                        "default": "markdown",
+                    },
+                    "sections": {
+                        "items": {"$ref": "#/components/schemas/ContextAssemblySection"},
+                        "type": "array",
+                        "maxItems": 2,
+                        "description": "Unique "
+                        "families "
+                        "in "
+                        "output "
+                        "and "
+                        "byte-budget "
+                        "priority "
+                        "order. "
+                        "An "
+                        "empty "
+                        "array "
+                        "disables "
+                        "candidate "
+                        "recall.",
+                        "default": [{"family": "memory", "limit": 6}, {"family": "experience", "limit": 2}],
+                    },
+                    "show": {
+                        "items": {"$ref": "#/components/schemas/ContextAssemblyMetadata"},
+                        "type": "array",
+                        "maxItems": 2,
+                        "uniqueItems": True,
+                        "default": [],
+                    },
+                },
+                "additionalProperties": False,
+                "type": "object",
+                "description": "Explicitly opt into grouped "
+                "Markdown context. Omit assembly to "
+                "preserve the existing context "
+                "format; null is invalid.",
+            },
+            "ContextAssemblyFamily": {"type": "string", "enum": ["memory", "experience"]},
+            "ContextAssemblyFormat": {"type": "string", "enum": ["markdown"]},
+            "ContextAssemblyMetadata": {"type": "string", "enum": ["confidence", "recall_rank"]},
             "ProposeExperienceRequest": {
                 "properties": {
                     "scope_id": {"type": "string", "maxLength": 256, "minLength": 1, "pattern": ".*\\S.*"},

@@ -1,0 +1,114 @@
+---
+title: 输出标准上下文文本
+description: 选择 Memory 和 Experience 的输出类别、顺序、条数，以及展示的元数据。
+---
+
+# 输出标准上下文文本
+
+在 `POST /v1/context/prepare` 中传入 `assembly`，即可获得按制品类别组织的 Markdown。可以选择 Memory 和
+已批准的 Experience、调整章节顺序、限制条数，并展示召回位置和置信度状态。请使用已存在且具有读取权限的
+Scope；读取其引用的其他 Scope 也需要对应权限。
+
+## 选择类别和顺序
+
+把下面的请求保存为 `prepare.json`，将 `scope_id` 替换成实际 Scope ID：
+
+```json
+{
+  "scope_id": "project:demo",
+  "query": "修改 OpenAPI 后，如何修复客户端契约不一致的问题？",
+  "max_bytes": 8000,
+  "assembly": {
+    "format": "markdown",
+    "sections": [
+      {"family": "experience", "limit": 2},
+      {"family": "memory", "limit": 5}
+    ],
+    "show": ["confidence", "recall_rank"]
+  }
+}
+```
+
+从未启用鉴权的本地 Server 导出实际文本：
+
+```bash
+curl --fail-with-body -sS http://127.0.0.1:8000/v1/context/prepare \
+  -H 'Content-Type: application/json' --data-binary @prepare.json \
+  | jq -j '.content // empty' > context.md
+```
+
+启用鉴权的 Server 需要添加与其他 API 调用相同的 Authorization header。HTTP 外层仍然是 `schema`、`status`、
+`content`、`content_bytes` 四个字段。直接写出或注入 `content` 即可：它已经包含历史证据提示、章节标题、按字面
+展示的正文、精确引用和截断标记。空结果为 `status: "empty"`、`content: null`、`content_bytes: 0`。
+
+Python Client 的等价调用：
+
+```python
+import asyncio
+import json
+from pathlib import Path
+
+from powercontext.client import PowerContextClient
+from powercontext.http import PrepareContextRequest
+
+async def export_context() -> None:
+    request = PrepareContextRequest.model_validate(json.loads(Path("prepare.json").read_text(encoding="utf-8")))
+    async with PowerContextClient("http://127.0.0.1:8000") as client:
+        prepared = await client.prepare_context(request)
+    Path("context.md").write_text(prepared.content or "", encoding="utf-8")
+
+asyncio.run(export_context())
+```
+
+## 设置输出策略
+
+| 配置 | 行为 |
+| --- | --- |
+| 省略 `assembly` | 保持原有输出和选择行为。 |
+| `"assembly": {}` | Markdown，先 Memory 最多 6 条，再 Experience 最多 2 条，不显示可选元数据。 |
+| `"assembly": {"sections": []}` | 完成请求和当前 Scope 检查后返回空结果，不召回候选。 |
+| 只配置 `memory` | 只召回 Memory，limit 为 1–8。 |
+| 只配置 `experience` | 只召回已批准的 Experience，limit 为 1–2。 |
+| 配置两个 section | 数组顺序决定展示顺序和字节预算优先级；limit 之和不得超过 8。 |
+| `show: ["recall_rank"]` | 展示条目在该类别去重后候选列表中的位置。 |
+| `show: ["confidence"]` | 显示 `unknown (not assessed)`，目前没有评估数字置信度。 |
+
+同一类别内保留召回顺序，包括已有 Memory reranker 的排序。前面的候选因预算无法装入时，rank 可能不连续。
+被排除的类别不会参与召回。重复类别、非法 limit、`sort_by` 或 `min_confidence` 等不支持的字段，以及显式
+`assembly: null`，都会返回 HTTP 422。
+
+`max_bytes` 限制 Server 完整文本的 UTF-8 字节数，范围为 512–32768，默认 8000。每条正文上限为 2000 bytes。
+空间不足时，Server 会缩短正文或跳过条目，同时保留完整引用与边界，因此实际输出可能少于请求条数。
+接入端应校验外层结构和预算，原样使用正文，不应二次裁剪；可以在正文外添加自己的提示。
+
+## 为插件的自动召回启用配置
+
+以 Codex 为例，在新会话启动前设置 JSON 对象：
+
+```bash
+export POWERCONTEXT_CODEX_CONTEXT_ASSEMBLY='{"sections":[{"family":"experience","limit":2},{"family":"memory","limit":5}],"show":["confidence","recall_rank"]}'
+codex
+```
+
+各接入端的配置入口如下，值使用同一个组装对象：
+
+| 接入端 | 配置入口 |
+| --- | --- |
+| Codex | `POWERCONTEXT_CODEX_CONTEXT_ASSEMBLY` |
+| Claude Code | `POWERCONTEXT_CLAUDE_CONTEXT_ASSEMBLY` |
+| WorkBuddy | `POWERCONTEXT_WORKBUDDY_CONTEXT_ASSEMBLY` |
+| DeepSeek Harness | `POWERCONTEXT_DSH_CONTEXT_ASSEMBLY` 或插件 `contextAssembly` |
+| OpenCode | `POWERCONTEXT_OPENCODE_CONTEXT_ASSEMBLY` |
+| Pi | `POWERCONTEXT_PI_CONTEXT_ASSEMBLY` |
+| Hermes | `POWERCONTEXT_HERMES_CONTEXT_ASSEMBLY` 或 Provider `context_assembly` |
+| LangChain | `POWERCONTEXT_LANGCHAIN_CONTEXT_ASSEMBLY` 或 settings `context_assembly` |
+| LangGraph | `POWERCONTEXT_LANGGRAPH_CONTEXT_ASSEMBLY` 或 settings `context_assembly` |
+| Pydantic AI | `POWERCONTEXT_PYDANTIC_AI_CONTEXT_ASSEMBLY` 或 settings `context_assembly` |
+| Bub | `POWERCONTEXT_BUB_CONTEXT_ASSEMBLY` 或 settings `context_assembly` |
+| OpenClaw | `plugins.entries.memory-powercontext.config.contextAssembly` 对象 |
+
+环境变量使用 JSON 字符串，对象配置使用等价对象。移除配置即可恢复原有输出。启用前需要升级 Server 和对应
+接入端；旧 Server 会拒绝 `assembly`，插件通过已有诊断报告失败，不会自动扩大选择范围重试。
+
+LangGraph 和 Hermes 的缓存同时区分组装配置和字节预算，切换策略后不会复用其他选择或预算下的结果。
+该功能不新增数据库表或 HTTP 接口。

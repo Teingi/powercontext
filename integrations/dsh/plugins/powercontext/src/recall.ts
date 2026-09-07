@@ -85,6 +85,7 @@ async function recallContent(input: RecallInput, query: string, scopeId: string)
       scope_id: scopeId,
       query,
       max_bytes: input.config.maxBytes,
+      ...(input.config.contextAssembly === undefined ? {} : { assembly: input.config.contextAssembly }),
     }, input.signal)
     const prepared = validatePreparedContext(
       result.kind === 'json' ? result.value : undefined,
