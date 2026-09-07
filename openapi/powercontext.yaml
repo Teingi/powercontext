@@ -139,6 +139,8 @@ paths:
       summary: Publish one exact Artifact revision into another Scope
       description: >-
         Memory publication is rejected until its complete family-owned state can be created atomically in the target Scope.
+        Prompt publication is rejected because Prompt identities must be registered operation keys.
+        Configure the target Scope through the Artifact Create and Replace APIs instead.
       operationId: publish_artifact
       x-powercontext-access: {resolver: publish_artifact_access}
       requestBody:
