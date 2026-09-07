@@ -2480,8 +2480,10 @@ paths:
         Dispatch the family-specific creation command through the owning Family writer and atomically create
         revision one, its derived Family state, and its system provenance Source. Handoff is the Scope singleton:
         Create returns 409 when it already exists and callers must use Replace to update it.
+        Creating a Prompt requires scope.admin because its configuration affects the whole Scope;
+        other families require scope.contribute.
       operationId: create_artifact
-      x-powercontext-access: {action: scope.contribute, resource: {type: scope, scope-id-from: scope_id}}
+      x-powercontext-access: {resolver: create_artifact_access}
       parameters:
         - name: scope_id
           in: path
@@ -2667,7 +2669,10 @@ paths:
     put:
       tags: [artifacts]
       summary: Replace the current Artifact head
-      description: Commit a complete next revision when If-Match identifies the current head.
+      description: >-
+        Commit a complete next revision when If-Match identifies the current head.
+        Replacing a Prompt requires current scope.admin authority, including switching to Auto and restoring
+        an earlier revision. Artifact ownership does not authorize Prompt replacement after Scope role revocation.
       operationId: replace_artifact
       x-powercontext-access: {resolver: path_artifact_write_access}
       parameters:
@@ -3163,8 +3168,9 @@ paths:
       description: >-
         Generate exactly the requested number of typed input/output suggestions for a supported built-in operation.
         The caller must explicitly create or replace a Prompt Artifact to save suggestions.
+        Requires scope.admin, matching Prompt creation and replacement.
       operationId: generate_prompt_demonstrations
-      x-powercontext-access: {action: scope.contribute, resource: {type: scope, scope-id-from: scope_id}}
+      x-powercontext-access: {action: scope.admin, resource: {type: scope, scope-id-from: scope_id}}
       parameters:
         - name: scope_id
           in: path

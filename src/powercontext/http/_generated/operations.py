@@ -2105,9 +2105,7 @@ CREATE_ARTIFACT = Operation[CreateArtifactRequest, ArtifactCreated](
         503: {"$ref": "#/components/responses/Unavailable"},
         500: {"$ref": "#/components/responses/InternalError"},
     },
-    access=AccessRequirement(
-        action="scope.contribute", resource="scope", scope_id_field="scope_id", resolver="request"
-    ),
+    access=AccessRequirement(action=None, resource=None, scope_id_field=None, resolver="create_artifact_access"),
 )
 
 LIST_ARTIFACTS = Operation[ListArtifactsRequest, ArtifactPage](
@@ -2472,9 +2470,7 @@ GENERATE_PROMPT_DEMONSTRATIONS = Operation[GeneratePromptDemonstrationsRequest, 
         503: {"$ref": "#/components/responses/Unavailable"},
         500: {"$ref": "#/components/responses/InternalError"},
     },
-    access=AccessRequirement(
-        action="scope.contribute", resource="scope", scope_id_field="scope_id", resolver="request"
-    ),
+    access=AccessRequirement(action="scope.admin", resource="scope", scope_id_field="scope_id", resolver="request"),
 )
 
 GET_ACCESS_PRINCIPAL = Operation[None, AccessMeResponse](

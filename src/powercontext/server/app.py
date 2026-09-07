@@ -4119,6 +4119,18 @@ def _path_scope_admin_access(
     return _path_scope_access(payload, action=AccessAction.SCOPE_ADMIN)
 
 
+def _create_artifact_access(
+    payload: Mapping[str, Any],
+    _deployment_id: str,
+) -> tuple[tuple[AccessAction, ResourceRef], ...]:
+    action = (
+        AccessAction.SCOPE_ADMIN
+        if _nested_request_value(payload, "family") == BaseArtifactFamily.PROMPT.value
+        else AccessAction.SCOPE_CONTRIBUTE
+    )
+    return _path_scope_access(payload, action=action)
+
+
 def _path_artifact_access(
     payload: Mapping[str, Any],
     *,
@@ -4157,7 +4169,11 @@ def _path_artifact_write_access(
     payload: Mapping[str, Any],
     _deployment_id: str,
 ) -> tuple[tuple[AccessAction, ResourceRef], ...]:
-    if _path_artifact_family(payload) == BaseArtifactFamily.MEMORY.value:
+    family = _path_artifact_family(payload)
+    if family == BaseArtifactFamily.PROMPT.value:
+        # Prompt configuration affects the whole Scope; retained Artifact ownership is insufficient.
+        return _path_scope_access(payload, action=AccessAction.SCOPE_ADMIN)
+    if family == BaseArtifactFamily.MEMORY.value:
         return _base_memory_write_access(payload)
     return _path_artifact_access(payload, action=AccessAction.ARTIFACT_WRITE)
 
@@ -4304,6 +4320,7 @@ _NAMED_ACCESS_RESOLVERS: dict[
     "acknowledge_handoff_access": _acknowledge_handoff_resolver,
     "continue_handoff_access": _continue_handoff_resolver,
     "commit_handoff_access": _commit_handoff_access,
+    "create_artifact_access": _create_artifact_access,
     "exact_memory_write_access": _exact_memory_write_access,
     "experience_candidate_write_access": _experience_candidate_write_access,
     "exact_experience_access": _exact_experience_access,

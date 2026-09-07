@@ -24,6 +24,7 @@ import httpx
 import pytest
 
 from powercontext.builtin.persistence.sqlite import SQLiteConfig
+from powercontext.builtin.runtime import InferenceConfig
 from powercontext.server.authentication import AuthenticationResult, ProviderReadiness
 from powercontext.server.authz import AccessUnavailableError, PrincipalRef
 from powercontext.server.authz.composition import open_builtin_access_control, open_casbin_access_control
@@ -43,13 +44,14 @@ class _Authentication:
 
 
 @asynccontextmanager
-async def _server(tmp_path: Path, backend="builtin"):
+async def _server(tmp_path: Path, backend="builtin", *, inference: InferenceConfig | None = None):
     database = SQLiteConfig(url=f"sqlite+aiosqlite:///{tmp_path / 'regressions.db'}")
     opener = open_builtin_access_control if backend == "builtin" else open_casbin_access_control
     async with opener(database, bootstrap_administrators=(ADMIN,), deployment_id="regressions") as access:
         app = create_server_app(
             settings=ServerSettings(
                 database=database,
+                inference=inference or InferenceConfig(),
                 access=AccessControlConfig(mode="enforced", deployment_id="regressions"),
                 mcp=McpConfig(enabled=False),
                 metrics=MetricsConfig(enabled=False),
@@ -465,11 +467,13 @@ def test_shared_memory_resolves_only_the_granted_entry(tmp_path):
 @pytest.mark.parametrize("backend", ["builtin", "casbin"])
 def test_prompt_management_respects_scope_and_artifact_permissions(tmp_path: Path, backend: str) -> None:
     async def scenario():
-        async with _server(tmp_path, backend) as (_, client, _):
+        async with _server(tmp_path, backend, inference=InferenceConfig(generation_model="test")) as (_, client, _):
             scope = await _scope(client)
-            await _grant(client, scope, "author", "scope.contributor")
+            await _grant(client, scope, "author", "scope.admin")
+            await _grant(client, scope, "contributor", "scope.contributor")
             await _grant(client, scope, "reader", "scope.viewer")
             author = {"Authorization": "Bearer author"}
+            contributor = {"Authorization": "Bearer contributor"}
             reader = {"Authorization": "Bearer reader"}
             outsider = {"Authorization": "Bearer outsider"}
             configuration_path = f"/v1/scopes/{scope}/prompts/memory.extract"
@@ -480,10 +484,18 @@ def test_prompt_management_respects_scope_and_artifact_permissions(tmp_path: Pat
                 assert denied.status_code == 403
             content = {
                 "schema_version": "powercontext.prompt.v1",
-                "mode": "auto",
-                "instructions": "",
+                "mode": "custom",
+                "instructions": "Keep stable preferences.",
                 "demonstrations": [],
             }
+            for headers in (contributor, reader, outsider):
+                denied = await client.post(
+                    f"/v1/scopes/{scope}/artifacts",
+                    headers=headers,
+                    json={"family": "prompt", "prompt_key": "memory.extract", "content": content},
+                )
+                assert denied.status_code == 403, denied.text
+            assert (await client.get(configuration_path, headers=reader)).json()["artifact"] is None
             created = await client.post(
                 f"/v1/scopes/{scope}/artifacts",
                 headers=author,
@@ -500,7 +512,7 @@ def test_prompt_management_respects_scope_and_artifact_permissions(tmp_path: Pat
                 assert allowed.status_code == 200, allowed.text
                 denied = await client.get(path + suffix, headers=outsider)
                 assert denied.status_code == 403, denied.text
-            for headers in (reader, outsider):
+            for headers in (contributor, reader, outsider):
                 denied = await client.put(
                     path, headers={**headers, "If-Match": '"revision:1"'}, json={"content": content}
                 )
@@ -510,13 +522,88 @@ def test_prompt_management_respects_scope_and_artifact_permissions(tmp_path: Pat
             assert replaced.json()["revision"] == 2
             history = await client.get(path + "/revisions", headers=reader)
             assert [item["revision"] for item in history.json()["items"]] == [2, 1]
-            for headers in (reader, outsider):
+            for headers in (contributor, reader, outsider):
                 denied = await client.post(
                     f"/v1/scopes/{scope}/prompts/memory.extract/demonstrations",
                     headers=headers,
                     json={"instructions": "Keep stable preferences.", "demonstration_count": 1},
                 )
                 assert denied.status_code == 403, denied.text
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("backend", ["builtin", "casbin"])
+@pytest.mark.parametrize("revoked_role", ["scope.admin", "scope.contributor"])
+def test_prompt_owner_cannot_mutate_after_scope_role_revocation(
+    tmp_path: Path, backend: str, revoked_role: str
+) -> None:
+    async def scenario():
+        async with _server(tmp_path, backend, inference=InferenceConfig(generation_model="test")) as (_, client, _):
+            scope = await _scope(client)
+            administrator = await _grant(client, scope, "author", "scope.admin")
+            contributor = await _grant(client, scope, "author", "scope.contributor")
+            author = {"Authorization": "Bearer author"}
+            content = {
+                "schema_version": "powercontext.prompt.v1",
+                "mode": "custom",
+                "instructions": "Keep stable preferences.",
+                "demonstrations": [],
+            }
+            created = await client.post(
+                f"/v1/scopes/{scope}/artifacts",
+                headers=author,
+                json={"family": "prompt", "prompt_key": "memory.extract", "content": content},
+            )
+            assert created.status_code == 201, created.text
+            bindings = (
+                [administrator, contributor] if revoked_role == "scope.contributor" else [contributor, administrator]
+            )
+            path = f"/v1/scopes/{scope}/artifacts/prompt/memory.extract"
+            for binding in bindings:
+                revoked = await client.post(
+                    "/v1/access/bindings/revoke",
+                    json={
+                        "binding_id": binding["binding_id"],
+                        "expected_version": binding["version"],
+                        "idempotency_key": f"revoke-{binding['binding_id']}",
+                    },
+                )
+                assert revoked.status_code == 200, revoked.text
+                if binding == administrator and revoked_role == "scope.contributor":
+                    denied = await client.put(
+                        path, headers={**author, "If-Match": '"revision:1"'}, json={"content": content}
+                    )
+                    assert denied.status_code == 403, denied.text
+            original = await client.get(path)
+            auto = {**content, "mode": "auto", "instructions": ""}
+            for replacement in ({**content, "instructions": "An unauthorized change."}, auto, content):
+                denied = await client.put(
+                    path, headers={**author, "If-Match": '"revision:1"'}, json={"content": replacement}
+                )
+                assert denied.status_code == 403, denied.text
+            denied = await client.post(
+                f"/v1/scopes/{scope}/prompts/memory.extract/demonstrations",
+                headers=author,
+                json={"instructions": "Keep stable preferences.", "demonstration_count": 1},
+            )
+            assert denied.status_code == 403, denied.text
+            current = await client.get(path)
+            assert current.json() == original.json()
+            assert current.headers["etag"] == '"revision:1"'
+            history = await client.get(path + "/revisions")
+            assert [item["revision"] for item in history.json()["items"]] == [1]
+            configuration = await client.get(f"/v1/scopes/{scope}/prompts/memory.extract")
+            assert configuration.json()["effective"]["instructions"] == content["instructions"]
+            # Scope administration remains sufficient even when a revoked user owns the Artifact.
+            await _grant(client, scope, "manager", "scope.admin")
+            replaced = await client.put(
+                path,
+                headers={"Authorization": "Bearer manager", "If-Match": '"revision:1"'},
+                json={"content": auto},
+            )
+            assert replaced.status_code == 200, replaced.text
+            assert replaced.json()["revision"] == 2
 
     asyncio.run(scenario())
 

@@ -2306,12 +2306,14 @@ OPENAPI_SCHEMA: dict[str, JsonValue] = {
                 "Create returns 409 when it "
                 "already exists and callers "
                 "must use Replace to update "
-                "it.",
+                "it. Creating a Prompt "
+                "requires scope.admin "
+                "because its configuration "
+                "affects the whole Scope; "
+                "other families require "
+                "scope.contribute.",
                 "operationId": "create_artifact",
-                "x-powercontext-access": {
-                    "action": "scope.contribute",
-                    "resource": {"type": "scope", "scope-id-from": "scope_id"},
-                },
+                "x-powercontext-access": {"resolver": "create_artifact_access"},
                 "parameters": [
                     {
                         "name": "scope_id",
@@ -2473,7 +2475,44 @@ OPENAPI_SCHEMA: dict[str, JsonValue] = {
             "put": {
                 "tags": ["artifacts"],
                 "summary": "Replace the current Artifact head",
-                "description": "Commit a complete next revision when If-Match identifies the current head.",
+                "description": "Commit "
+                "a "
+                "complete "
+                "next "
+                "revision "
+                "when "
+                "If-Match "
+                "identifies "
+                "the "
+                "current "
+                "head. "
+                "Replacing "
+                "a "
+                "Prompt "
+                "requires "
+                "current "
+                "scope.admin "
+                "authority, "
+                "including "
+                "switching "
+                "to "
+                "Auto "
+                "and "
+                "restoring "
+                "an "
+                "earlier "
+                "revision. "
+                "Artifact "
+                "ownership "
+                "does "
+                "not "
+                "authorize "
+                "Prompt "
+                "replacement "
+                "after "
+                "Scope "
+                "role "
+                "revocation.",
                 "operationId": "replace_artifact",
                 "x-powercontext-access": {"resolver": "path_artifact_write_access"},
                 "parameters": [
@@ -3104,10 +3143,17 @@ OPENAPI_SCHEMA: dict[str, JsonValue] = {
                 "Artifact "
                 "to "
                 "save "
-                "suggestions.",
+                "suggestions. "
+                "Requires "
+                "scope.admin, "
+                "matching "
+                "Prompt "
+                "creation "
+                "and "
+                "replacement.",
                 "operationId": "generate_prompt_demonstrations",
                 "x-powercontext-access": {
-                    "action": "scope.contribute",
+                    "action": "scope.admin",
                     "resource": {"type": "scope", "scope-id-from": "scope_id"},
                 },
                 "parameters": [
