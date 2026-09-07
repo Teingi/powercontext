@@ -1,6 +1,6 @@
 - Proposal Name: `prepared_context_text_assembly`
 - Start Date: 2026-09-07
-- RFC PR: Not opened
+- RFC PR: [#1489](https://github.com/oceanbase/powercontext/pull/1489)
 - Tracking Issue: [#1488](https://github.com/oceanbase/powercontext/issues/1488)
 - Related RFCs: [RFC 0028](0028_context_pack.md), [RFC 0051](0051_experience_skill_artifact_families.md),
   [RFC 0080](0080_memory_search_reranking.md), [RFC 1345](1345_scope_organization_and_agent_integration.md)
