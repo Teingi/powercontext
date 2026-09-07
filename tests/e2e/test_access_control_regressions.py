@@ -472,6 +472,12 @@ def test_prompt_management_respects_scope_and_artifact_permissions(tmp_path: Pat
             author = {"Authorization": "Bearer author"}
             reader = {"Authorization": "Bearer reader"}
             outsider = {"Authorization": "Bearer outsider"}
+            configuration_path = f"/v1/scopes/{scope}/prompts/memory.extract"
+            default = await client.get(configuration_path, headers=reader)
+            assert default.status_code == 200 and default.json()["artifact"] is None
+            for hidden_scope in (scope, "absent-scope"):
+                denied = await client.get(f"/v1/scopes/{hidden_scope}/prompts/memory.extract", headers=outsider)
+                assert denied.status_code == 403
             content = {
                 "schema_version": "powercontext.prompt.v1",
                 "mode": "auto",
@@ -485,6 +491,10 @@ def test_prompt_management_respects_scope_and_artifact_permissions(tmp_path: Pat
             )
             assert created.status_code == 201, created.text
             path = f"/v1/scopes/{scope}/artifacts/prompt/memory.extract"
+            configuration = await client.get(configuration_path, headers=reader)
+            assert configuration.status_code == 200
+            assert configuration.json()["artifact"]["revision"] == 1
+            assert (await client.get(configuration_path, headers=outsider)).status_code == 403
             for suffix in ("", "/revisions/1", "/revisions"):
                 allowed = await client.get(path + suffix, headers=reader)
                 assert allowed.status_code == 200, allowed.text
@@ -507,5 +517,37 @@ def test_prompt_management_respects_scope_and_artifact_permissions(tmp_path: Pat
                     json={"instructions": "Keep stable preferences.", "demonstration_count": 1},
                 )
                 assert denied.status_code == 403, denied.text
+
+    asyncio.run(scenario())
+
+
+def test_prompt_configuration_does_not_fall_back_when_saved_owner_is_pending(tmp_path, monkeypatch):
+    async def scenario():
+        async with _server(tmp_path) as (_, client, access):
+            scope = await _scope(client)
+
+            async def unavailable(*args, **kwargs):
+                raise AccessUnavailableError("artifact_owner_pending")
+
+            with monkeypatch.context() as patch:
+                patch.setattr(access, "establish_artifact_owner", unavailable)
+                created = await client.post(
+                    f"/v1/scopes/{scope}/artifacts",
+                    json={
+                        "family": "prompt",
+                        "prompt_key": "memory.extract",
+                        "content": {
+                            "schema_version": "powercontext.prompt.v1",
+                            "mode": "auto",
+                            "instructions": "",
+                            "demonstrations": [],
+                        },
+                    },
+                )
+                assert created.status_code == 503
+            response = await client.get(f"/v1/scopes/{scope}/prompts/memory.extract")
+            assert response.status_code == 503
+            assert response.json()["error"]["code"] == "artifact_owner_pending"
+            assert "effective" not in response.json()
 
     asyncio.run(scenario())

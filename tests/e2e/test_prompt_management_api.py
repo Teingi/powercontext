@@ -24,8 +24,10 @@ from pydantic import SecretStr
 from pydantic_ai.messages import ModelResponse, TextPart, UserPromptPart
 from pydantic_ai.models.function import FunctionModel
 
+from powercontext.builtin.artifacts.memory import MemoryExtractionProfile, memory_extraction_instructions
 from powercontext.builtin.persistence.sqlite import SQLiteConfig
 from powercontext.builtin.runtime import InferenceConfig
+from powercontext.builtin.runtime.config import RuntimeConfig
 from powercontext.client import PowerContextClient, ServerResponseError
 from powercontext.http import (
     CreateArtifactRequest,
@@ -47,6 +49,47 @@ def _content(instructions: str = "", *, mode: str = "auto") -> dict[str, object]
         "instructions": instructions,
         "demonstrations": [],
     }
+
+
+@pytest.mark.parametrize("profile", list(MemoryExtractionProfile))
+def test_prompt_configuration_previews_defaults_without_inference(
+    tmp_path: Path, profile: MemoryExtractionProfile
+) -> None:
+    app = create_server_app(
+        settings=ServerSettings(
+            database=SQLiteConfig(url=f"sqlite+aiosqlite:///{tmp_path / 'preview.db'}"),
+            runtime=RuntimeConfig(memory_extraction_profile=profile),
+            mcp=McpConfig(enabled=False),
+        ),
+        scheduler_path=tmp_path / "scheduler.db",
+    )
+
+    async def scenario() -> None:
+        async with (
+            app.router.lifespan_context(app),
+            httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://testserver") as transport,
+        ):
+            created = await transport.post(
+                "/v1/scopes",
+                json={"title": "Preview", "summary": "Default prompt preview", "idempotency_key": "preview"},
+            )
+            assert created.status_code == 201
+            scope = created.json()["scope_id"]
+            response = await transport.get(f"/v1/scopes/{scope}/prompts/memory.extract")
+            assert response.status_code == 200
+            value = response.json()
+            assert value["mode"] == "auto"
+            assert value["status"] == "disabled"
+            assert value["artifact"] is None and value["artifact_etag"] is None
+            assert value["effective"] == {"instructions": memory_extraction_instructions(profile), "demonstrations": []}
+            assert value["builtin"]["instructions"] == value["effective"]["instructions"]
+            assert value["builtin"]["profile"] == profile.value
+            assert response.headers["cache-control"] == "no-store"
+            records = await transport.get(f"/v1/scopes/{scope}/artifacts/prompt")
+            assert records.json()["items"] == []
+            assert (await transport.get("/v1/scopes/missing/prompts/memory.extract")).status_code == 404
+
+    asyncio.run(scenario())
 
 
 @pytest.mark.parametrize("access_mode", ["disabled", "enforced"])
@@ -127,6 +170,10 @@ def test_prompt_http_history_generation_and_scoped_inference(
             assert len(capabilities["prompts"]) == 6
             assert capabilities["prompts"]["memory.extract"]["status"] == "supported"
             scope = scopes[0]
+            initial = await client.get_prompt_configuration(scope, "memory.extract")
+            assert initial.mode == "auto" and initial.artifact is None
+            assert initial.effective is not None and initial.builtin is not None
+            assert initial.effective.instructions == initial.builtin.instructions
             for scoped, label in zip(scopes, ("Alpha", "Beta"), strict=True):
                 created = await client.create_artifact(
                     scoped,
@@ -138,6 +185,13 @@ def test_prompt_http_history_generation_and_scoped_inference(
                 )
                 assert created.artifact_id == "memory.extract"
                 assert created.revision == 1
+                configuration = await client.get_prompt_configuration(scoped, "memory.extract")
+                assert configuration.mode == "custom" and configuration.artifact is not None
+                assert configuration.artifact.revision == 1
+                assert configuration.artifact_etag == '"revision:1"'
+                assert configuration.effective is not None
+                assert configuration.effective.instructions == f"{label} rule."
+                assert configuration.builtin == initial.builtin
             before = await client.get_artifact(scope, "prompt", "memory.extract")
             assert before is not None
             generated = await client.generate_prompt_demonstrations(
@@ -174,6 +228,11 @@ def test_prompt_http_history_generation_and_scoped_inference(
                 expected_etag='"revision:1"',
             )
             assert auto.revision == 2
+            auto_configuration = await client.get_prompt_configuration(scope, "memory.extract")
+            assert auto_configuration.mode == "auto" and auto_configuration.artifact is not None
+            assert auto_configuration.artifact.revision == 2
+            assert auto_configuration.effective == initial.effective
+            assert auto_configuration.artifact_etag == '"revision:2"'
             with pytest.raises(ServerResponseError) as stale:
                 await client.replace_artifact(
                     scope,
@@ -192,6 +251,11 @@ def test_prompt_http_history_generation_and_scoped_inference(
             )
             assert restored.revision == 3
             assert restored.content_digest == before.content_digest
+            restored_configuration = await client.get_prompt_configuration(scope, "memory.extract")
+            assert restored_configuration.artifact is not None and restored_configuration.artifact.revision == 3
+            assert restored_configuration.effective is not None
+            assert restored_configuration.effective.instructions == "Alpha rule."
+            assert restored_configuration.builtin == initial.builtin
             page = await client.list_artifact_revisions(
                 scope, "prompt", "memory.extract", ListArtifactRevisionsRequest(limit=1)
             )

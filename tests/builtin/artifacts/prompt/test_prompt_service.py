@@ -42,6 +42,32 @@ def _prompt(text: str, revision: int = 1) -> Prompt:
     )
 
 
+@pytest.mark.parametrize("injected", [False, True])
+def test_configuration_read_preserves_saved_content_when_component_cannot_run(injected: bool) -> None:
+    async def scenario() -> None:
+        head = _prompt("Saved guidance remains readable.", revision=4)
+
+        async def read(scope: str, key: str) -> Prompt:
+            return head
+
+        registry = PromptRegistry(
+            builtin_prompt_definitions(), injected=frozenset({"memory.extract"}) if injected else frozenset()
+        )
+        service = PromptService(registry, read)
+        result = await service.read_configuration("test", "memory.extract")
+        assert result.artifact == head.as_ref() and result.mode == "custom"
+        if injected:
+            assert result.status == "unsupported" and result.reason == "injected_component"
+            assert result.effective is None and result.builtin is None
+        else:
+            assert result.status == "disabled"
+            assert result.effective is not None and result.effective.instructions == head.content.instructions
+            assert result.builtin is not None
+            assert result.builtin.instructions == registry.get("memory.extract").default_instructions
+
+    asyncio.run(scenario())
+
+
 def test_concurrent_scopes_and_retries_use_frozen_prompt_selections() -> None:
     async def scenario() -> None:
         heads = {"a": _prompt("Scope Alpha only."), "b": _prompt("Scope Beta only.")}

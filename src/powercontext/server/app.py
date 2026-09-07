@@ -431,6 +431,7 @@ from powercontext.http import (
     PreparedContext,
     PreparedWorkHandoff,
     PrepareHandoffRequest,
+    PromptConfiguration,
     PromptDemonstrationResult,
     PromptKey,
     ProposeExperienceRequest,
@@ -601,6 +602,7 @@ from powercontext.http._generated.operations import (
     GET_HANDOFF_REPORT,
     GET_LIVENESS,
     GET_MEMORY_ENTRY,
+    GET_PROMPT_CONFIGURATION,
     GET_READINESS,
     GET_SCOPE,
     GET_SKILL,
@@ -1248,6 +1250,7 @@ def create_app(
     _add_route(app, LIST_ARTIFACTS, list_artifacts)
     _add_route(app, LIST_ARTIFACT_REVISIONS, list_artifact_revisions)
     _add_route(app, GENERATE_PROMPT_DEMONSTRATIONS, generate_prompt_demonstrations)
+    _add_route(app, GET_PROMPT_CONFIGURATION, get_prompt_configuration)
     _add_route(app, REPLACE_ARTIFACT, replace_artifact)
     _add_route(app, CAPTURE_CONTENT_SOURCE, capture_content_source)
     _add_route(app, REGISTER_SOURCE_DEFINITION, register_source_definition)
@@ -2028,6 +2031,29 @@ async def list_artifact_revisions(
         items=[_artifact_collection_item_response(item) for item in result.items],
         next_cursor=result.next_cursor,
     )
+
+
+async def get_prompt_configuration(
+    scope_id: _ScopePathId,
+    prompt_key: Annotated[PromptKey, Path()],
+    response: Response,
+    http_request: Request,
+    application: Annotated[ServerApplication, Depends(_require_application)],
+) -> PromptConfiguration:
+    result = await application.prompts.for_scope(scope_id).read_configuration(prompt_key.value)
+    access = access_control_for_mode(http_request.app.state.access_control, mode=http_request.app.state.access_mode)
+    if access is not None and result.artifact is not None:
+        await access.require(
+            current_principal(),
+            AccessAction.ARTIFACT_READ,
+            ResourceRef.artifact(scope_id, family="prompt", artifact_id=result.artifact.artifact_id),
+            context=_access_audit_context(GET_PROMPT_CONFIGURATION.operation_id),
+        )
+    response.headers["Cache-Control"] = "no-store"
+    return PromptConfiguration.model_validate({
+        **result.model_dump(mode="json"),
+        "artifact_etag": None if result.artifact is None else _artifact_etag(result.artifact.revision),
+    })
 
 
 async def generate_prompt_demonstrations(

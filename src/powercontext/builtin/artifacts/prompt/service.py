@@ -29,10 +29,13 @@ from opentelemetry import trace
 from powercontext.builtin.artifacts.prompt.definitions import PromptDefinition, PromptRegistry
 from powercontext.builtin.artifacts.prompt.errors import PromptError
 from powercontext.builtin.artifacts.prompt.models import (
+    BuiltinPromptInstructions,
     GeneratePromptDemonstrations,
     Prompt,
+    PromptConfiguration,
     PromptContent,
     PromptDemonstrationResult,
+    PromptInstructions,
     ResolvedPrompt,
 )
 
@@ -100,6 +103,37 @@ class PromptService:
         self.registry = registry
         self._head_reader = head_reader
         self._generators = dict(generators or {})
+
+    async def read_configuration(self, scope_id: str, key: str, /) -> PromptConfiguration:
+        """Read defaults and one saved head even when inference is disabled."""
+
+        definition = self.registry.get(key)
+        capability = self.registry.capabilities[key]
+        head = await self._head_reader(scope_id, key)
+        mode = "auto" if head is None else head.content.mode
+        builtin = None
+        effective = None
+        if capability.reason != "injected_component":
+            builtin = BuiltinPromptInstructions(
+                version=definition.builtin_version,
+                profile=definition.builtin_profile,
+                instructions=definition.default_instructions,
+            )
+            custom = head.content if head is not None and mode == "custom" else None
+            effective = PromptInstructions(
+                instructions=custom.instructions if custom is not None else definition.default_instructions,
+                demonstrations=custom.demonstrations if custom is not None else (),
+            )
+        return PromptConfiguration(
+            scope_id=scope_id,
+            prompt_key=definition.key,
+            status=capability.status,
+            reason=capability.reason,
+            mode=mode,
+            artifact=None if head is None else head.as_ref(),
+            effective=effective,
+            builtin=builtin,
+        )
 
     async def resolve(self, scope_id: str, key: str, /) -> ResolvedPrompt | None:
         definition = self.registry.get(key)

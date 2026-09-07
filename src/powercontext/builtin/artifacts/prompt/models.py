@@ -105,6 +105,32 @@ class PromptCapability(_PromptValue):
     builtin_profile: Literal["coding", "conversation"] | None
 
 
+class PromptInstructions(_PromptValue):
+    """Readable guidance, independent of the persisted Auto representation."""
+
+    instructions: str = Field(repr=False)
+    demonstrations: tuple[PromptDemonstration, ...] = Field(repr=False)
+
+
+class BuiltinPromptInstructions(_PromptValue):
+    version: str
+    profile: Literal["coding", "conversation"] | None
+    instructions: str = Field(repr=False)
+
+
+class PromptConfiguration(_PromptValue):
+    """A scoped read view; reading it never validates or executes model output."""
+
+    scope_id: str
+    prompt_key: PromptKey
+    status: Literal["supported", "disabled", "unsupported"]
+    reason: Literal["operation_disabled", "provider_not_configured", "injected_component"] | None
+    mode: Literal["auto", "custom"]
+    artifact: ArtifactRef | None
+    effective: PromptInstructions | None
+    builtin: BuiltinPromptInstructions | None
+
+
 class GeneratePromptDemonstrations(_PromptValue):
     """Generate suggestions without changing a Prompt head."""
 

@@ -197,8 +197,17 @@ async def _run_live(backend: str, env_file: Path, tmp_path: Path) -> None:
 
 async def _exercise(client, runtime, scopes: list[str], backend: str) -> None:
     first, second = scopes
+    defaults = await client.get_prompt_configuration(first, "memory.extract")
+    assert defaults.mode == "auto" and defaults.artifact is None
+    assert defaults.effective is not None and defaults.builtin is not None
+    assert defaults.effective.instructions == defaults.builtin.instructions
     for scope, guidance in ((first, _LANGUAGE), (second, _EDITOR)):
         await _write_prompt(client, scope, "memory.extract", guidance)
+        configuration = await client.get_prompt_configuration(scope, "memory.extract")
+        assert configuration.mode == "custom" and configuration.artifact is not None
+        assert configuration.artifact.revision == 1 and configuration.artifact_etag == '"revision:1"'
+        assert configuration.effective is not None and configuration.effective.instructions == guidance
+        assert configuration.builtin == defaults.builtin
         await client.create_source(
             scope,
             CreateSourceRequest(
@@ -234,6 +243,9 @@ async def _exercise(client, runtime, scopes: list[str], backend: str) -> None:
         ReplaceArtifactRequest.model_validate({"content": auto}),
         expected_etag='"revision:1"',
     )
+    auto_configuration = await client.get_prompt_configuration(first, "memory.extract")
+    assert auto_configuration.mode == "auto" and auto_configuration.artifact is not None
+    assert auto_configuration.artifact.revision == 2 and auto_configuration.effective == defaults.effective
     restored = await client.replace_artifact(
         first,
         "prompt",
@@ -242,6 +254,9 @@ async def _exercise(client, runtime, scopes: list[str], backend: str) -> None:
         expected_etag='"revision:2"',
     )
     assert restored.revision == 3 and restored.content_digest == before.content_digest
+    restored_configuration = await client.get_prompt_configuration(first, "memory.extract")
+    assert restored_configuration.artifact is not None and restored_configuration.artifact.revision == 3
+    assert restored_configuration.effective is not None and restored_configuration.effective.instructions == _LANGUAGE
     page = await client.list_artifact_revisions(
         first, "prompt", "memory.extract", ListArtifactRevisionsRequest(limit=1)
     )

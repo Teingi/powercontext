@@ -115,6 +115,7 @@ from powercontext.http import (
     PreparedHandoff,
     PreparedWorkHandoff,
     PrepareHandoffRequest,
+    PromptConfiguration,
     PromptDemonstrationResult,
     ProposeExperienceRequest,
     ProposeSkillPackageRequest,
@@ -204,6 +205,7 @@ from powercontext.http._generated.operations import (
     GET_HANDOFF_REPORT,
     GET_LIVENESS,
     GET_MEMORY_ENTRY,
+    GET_PROMPT_CONFIGURATION,
     GET_READINESS,
     GET_SCOPE,
     GET_SKILL,
@@ -573,6 +575,14 @@ class PowerContextClient:
             LIST_ARTIFACT_REVISIONS,
             request,
             path_parameters={"scope_id": scope_id, "family": family, "artifact_id": artifact_id},
+        )
+
+    async def get_prompt_configuration(self, scope_id: str, prompt_key: str) -> PromptConfiguration:
+        """Read the saved selection and Runtime defaults without creating a revision."""
+
+        return await self._request(
+            GET_PROMPT_CONFIGURATION,
+            path_parameters={"scope_id": scope_id, "prompt_key": prompt_key},
         )
 
     async def generate_prompt_demonstrations(

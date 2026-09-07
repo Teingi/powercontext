@@ -18,7 +18,7 @@
 
 {% block title %}PowerContext Prompts{% endblock %}
 {% block head %}
-<link rel="stylesheet" href="{{ url_for('web_static', path='/prompts.css') }}">
+<link rel="stylesheet" href="{{ url_for('web_static', path='/prompts.css') }}?v=default-preview">
 {% endblock %}
 {% block content %}
 {% include "components/login.html" %}
@@ -44,9 +44,14 @@
           <label><input type="radio" name="mode" value="custom" id="prompt-custom-mode"><span data-i18n="custom">Custom</span></label>
         </fieldset>
         <p id="prompt-auto-note" data-i18n="autoNote">Auto uses the deployed built-in guidance. It does not delete version history.</p>
+        <label class="field-label" for="prompt-instructions" data-i18n="instructions">Instructions</label>
+        <textarea id="prompt-instructions" maxlength="32768" rows="12" spellcheck="false" readonly></textarea>
+        <details id="prompt-builtin-view" hidden>
+          <summary data-i18n="viewBuiltin">View built-in instructions</summary>
+          <p id="prompt-builtin-version"></p>
+          <pre id="prompt-builtin-instructions"></pre>
+        </details>
         <div id="prompt-custom-fields" hidden>
-          <label class="field-label" for="prompt-instructions" data-i18n="instructions">Instructions</label>
-          <textarea id="prompt-instructions" maxlength="32768" rows="7" spellcheck="false"></textarea>
           <p data-i18n="safetyNote">Do not include credentials or secrets. Custom guidance cannot change schemas, tools, or Scope permissions.</p>
           <div class="prompt-actions">
             <label><span data-i18n="count">Count</span><input id="prompt-count" type="number" min="1" max="20" value="4"></label>
@@ -72,6 +77,7 @@
         <div id="prompt-history-detail" hidden>
           <h3 id="prompt-history-title"></h3>
           <pre id="prompt-history-content"></pre>
+          <p id="prompt-history-auto-note" data-i18n="restoreAutoNote" hidden>Restoring Auto uses the currently deployed built-in instructions.</p>
           <button class="secondary-button" id="prompt-restore" type="button" data-i18n="restore">Restore as new revision</button>
         </div>
       </details>
@@ -80,5 +86,5 @@
 </section>
 {% endblock %}
 {% block scripts %}
-<script type="module" src="{{ url_for('web_static', path='/prompts.js') }}"></script>
+<script type="module" src="{{ url_for('web_static', path='/prompts.js') }}?v=default-preview"></script>
 {% endblock %}

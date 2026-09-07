@@ -946,6 +946,17 @@ const OPERATIONS = {
 		successStatuses: [200],
 		emptyStatuses: []
 	},
+	get_prompt_configuration: {
+		method: "GET",
+		path: "/v1/scopes/{scope_id}/prompts/{prompt_key}",
+		location: null,
+		scopeMode: "none",
+		pathParameters: ["scope_id", "prompt_key"],
+		queryParams: [],
+		headerParams: [],
+		successStatuses: [200],
+		emptyStatuses: []
+	},
 	generate_prompt_demonstrations: {
 		method: "POST",
 		path: "/v1/scopes/{scope_id}/prompts/{prompt_key}/demonstrations",

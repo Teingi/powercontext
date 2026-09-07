@@ -2622,6 +2622,91 @@ OPENAPI_SCHEMA: dict[str, JsonValue] = {
                 },
             }
         },
+        "/v1/scopes/{scope_id}/prompts/{prompt_key}": {
+            "get": {
+                "tags": ["prompts"],
+                "summary": "Read scoped Prompt configuration and built-in defaults",
+                "description": "Read one saved "
+                "Prompt head and "
+                "the current "
+                "Runtime's "
+                "built-in "
+                "instructions "
+                "without creating "
+                "a revision or "
+                "calling "
+                "inference. Auto "
+                "selects the "
+                "built-in "
+                "instructions "
+                "even when an "
+                "Auto revision "
+                "exists. Disabled "
+                "built-in "
+                "operations "
+                "remain readable; "
+                "effective and "
+                "builtin are null "
+                "for externally "
+                "managed "
+                "components. "
+                "Status describes "
+                "availability, "
+                "not whether "
+                "returning the "
+                "configured text "
+                "executes it. A "
+                "saved head "
+                "additionally "
+                "requires its "
+                "Artifact read "
+                "permission. "
+                "artifact_etag is "
+                "the condition "
+                "for replacing "
+                "that Artifact; "
+                "it is not an "
+                "ETag for this "
+                "combined view.",
+                "operationId": "get_prompt_configuration",
+                "x-powercontext-access": {
+                    "action": "scope.read",
+                    "resource": {"type": "scope", "scope-id-from": "scope_id"},
+                },
+                "parameters": [
+                    {
+                        "name": "scope_id",
+                        "in": "path",
+                        "required": True,
+                        "schema": {"type": "string", "minLength": 1, "maxLength": 256, "pattern": ".*\\S.*"},
+                    },
+                    {
+                        "name": "prompt_key",
+                        "in": "path",
+                        "required": True,
+                        "schema": {"$ref": "#/components/schemas/PromptKey"},
+                    },
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Current configuration and Runtime-owned default guidance.",
+                        "headers": {
+                            "Cache-Control": {"schema": {"type": "string", "enum": ["no-store"]}},
+                            "X-PowerContext-Request-ID": {"$ref": "#/components/headers/RequestId"},
+                        },
+                        "content": {
+                            "application/json": {"schema": {"$ref": "#/components/schemas/PromptConfiguration"}}
+                        },
+                    },
+                    "401": {"$ref": "#/components/responses/Unauthorized"},
+                    "403": {"$ref": "#/components/responses/Forbidden"},
+                    "404": {"$ref": "#/components/responses/NotFound"},
+                    "422": {"$ref": "#/components/responses/InvalidRequest"},
+                    "503": {"$ref": "#/components/responses/Unavailable"},
+                    "500": {"$ref": "#/components/responses/InternalError"},
+                },
+            }
+        },
         "/v1/scopes/{scope_id}/prompts/{prompt_key}/demonstrations": {
             "post": {
                 "tags": ["prompts"],
@@ -6030,6 +6115,82 @@ OPENAPI_SCHEMA: dict[str, JsonValue] = {
                 "additionalProperties": False,
                 "type": "object",
                 "required": ["status", "reason", "definition_version", "builtin_version", "builtin_profile"],
+            },
+            "PromptInstructions": {
+                "properties": {
+                    "instructions": {
+                        "type": "string",
+                        "description": "Readable guidance; this is not the persisted Auto content representation.",
+                    },
+                    "demonstrations": {"items": {"$ref": "#/components/schemas/PromptDemonstration"}, "type": "array"},
+                },
+                "additionalProperties": False,
+                "type": "object",
+                "required": ["instructions", "demonstrations"],
+            },
+            "BuiltinPromptInstructions": {
+                "properties": {
+                    "version": {"type": "string"},
+                    "profile": {"type": "string", "enum": ["coding", "conversation", None], "nullable": True},
+                    "instructions": {
+                        "type": "string",
+                        "description": "Exact default instructions from the active Runtime Prompt Definition.",
+                    },
+                },
+                "additionalProperties": False,
+                "type": "object",
+                "required": ["version", "profile", "instructions"],
+            },
+            "PromptConfiguration": {
+                "properties": {
+                    "scope_id": {"type": "string"},
+                    "prompt_key": {"$ref": "#/components/schemas/PromptKey"},
+                    "status": {"type": "string", "enum": ["supported", "disabled", "unsupported"]},
+                    "reason": {
+                        "type": "string",
+                        "enum": ["operation_disabled", "provider_not_configured", "injected_component", None],
+                        "nullable": True,
+                    },
+                    "mode": {"type": "string", "enum": ["auto", "custom"]},
+                    "artifact": {"allOf": [{"$ref": "#/components/schemas/ArtifactReference"}], "nullable": True},
+                    "artifact_etag": {
+                        "type": "string",
+                        "description": "ETag "
+                        "of "
+                        "the "
+                        "saved "
+                        "Artifact "
+                        "head "
+                        "for "
+                        "If-Match; "
+                        "null "
+                        "when "
+                        "no "
+                        "configuration "
+                        "has "
+                        "been "
+                        "saved.",
+                        "nullable": True,
+                    },
+                    "effective": {"allOf": [{"$ref": "#/components/schemas/PromptInstructions"}], "nullable": True},
+                    "builtin": {
+                        "allOf": [{"$ref": "#/components/schemas/BuiltinPromptInstructions"}],
+                        "nullable": True,
+                    },
+                },
+                "additionalProperties": False,
+                "type": "object",
+                "required": [
+                    "scope_id",
+                    "prompt_key",
+                    "status",
+                    "reason",
+                    "mode",
+                    "artifact",
+                    "artifact_etag",
+                    "effective",
+                    "builtin",
+                ],
             },
             "GeneratePromptDemonstrationsRequest": {
                 "properties": {

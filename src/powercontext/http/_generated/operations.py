@@ -93,6 +93,7 @@ from powercontext.http._generated.models import (
     PreparedHandoff,
     PreparedWorkHandoff,
     PrepareHandoffRequest,
+    PromptConfiguration,
     PromptDemonstrationResult,
     ProposeExperienceRequest,
     ProposeSkillPackageRequest,
@@ -2253,6 +2254,36 @@ LIST_ARTIFACT_REVISIONS = Operation[ListArtifactRevisionsRequest, ArtifactRevisi
         500: {"$ref": "#/components/responses/InternalError"},
     },
     access=AccessRequirement(action=None, resource=None, scope_id_field=None, resolver="path_artifact_read_access"),
+)
+
+GET_PROMPT_CONFIGURATION = Operation[None, PromptConfiguration](
+    method="GET",
+    path="/v1/scopes/{scope_id}/prompts/{prompt_key}",
+    operation_id="get_prompt_configuration",
+    request_type=None,
+    request_location=None,
+    path_parameters=("scope_id", "prompt_key"),
+    response_type=PromptConfiguration,
+    success_status=200,
+    summary="Read scoped Prompt configuration and built-in defaults",
+    tags=("prompts",),
+    scope_mode="none",
+    responses={
+        200: {
+            "description": "Current configuration and Runtime-owned default guidance.",
+            "headers": {
+                "Cache-Control": {"schema": {"type": "string", "enum": ["no-store"]}},
+                "X-PowerContext-Request-ID": {"$ref": "#/components/headers/RequestId"},
+            },
+        },
+        401: {"$ref": "#/components/responses/Unauthorized"},
+        403: {"$ref": "#/components/responses/Forbidden"},
+        404: {"$ref": "#/components/responses/NotFound"},
+        422: {"$ref": "#/components/responses/InvalidRequest"},
+        503: {"$ref": "#/components/responses/Unavailable"},
+        500: {"$ref": "#/components/responses/InternalError"},
+    },
+    access=AccessRequirement(action="scope.read", resource="scope", scope_id_field="scope_id", resolver="request"),
 )
 
 GENERATE_PROMPT_DEMONSTRATIONS = Operation[GeneratePromptDemonstrationsRequest, PromptDemonstrationResult](

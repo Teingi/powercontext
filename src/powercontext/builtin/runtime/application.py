@@ -63,7 +63,12 @@ from powercontext.builtin.artifacts.memory.errors import (
     InvalidMemoryCitationError,
     MemoryEntryNotFoundError,
 )
-from powercontext.builtin.artifacts.prompt import GeneratePromptDemonstrations, PromptDemonstrationResult, PromptError
+from powercontext.builtin.artifacts.prompt import (
+    GeneratePromptDemonstrations,
+    PromptConfiguration,
+    PromptDemonstrationResult,
+    PromptError,
+)
 from powercontext.builtin.artifacts.prompt.service import PromptService
 from powercontext.builtin.artifacts.skill import (
     AgentKind,
@@ -465,11 +470,18 @@ class RecordApplication:
 
 
 class ScopedPromptApplication:
-    """Generate suggestions inside an existing Scope without durable side effects."""
+    """Read configuration and generate suggestions inside an existing Scope."""
 
     def __init__(self, runtime: BuiltinRuntime, scope_id: str) -> None:
         self._runtime = runtime
         self.scope_id = validate_scope_id(scope_id)
+
+    async def read_configuration(self, key: str, /) -> PromptConfiguration:
+        async with self._runtime._scope_operation(self.scope_id):
+            service = self._runtime._prompt_service
+            if service is None:
+                raise PromptError("prompt_customization_unavailable")
+            return await service.read_configuration(self.scope_id, key)
 
     async def generate_demonstrations(
         self, key: str, request: GeneratePromptDemonstrations, /

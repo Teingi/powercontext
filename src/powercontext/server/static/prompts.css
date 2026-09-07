@@ -37,6 +37,9 @@
 #prompt-history { margin: 32px 0; border-top: 1px solid var(--pc-rule); padding-top: 20px; }
 #prompt-history summary { cursor: pointer; }
 #prompt-revisions { display: flex; flex-wrap: wrap; gap: 8px; margin: 16px 0; }
-#prompt-history-content { white-space: pre-wrap; overflow-wrap: anywhere; padding: 16px; background: var(--pc-surface-secondary); max-height: 440px; overflow: auto; }
+#prompt-history-content, #prompt-builtin-instructions { white-space: pre-wrap; overflow-wrap: anywhere; padding: 16px; background: var(--pc-surface-secondary); max-height: 440px; overflow: auto; }
+#prompt-builtin-view { margin-top: 16px; }
+#prompt-builtin-view summary { cursor: pointer; }
+.prompt-page textarea:read-only { background: var(--pc-surface-secondary); }
 .prompt-page button:disabled { opacity: .55; cursor: not-allowed; }
 @media (max-width: 760px) { .prompt-workspace { grid-template-columns: 1fr; } .prompt-page .hero { flex-direction: column; } #prompt-keys { display: grid; grid-template-columns: 1fr 1fr; } }

@@ -1372,6 +1372,64 @@ class PromptCapability(BaseModel):
     builtin_profile: Annotated[BuiltinProfile | None, Field(...)]
 
 
+class PromptInstructions(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    instructions: Annotated[
+        StrictStr, Field(description="Readable guidance; this is not the persisted Auto content representation.")
+    ]
+    demonstrations: list[PromptDemonstration]
+
+
+class ProfileEnum(StrEnum):
+    CODING = "coding"
+    CONVERSATION = "conversation"
+
+
+class Profile(RootModel[ProfileEnum | None]):
+    root: ProfileEnum | None = None
+
+
+class BuiltinPromptInstructions(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    version: StrictStr
+    profile: Annotated[Profile | None, Field(...)]
+    instructions: Annotated[
+        StrictStr, Field(description="Exact default instructions from the active Runtime Prompt Definition.")
+    ]
+
+
+class Reason1Enum(StrEnum):
+    OPERATION_DISABLED = "operation_disabled"
+    PROVIDER_NOT_CONFIGURED = "provider_not_configured"
+    INJECTED_COMPONENT = "injected_component"
+
+
+class Reason1(RootModel[Reason1Enum | None]):
+    root: Reason1Enum | None = None
+
+
+class PromptConfiguration(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    scope_id: StrictStr
+    prompt_key: PromptKey
+    status: Status
+    reason: Annotated[Reason1 | None, Field(...)]
+    mode: Mode3
+    artifact: Annotated[ArtifactReference | None, Field(...)]
+    artifact_etag: Annotated[
+        StrictStr | None,
+        Field(description="ETag of the saved Artifact head for If-Match; null when no configuration has been saved."),
+    ]
+    effective: Annotated[PromptInstructions | None, Field(...)]
+    builtin: Annotated[BuiltinPromptInstructions | None, Field(...)]
+
+
 class GeneratePromptDemonstrationsRequest(BaseModel):
     model_config = ConfigDict(
         extra="forbid",

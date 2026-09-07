@@ -31,6 +31,8 @@ const translations = {
     intro: "Customize operational guidance in one Scope. Every save creates an immutable revision.",
     mode: "Mode", custom: "Custom", instructions: "Instructions",
     autoNote: "Auto uses the deployed built-in guidance. It does not delete version history.",
+    viewBuiltin: "View built-in instructions", noDemonstrations: "No demonstrations yet.",
+    restoreAutoNote: "Restoring Auto uses the currently deployed built-in instructions.",
     safetyNote: "Do not include credentials or secrets. Custom guidance cannot change schemas, tools, or Scope permissions.",
     count: "Count", generate: "Generate demonstrations", add: "Add demonstration", remove: "Remove",
     demonstrationHint: "Each demonstration contains complete JSON input and expected output. Suggestions are not saved automatically.",
@@ -62,6 +64,8 @@ const translations = {
     intro: "按 Scope 自定义操作提示词，每次保存都会创建不可变的新版本。",
     mode: "模式", custom: "自定义", instructions: "提示词指令",
     autoNote: "Auto 使用当前部署的内置指令，不会删除历史版本。",
+    viewBuiltin: "查看内置提示词", noDemonstrations: "暂无案例。",
+    restoreAutoNote: "恢复 Auto 后会使用当前部署的内置提示词。",
     safetyNote: "请勿填写凭据或密钥。自定义指令不能修改输出结构、工具或 Scope 权限。",
     count: "数量", generate: "生成案例", add: "添加案例", remove: "移除",
     demonstrationHint: "每条案例包含完整的 JSON 输入和期望输出。生成的建议不会自动保存。",
@@ -88,7 +92,8 @@ const $ = (id) => document.getElementById(id);
 const gate = createRequestGate();
 const scopeGate = createRequestGate();
 const state = {scope: "", key: keys[0], capabilities: {}, heads: new Map(), head: null, etag: null,
-  demos: [], nextId: 0, dirty: false, busy: false, loaded: false, cursor: null, historical: null};
+  configuration: null, draftInstructions: null, demos: [], nextId: 0, dirty: false, busy: false,
+  loaded: false, cursor: null, historical: null};
 const ui = createPageUi(translations, () => { renderKeys(); renderState(); renderDemonstrations(); });
 const t = ui.translate;
 
@@ -162,7 +167,11 @@ function renderState() {
   document.querySelector('input[name="mode"][value="auto"]').disabled = state.busy || !state.loaded;
   $("prompt-custom-fields").hidden = !custom;
   $("prompt-auto-note").hidden = custom;
-  $("prompt-instructions").disabled = state.busy || !state.loaded || cap.status !== "supported";
+  $("prompt-instructions").readOnly = !custom || state.busy || !state.loaded || cap.status !== "supported";
+  const builtin = state.configuration?.builtin;
+  $("prompt-builtin-view").hidden = !custom || !builtin;
+  $("prompt-builtin-version").textContent = builtin?.version || "";
+  $("prompt-builtin-instructions").textContent = builtin?.instructions || "";
   $("prompt-generate").disabled = state.busy || !state.loaded || cap.status !== "supported";
   $("prompt-add").disabled = state.busy || cap.status !== "supported" || state.demos.length >= 50;
   $("prompt-save").disabled = state.busy || !state.loaded || (custom && cap.status !== "supported");
@@ -171,6 +180,7 @@ function renderState() {
   $("sign-out").disabled = state.busy;
   $("prompt-more").disabled = state.busy;
   $("prompt-negative-title").hidden = !noops.has(state.key);
+  $("prompt-negative").hidden = !noops.has(state.key);
   $("prompt-restore").disabled = state.busy || !state.historical
     || (state.historical.content.mode === "custom" && cap.status !== "supported");
 }
@@ -218,26 +228,30 @@ function renderDemonstrations() {
     card.append(remove);
     $(demoNegative(item) ? "prompt-negative" : "prompt-positive").append(card);
   }
+  for (const id of ["prompt-positive", "prompt-negative"]) {
+    if (!$(id).childElementCount) $(id).append(make("p", t("noDemonstrations")));
+  }
 }
 async function loadHistory() {
   if (!state.head) {
     $("prompt-revisions").replaceChildren(make("p", t("noHistory")));
     return;
   }
-  const selection = state.scope + "/" + state.key;
+  const selection = state.scope + "/" + state.key + "/" + state.head.revision;
   const suffix = state.cursor ? "?limit=20&cursor=" + encodeURIComponent(state.cursor) : "?limit=20";
   const {value} = await request(path() + "/revisions" + suffix);
-  if (selection !== state.scope + "/" + state.key) return;
+  if (selection !== state.scope + "/" + state.key + "/" + state.head?.revision) return;
   for (const item of value.items) {
     const button = make("button", t("revision", {revision: item.revision}), "secondary-button");
     button.type = "button";
     button.addEventListener("click", async () => {
       try {
         const {value: revision} = await request(path() + "/revisions/" + item.revision);
-        if (selection !== state.scope + "/" + state.key) return;
+        if (selection !== state.scope + "/" + state.key + "/" + state.head?.revision) return;
         state.historical = revision;
         $("prompt-history-title").textContent = t("revision", {revision: revision.revision});
         $("prompt-history-content").textContent = JSON.stringify(revision.content, null, 2);
+        $("prompt-history-auto-note").hidden = revision.content.mode !== "auto";
         $("prompt-history-detail").hidden = false;
         renderState();
       } catch (error) { report(error); }
@@ -252,6 +266,8 @@ async function loadCurrent() {
   state.loaded = false;
   state.head = null;
   state.etag = null;
+  state.configuration = null;
+  state.draftInstructions = null;
   state.dirty = false;
   notice("");
   state.historical = null;
@@ -261,24 +277,32 @@ async function loadCurrent() {
   $("prompt-more").hidden = true;
   renderKeys();
   renderState();
-  // The authorized collection establishes absence without probing an unowned identity.
-  let result = {value: null, etag: null};
-  if (state.heads.has(state.key)) {
-    try { result = await request(path()); }
-    catch (error) { if (error.status !== 404) throw error; }
+  let value;
+  try {
+    ({value} = await request("/v1/scopes/" + encodeURIComponent(state.scope) + "/prompts/" + encodeURIComponent(state.key)));
+  } catch (error) {
+    if (ticket.isCurrent()) throw error;
+    return;
   }
   if (!ticket.isCurrent()) return;
-  state.head = result.value;
-  state.etag = result.etag;
+  state.configuration = value;
+  state.head = value.artifact;
+  state.etag = value.artifact_etag;
+  if (state.head) state.heads.set(state.key, state.head);
+  else state.heads.delete(state.key);
+  state.capabilities[state.key] = {status: value.status, reason: value.reason,
+    builtin_version: value.builtin?.version, builtin_profile: value.builtin?.profile};
   state.loaded = true;
-  const content = state.head?.content || {mode: "auto", instructions: "", demonstrations: []};
-  document.querySelector('input[name="mode"][value="' + content.mode + '"]').checked = true;
-  $("prompt-instructions").value = content.instructions;
+  document.querySelector('input[name="mode"][value="' + value.mode + '"]').checked = true;
+  $("prompt-instructions").value = value.effective?.instructions || "";
+  state.draftInstructions = value.mode === "custom" ? value.effective?.instructions ?? null : null;
   state.demos = [];
-  appendDemos(content.demonstrations);
+  appendDemos(value.effective?.demonstrations || []);
+  renderKeys();
   renderState();
   renderDemonstrations();
-  await loadHistory();
+  try { await loadHistory(); }
+  catch (error) { if (ticket.isCurrent()) throw error; }
 }
 function editedContent() {
   if (mode() === "auto") return {schema_version: "powercontext.prompt.v1", mode: "auto", instructions: "", demonstrations: []};
@@ -332,7 +356,24 @@ async function loadScope() {
   state.heads = new Map(value.items.map((item) => [item.artifact_id, item]));
   await loadCurrent();
 }
-$("prompt-form").addEventListener("input", () => { state.dirty = true; renderState(); });
+$("prompt-form").addEventListener("input", (event) => {
+  if (event.target.name === "mode") return;
+  state.dirty = true;
+  renderState();
+});
+for (const radio of document.querySelectorAll('input[name="mode"]')) {
+  radio.addEventListener("change", () => {
+    if (mode() === "auto") {
+      state.draftInstructions = $("prompt-instructions").value;
+      $("prompt-instructions").value = state.configuration?.builtin?.instructions || "";
+    } else {
+      state.draftInstructions ??= state.configuration?.builtin?.instructions || "";
+      $("prompt-instructions").value = state.draftInstructions;
+    }
+    state.dirty = true;
+    renderState(); renderDemonstrations();
+  });
+}
 $("prompt-form").addEventListener("submit", (event) => {
   event.preventDefault();
   if (!state.loaded) return;
@@ -381,6 +422,7 @@ $("sign-out").addEventListener("click", () => {
   if (!discard()) return;
   gate.cancel(); scopeGate.cancel(); clearServerToken(); state.loaded = false; state.demos = []; state.heads.clear();
   state.scope = ""; state.head = null; state.historical = null; state.dirty = false;
+  state.configuration = null; state.draftInstructions = null;
   $("prompt-instructions").value = ""; $("prompt-history-content").textContent = "";
   renderState(); renderDemonstrations(); renderKeys();
 });
