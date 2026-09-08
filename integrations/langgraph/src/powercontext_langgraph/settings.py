@@ -16,10 +16,14 @@
 
 from __future__ import annotations
 
-from pydantic import Field, SecretStr
+from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from powercontext.http import ContextAssembly
+try:
+    from powercontext.http import ContextAssembly
+except ImportError:
+    # Older core releases support legacy recall but cannot accept assembly settings.
+    from types import NoneType as ContextAssembly
 
 
 class PowerContextLangGraphSettings(BaseSettings):
@@ -40,3 +44,13 @@ class PowerContextLangGraphSettings(BaseSettings):
     timeout: float = 10.0
     max_bytes: int = Field(default=8000, ge=512, le=32768)
     context_assembly: ContextAssembly | None = None
+
+    @field_validator("context_assembly", mode="before")
+    @classmethod
+    def validate_assembly_support(cls, value: object) -> object:
+        if value is not None and ContextAssembly is type(None):
+            raise ValueError(  # noqa: TRY003
+                "context_assembly requires a PowerContext core with text assembly support; "
+                "install the core and adapter from the same checkout"
+            )
+        return value

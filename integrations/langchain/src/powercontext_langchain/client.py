@@ -25,10 +25,10 @@ import httpx
 from pydantic import SecretStr
 
 from powercontext.client import PowerContextClient
-from powercontext.http import ContextAssembly, ResolveScopeBindingRequest
+from powercontext.http import ResolveScopeBindingRequest
 
 from .scope import PowerContextScope
-from .settings import PowerContextLangChainSettings
+from .settings import ContextAssembly, PowerContextLangChainSettings
 
 _SHARED_HTTP_CLIENT: ContextVar[tuple[httpx.AsyncClient, bool] | None] = ContextVar(
     "powercontext_langchain_http_client", default=None

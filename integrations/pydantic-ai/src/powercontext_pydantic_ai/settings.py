@@ -21,8 +21,13 @@ from urllib.parse import urlsplit, urlunsplit
 from pydantic import Field, HttpUrl, SecretStr, TypeAdapter, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from powercontext.http import ContextAssembly
 from powercontext.limits import MAX_SCOPE_ID_LENGTH
+
+try:
+    from powercontext.http import ContextAssembly
+except ImportError:
+    # Older core releases support legacy recall but cannot accept assembly settings.
+    from types import NoneType as ContextAssembly
 
 _HTTP_URL_ADAPTER = TypeAdapter(HttpUrl)
 
@@ -47,6 +52,16 @@ class PowerContextSettings(BaseSettings):
     capture_events: bool = False
     capture_checkpoint_every: int = Field(default=5, ge=1, le=100)
     capture_max_bytes: int = Field(default=8192, ge=512, le=32768)
+
+    @field_validator("context_assembly", mode="before")
+    @classmethod
+    def validate_assembly_support(cls, value: object) -> object:
+        if value is not None and ContextAssembly is type(None):
+            raise ValueError(  # noqa: TRY003
+                "context_assembly requires a PowerContext core with text assembly support; "
+                "install the core and adapter from the same checkout"
+            )
+        return value
 
     @field_validator("base_url")
     @classmethod

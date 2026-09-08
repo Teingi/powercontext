@@ -110,5 +110,18 @@ codex
 环境变量使用 JSON 字符串，对象配置使用等价对象。移除配置即可恢复原有输出。启用前需要升级 Server 和对应
 接入端；旧 Server 会拒绝 `assembly`，插件通过已有诊断报告失败，不会自动扩大选择范围重试。
 
+LangChain、LangGraph 和 Pydantic AI 适配器在未设置 `context_assembly` 时，可以搭配 `powercontext==0.2.0`
+使用原有召回。启用该配置需要支持文本组装的 core Client 和 Server；旧 Client 会明确报配置校验错误。
+在包含该功能的仓库检出目录下，同时安装 core 和所使用的适配器，选择对应命令：
+
+```bash
+uv pip install ".[client]" ./integrations/langchain
+uv pip install ".[client]" ./integrations/langgraph
+uv pip install ".[client]" ./integrations/pydantic-ai
+```
+
+Hermes 的自动召回、`powercontext_prepare_context` 工具和 `/pc call prepare_context` 都使用组装配置。
+手动请求显式提供的参数优先于配置默认值。
+
 LangGraph 和 Hermes 的缓存同时区分组装配置和字节预算，切换策略后不会复用其他选择或预算下的结果。
 该功能不新增数据库表或 HTTP 接口。

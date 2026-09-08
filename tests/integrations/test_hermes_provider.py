@@ -1302,6 +1302,35 @@ def test_http_client_forwards_authorization_and_preserves_access_denial(hermes_m
     assert caught.value.server_message == "scope access denied"
 
 
+@pytest.mark.parametrize("assembly", [{"sections": []}, {"sections": [{"family": "memory", "limit": 3}]}])
+@pytest.mark.parametrize("entrypoint", ["tool", "slash"])
+@pytest.mark.parametrize("from_environment", [False, True])
+def test_manual_prepare_uses_configured_assembly(
+    provider_and_client, monkeypatch, assembly, entrypoint, from_environment
+):
+    provider, _client = provider_and_client
+    if from_environment:
+        monkeypatch.setenv("POWERCONTEXT_HERMES_CONTEXT_ASSEMBLY", json.dumps(assembly))
+    else:
+        monkeypatch.delenv("POWERCONTEXT_HERMES_CONTEXT_ASSEMBLY", raising=False)
+        provider._config["context_assembly"] = assembly
+    monkeypatch.setenv("POWERCONTEXT_HERMES_MAX_BYTES", "2048")
+    payload = {"query": "OpenAPI", "max_bytes": 1024, "scope_id": "attacker-scope"}
+
+    result = json.loads(
+        provider.handle_tool_call("powercontext_prepare_context", payload)
+        if entrypoint == "tool"
+        else provider.handle_slash_command("call prepare_context " + json.dumps(payload))
+    )
+
+    assert result["payload"] == {
+        "scope_id": provider._scope_id,
+        "query": "OpenAPI",
+        "max_bytes": 1024,
+        "assembly": assembly,
+    }
+
+
 def test_text_assembly_preserves_content_and_refreshes_prefetch_options(provider_and_client, monkeypatch):
     provider, client = provider_and_client
     observed = []

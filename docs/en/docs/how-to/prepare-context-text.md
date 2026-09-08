@@ -113,5 +113,19 @@ Environment values are JSON strings; object settings take the equivalent object.
 legacy output. Upgrade the Server and relevant integration before enabling it. Older Servers reject `assembly`;
 plugins report the failure through their existing diagnostics and do not retry with a broader selection.
 
+The LangChain, LangGraph, and Pydantic AI adapters can use `powercontext==0.2.0` for legacy recall when
+`context_assembly` is unset. Enabling it requires a core Client and Server that support text assembly; an older
+Client raises a settings validation error. From a checkout containing this feature, install the core and the adapter
+together, choosing the adapter directory you use:
+
+```bash
+uv pip install ".[client]" ./integrations/langchain
+uv pip install ".[client]" ./integrations/langgraph
+uv pip install ".[client]" ./integrations/pydantic-ai
+```
+
+Hermes applies the configured assembly to automatic recall, the `powercontext_prepare_context` tool, and
+`/pc call prepare_context`. Explicit request values override the configured defaults.
+
 LangGraph and Hermes include assembly settings and the byte budget in cache identity. Changing the policy cannot
 reuse a prepared result from a different selection or budget. The feature adds no database table or HTTP endpoint.
