@@ -1,12 +1,12 @@
 ---
 title: 输出标准上下文文本
-description: 选择 Memory、Experience 和 Profile 的输出类别、顺序、条数，以及展示的元数据。
+description: 选择 Memory、Experience、Profile 和 Topic Memory 的输出类别、顺序、条数，以及展示的元数据。
 ---
 
 # 输出标准上下文文本
 
 在 `POST /v1/context/prepare` 中传入 `assembly`，即可获得按制品类别组织的 Markdown。可以选择 Memory、
-已批准的 Experience 和正式 Profile 快照，调整章节顺序、限制条数，并展示召回位置和置信度状态。请使用已存在且具有读取权限的
+已批准的 Experience、正式 Profile 快照和 Topic Memory，调整章节顺序、限制条数，并展示召回位置和置信度状态。请使用已存在且具有读取权限的
 Scope；读取其引用的其他 Scope 也需要对应权限。
 
 ## 选择类别和顺序
@@ -70,12 +70,13 @@ asyncio.run(export_context())
 | 只配置 `memory` | 只召回 Memory，limit 为 1–8。 |
 | 只配置 `experience` | 只召回已批准的 Experience，limit 为 1–2。 |
 | 只配置 `profile` | 读取所选 Scope 的最新正式画像快照，limit 为 1–8。 |
-| 配置两到三个 section | 数组顺序决定展示顺序和字节预算优先级；limit 之和不得超过 8。 |
+| 仅配置 `topic-memory` section | 在当前 Scope 检索 Topic Memory；limit 为 1–8。 |
+| 配置两到四个 section | 数组顺序决定展示顺序和字节预算优先级；limit 之和不得超过配置的 `context_assembly_max_entries`（默认 8）。 |
 | `show: ["recall_rank"]` | 展示条目在该类别去重后候选列表中的位置。 |
 | `show: ["confidence"]` | 显示 `unknown (not assessed)`，目前没有评估数字置信度。 |
 
 省略 `assembly` 的默认 prepare 请求还会召回当前 Scope 中可用的 Topic Memory。
-显式 `assembly` 当前支持 Memory、Experience 和 Profile，该模式不召回 Topic Memory。
+显式 `assembly` 通过选择 `topic-memory` 包含主题记忆；`assembly: {}` 仍只选择 Memory 和 Experience。
 
 同一类别内保留召回顺序，包括已有 Memory reranker 的排序。前面的候选因预算无法装入时，rank 可能不连续。
 被排除的类别不会参与召回。重复类别、非法 limit、`sort_by` 或 `min_confidence` 等不支持的字段，以及显式
@@ -84,6 +85,22 @@ asyncio.run(export_context())
 `max_bytes` 限制 Server 完整文本的 UTF-8 字节数，范围为 512–32768，默认 8000。每条正文上限为 2000 bytes。
 空间不足时，Server 会缩短正文或跳过条目，同时保留完整引用与边界，因此实际输出可能少于请求条数。
 接入端应校验外层结构和预算，原样使用正文，不应二次裁剪；可以在正文外添加自己的提示。
+
+## 配置组合条数上限
+
+在服务端环境变量中设置以下值，重启服务后即可放宽组合总量：
+
+```dotenv
+POWERCONTEXT_SERVER_RUNTIME_CONTEXT_ASSEMBLY_MAX_ENTRIES=16
+```
+
+该值必须是正整数，默认 8。嵌入式 Runtime 可以通过
+`BuiltinConfig(runtime=RuntimeConfig(context_assembly_max_entries=16))` 配置。
+实际接收请求的 Runtime 会在召回前检查 limit 总和，超出配置值时返回 HTTP 422。
+各类别单独上限仍为 Memory、Profile、Topic Memory 各 8 条，Experience 2 条，所以四类合计最多可请求 26 条。
+调高组合上限不会扩大各类别召回池或字节预算。若将配置调低到 8 以下，需要显式提供总和符合要求的章节配置：
+`assembly: {}` 仍表示 Memory 6 加 Experience 2，总和超过配置值时会被拒绝；`sections: []` 仍然有效。
+省略 `assembly` 的请求保持原有选择行为和最多 8 条的限制。
 
 ## 加入 Profile 画像
 
@@ -107,6 +124,25 @@ References”顺序中的首个可用快照。
 不按 `query` 搜索画像，也不包含待审或已拒绝 Candidate。不遍历间接引用或主体绑定；所有引用 Scope 都需要
 读取权限。输出保留精确 Revision 引用，正文截断时显示 `Truncated: yes`。`recall_rank` 仅表示 Profile
 候选列表中的位置，不代表相关度或置信度。
+
+## 组合 Topic Memory 和 Profile
+
+使用以下 `assembly`，将画像偏好放在相关主题和其他证据之前：
+
+```json
+{
+  "sections": [
+    {"family": "profile", "limit": 1},
+    {"family": "topic-memory", "limit": 2},
+    {"family": "memory", "limit": 3},
+    {"family": "experience", "limit": 2}
+  ]
+}
+```
+
+Topic Memory 沿用基于 `query` 的检索，只搜索当前 Scope，不遍历 Context References，也不在 prepare 时生成新主题。
+每条输出包含标题、摘要、可选命中片段，以及 Scope 和精确 Artifact Revision。完整详情可用该引用通过
+`POST /v1/topic-memory/get` 读取。章节内保留检索顺序，条数限制、可选元数据和 UTF-8 字节预算同样适用。
 
 ## 为插件的自动召回启用配置
 

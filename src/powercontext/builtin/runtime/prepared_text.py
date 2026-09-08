@@ -55,7 +55,12 @@ def render_context_text(items: Sequence[ContextTextItem], assembly: ContextAssem
         included = [item for item in items if item.artifact.artifact.family == section.family]
         if not included:
             continue
-        title = {"memory": "Memory", "experience": "Experience", "profile": "Profile"}[section.family]
+        title = {
+            "memory": "Memory",
+            "experience": "Experience",
+            "profile": "Profile",
+            "topic-memory": "Topic Memory",
+        }[section.family]
         parts.append(f"## {title}")
         for number, item in enumerate(included, start=1):
             parts.append(f"### {title} {number}")

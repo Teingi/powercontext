@@ -687,6 +687,11 @@ class ScopedContextApplication:
         *,
         authorize_scopes: Callable[[tuple[str, ...]], Awaitable[None]] | None = None,
     ) -> PreparedContext:
+        if (
+            request.assembly is not None
+            and sum(section.limit for section in request.assembly.sections) > self._runtime.context_assembly_max_entries
+        ):
+            raise InvalidRuntimeRequestError("context-assembly-entry-limit")
         async with self._runtime._scope_operation(self.scope_id) as scope:
             if request.assembly is not None and not request.assembly.sections:
                 return PreparedContextBuilder().empty()
@@ -2152,6 +2157,7 @@ class BuiltinRuntime:
         provider: PowerContextProvider[BuiltinSources, BuiltinArtifacts, BuiltinTriggers],
         capabilities: RuntimeCapabilities,
         source_window_limit: int = 100,
+        context_assembly_max_entries: int = 8,
         scope_cache_size: int = DEFAULT_SCOPE_CACHE_SIZE,
         scope_evictor: ScopeEvictor | None = None,
         scope_cache_observer: ScopeCacheObserver | None = None,
@@ -2197,6 +2203,8 @@ class BuiltinRuntime:
     ) -> None:
         if source_window_limit < 1:
             raise _RuntimeConfigurationError("source_window_limit")
+        if context_assembly_max_entries < 1:
+            raise _RuntimeConfigurationError("context_assembly_max_entries")
         if scope_cache_size < 1:
             raise _RuntimeConfigurationError("scope_cache_size")
         self._provider = provider
@@ -2239,6 +2247,7 @@ class BuiltinRuntime:
         self._scheduled_source_runner = scheduled_source_runner
         self._scheduled_experience_runner = scheduled_experience_runner
         self.source_window_limit = source_window_limit
+        self.context_assembly_max_entries = context_assembly_max_entries
         self._scope_cache = ScopeCache(
             scope_cache_size,
             evictor=scope_evictor,

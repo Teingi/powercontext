@@ -1249,6 +1249,7 @@ class ContextAssemblyFamily(StrEnum):
     MEMORY = "memory"
     EXPERIENCE = "experience"
     PROFILE = "profile"
+    TOPIC_MEMORY = "topic-memory"
 
 
 class ContextAssemblyFormat(StrEnum):
@@ -2761,7 +2762,7 @@ class ContextAssemblySection(BaseModel):
     limit: Annotated[
         StrictInt,
         Field(
-            description="Maximum included entries. Each Profile entry is one Scope snapshot. Experience is limited to two; all section limits together must not exceed eight.",
+            description="Maximum included entries. Each Profile entry is one Scope snapshot. Experience is limited to two. All section limits together must not exceed the Server's runtime.context_assembly_max_entries policy (default 8); exceeding it returns HTTP 422 before recall. The byte budget may reduce the actual output count.",
             ge=1,
             le=8,
         ),
@@ -2776,8 +2777,8 @@ class ContextAssembly(BaseModel):
     sections: Annotated[
         list[ContextAssemblySection],
         Field(
-            description="Unique families in output and byte-budget priority order. Profile explicitly includes the latest committed snapshot from the current Scope and direct Context References, in that order, without query filtering or generation. An empty array disables candidate recall.",
-            max_length=3,
+            description="Unique families in output and byte-budget priority order. Profile explicitly includes the latest committed snapshot from the current Scope and direct Context References, in that order, without query filtering or generation. Topic Memory searches only the current Scope and includes title, summary, and an optional matching snippet, with an exact revision citation. An empty array disables candidate recall.",
+            max_length=4,
             validate_default=True,
         ),
     ] = [

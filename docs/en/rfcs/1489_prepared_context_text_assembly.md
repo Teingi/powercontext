@@ -12,14 +12,14 @@ for recall, set section order and per-family limits, and receive consistently fo
 citations. The HTTP response remains `PreparedContext(schema, status, content, content_bytes)`. Its `content` is
 the final string after selection, ordering, rendering, and budgeting; a host validates it and injects it unchanged.
 
-The first release supports Memory, Experience, and explicitly selected Profile snapshots. Entries within each section retain their existing retrieval
+The first release supports Memory, Experience, explicitly selected Profile snapshots, and Topic Memory. Entries within each section retain their existing retrieval
 order, and assembly adds no model calls. Confidence may be displayed as `unknown (not assessed)`, but the system
 does not generate scores or support confidence filtering or ordering. Requests that omit `assembly` retain the
 existing output behavior.
 
 # Motivation
 
-The current Runtime interleaves Memory and Experience, then encodes bodies, exact citations, and truncation flags
+The current Runtime interleaves Memory, Topic Memory, and Experience, then encodes bodies, exact citations, and truncation flags
 as JSON between a fixed historical-context notice and boundary markers. This string can be injected directly,
 but callers cannot select families, change their order, or limit one family's output count. People also have
 difficulty reading the actual injection directly.
@@ -161,8 +161,7 @@ entry ID and entry version ID. An exact citation must not be replaced with the l
 | Persistence | No new tables, Artifacts, Revisions, Recipes, or server-side assembly settings. |
 
 The first release excludes custom templates, arbitrary ordering expressions, joint reranking across families,
-numeric confidence, selection pinned to explicit references, and automatic assembly of Skill, Handoff, Topic
-Memory or raw Sources. A family denotes an Artifact family, not a Memory Entry's `kind`.
+numeric confidence, selection pinned to explicit references, and automatic assembly of Skill, Handoff, or raw Sources. A family denotes an Artifact family, not a Memory Entry's `kind`.
 
 ## Request contract
 
@@ -173,10 +172,14 @@ must not be `null`. All new objects reject unknown fields.
 | Field | Type and default | Constraints |
 | --- | --- | --- |
 | `assembly.format` | Enum, default `markdown` | Only `markdown` is accepted in the first release. |
-| `assembly.sections` | Ordered array, default Memory 6 then Experience 2 | 0–3 items; a family cannot appear twice. An explicit empty array does not apply defaults. |
-| `sections[].family` | Required enum | `memory`, `experience`, or `profile`. |
-| `sections[].limit` | Required integer | 1–8 for Memory and Profile, 1–2 for Experience; the sum of section limits must not exceed 8. |
+| `assembly.sections` | Ordered array, default Memory 6 then Experience 2 | 0–4 items; a family cannot appear twice. An explicit empty array does not apply defaults. |
+| `sections[].family` | Required enum | `memory`, `experience`, `profile`, or `topic-memory`. |
+| `sections[].limit` | Required integer | 1–8 for Memory, Profile, and Topic Memory, 1–2 for Experience; the sum of section limits must not exceed the receiving Runtime's `context_assembly_max_entries` (default 8). |
 | `assembly.show` | Enum array, default `[]` | Only `confidence` and `recall_rank`, without duplicates; array order does not change metadata order. |
+
+`POWERCONTEXT_SERVER_RUNTIME_CONTEXT_ASSEMBLY_MAX_ENTRIES` configures this positive-integer total policy.
+The Runtime enforces it before recall; shared request models validate only structure and per-family limits.
+Per-family limits, byte budgets, and legacy output when `assembly` is omitted are independent of this setting.
 
 The complete default section array is:
 
@@ -199,6 +202,10 @@ and pending/rejected Candidates contribute no snapshot; a pending replacement le
 Profile limits count Scope snapshots. The same exact citations, authorization, body truncation, and total-byte
 budget apply. Profile `recall_rank` denotes candidate order only. Default sections remain Memory and Experience.
 
+Topic Memory searches the current Scope only and retains retrieval order. Each item includes title, summary,
+and an optional matching snippet, with a Scope-qualified exact revision citation. It does not generate new
+topics during prepare; full detail is available through the existing exact-read operation.
+
 A supported family whose recall source is not configured has no candidates. Failure of a configured retrieval
 service retains the existing error mapping and is not converted into a normal empty result. Authentication,
 authorization, and service errors retain the operation's existing responses; no new error type is introduced.
@@ -212,8 +219,9 @@ Assembly follows these steps without directly comparing raw scores across Scopes
 2. For nonempty family selection, check read access to the Scopes that will be accessed before reading them. Any
    required authorization failure fails the entire request rather than returning partial bodies.
 3. Recall only selected families. Each Scope retains the existing candidate search bounds: 16 Memory and eight
-   Experience candidates. Output limits neither expand those pools nor trigger repeated searches to fill output.
-4. For each family, preserve the hit order returned by each Scope. Interleave by current Scope followed by Context
+   Experience candidates. Topic Memory recalls up to eight candidates from the current Scope only.
+   Output limits neither expand those pools nor trigger repeated searches to fill output.
+4. For Memory and Experience, preserve the hit order returned by each Scope. Interleave by current Scope followed by Context
    References in their configured order, then cap the merged pool at 16 Memory or eight Experience candidates.
    Ordering from an existing Memory reranker must not be overwritten by sorting on raw `score`.
 5. Within the bounded pool, remove entries without bodies and deduplicate exact identities, keeping the first

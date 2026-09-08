@@ -963,10 +963,12 @@ def test_prompt_capture_can_be_disabled(
         {"sections": []},
         {"sections": [{"family": "experience", "limit": 2}]},
         {"sections": [{"family": "profile", "limit": 1}]},
+        {"sections": [{"family": "topic-memory", "limit": 8}]},
         {
             "sections": [
                 {"family": "profile", "limit": 1},
-                {"family": "memory", "limit": 5},
+                {"family": "topic-memory", "limit": 2},
+                {"family": "memory", "limit": 3},
                 {"family": "experience", "limit": 2},
             ]
         },

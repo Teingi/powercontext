@@ -191,7 +191,7 @@ class MemorySearchPage(BaseModel):
 class ContextAssemblySection(_PreparedContextModel):
     """One selected Artifact family and its maximum output count."""
 
-    family: Literal["memory", "experience", "profile"]
+    family: Literal["memory", "experience", "profile", "topic-memory"]
     limit: Annotated[int, Field(ge=1, le=8)]
 
     @model_validator(mode="after")
@@ -205,7 +205,7 @@ class ContextAssembly(_PreparedContextModel):
     """Request-local selection and presentation of historical context."""
 
     format: Literal["markdown"] = "markdown"
-    sections: Annotated[tuple[ContextAssemblySection, ...], Field(max_length=3, strict=False)] = (
+    sections: Annotated[tuple[ContextAssemblySection, ...], Field(max_length=4, strict=False)] = (
         ContextAssemblySection(family="memory", limit=6),
         ContextAssemblySection(family="experience", limit=2),
     )
@@ -215,8 +215,6 @@ class ContextAssembly(_PreparedContextModel):
     def validate_selection(self) -> ContextAssembly:
         if len({section.family for section in self.sections}) != len(self.sections):
             raise ValueError("Assembly families must be unique")  # noqa: TRY003
-        if sum(section.limit for section in self.sections) > 8:
-            raise ValueError("Assembly section limits must total no more than eight")  # noqa: TRY003
         if len(set(self.show)) != len(self.show):
             raise ValueError("Assembly metadata fields must be unique")  # noqa: TRY003
         return self

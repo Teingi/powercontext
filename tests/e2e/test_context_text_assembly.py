@@ -23,7 +23,15 @@ import httpx
 import pytest
 
 from powercontext.builtin.artifacts.memory import MemoryService
+from powercontext.builtin.artifacts.topic_memory import (
+    TopicMemoryContent,
+    TopicMemoryDraft,
+    chunk_topic_memory_detail,
+    prepare_topic_memory_projection,
+)
 from powercontext.builtin.persistence.sqlite import SQLiteConfig
+from powercontext.builtin.runtime import BuiltinConfig, InvalidRuntimeRequestError, open_builtin_contexts
+from powercontext.builtin.runtime import PrepareContextRequest as RuntimePrepareContextRequest
 from powercontext.client import PowerContextClient
 from powercontext.http import (
     ApproveArtifactCandidateRequest,
@@ -65,6 +73,30 @@ async def _server(tmp_path):
         )
 
 
+async def _seed_topics(database, scope_ids, embedding_model=None):
+    async with open_builtin_contexts(BuiltinConfig(database=database), embedding_model=embedding_model) as contexts:
+        for scope_id in scope_ids:
+            content = TopicMemoryContent(
+                title=f"OpenAPI client topic in {scope_id}",
+                summary="OpenAPI client contract assembly evidence.",
+                detail="OpenAPI client contract details. " * 100,
+            )
+            projection = prepare_topic_memory_projection(content)
+            if embedding_model is not None:
+                chunks = chunk_topic_memory_detail(content.detail)
+                result = await embedding_model.embed((f"{content.title}\n{content.summary}", *(c.text for c in chunks)))
+                projection = prepare_topic_memory_projection(
+                    content,
+                    topic_embedding=result.vectors[0],
+                    chunk_embeddings=result.vectors[1:],
+                    embedding_profile=embedding_model.profile,
+                )
+            async with contexts.database.transaction() as connection:
+                await contexts.repositories.topic_memories.publish_create(
+                    connection, scope_id, "assembly-topic", TopicMemoryDraft(content=content), projection
+                )
+
+
 def test_client_assembles_approved_evidence_and_preserves_exact_memory_versions(tmp_path, monkeypatch):
     async def scenario():
         async with _server(tmp_path) as (_, transport, client):
@@ -76,6 +108,7 @@ def test_client_assembles_approved_evidence_and_preserves_exact_memory_versions(
                 )
             )
             scope_id = scope.scope_id
+            await _seed_topics(SQLiteConfig(url=f"sqlite+aiosqlite:///{tmp_path / 'assembly.db'}"), [scope_id])
             profile = await transport.post(
                 f"/v1/scopes/{scope_id}/artifacts",
                 json={"family": "profile", "content": {"content": "Prefers concise Chinese explanations."}},
@@ -116,8 +149,9 @@ def test_client_assembles_approved_evidence_and_preserves_exact_memory_versions(
                 "assembly": {
                     "sections": [
                         {"family": "profile", "limit": 1},
+                        {"family": "topic-memory", "limit": 2},
                         {"family": "experience", "limit": 2},
-                        {"family": "memory", "limit": 5},
+                        {"family": "memory", "limit": 3},
                     ],
                 },
             })
@@ -133,7 +167,10 @@ def test_client_assembles_approved_evidence_and_preserves_exact_memory_versions(
             )
             prepared = await client.prepare_context(request)
             assert prepared.content is not None
-            assert prepared.content.index("## Profile") < prepared.content.index("## Experience")
+            assert prepared.content.index("## Profile") < prepared.content.index("## Topic Memory")
+            assert prepared.content.index("## Topic Memory") < prepared.content.index("## Experience")
+            assert 'Artifact: family="topic-memory", id="assembly-topic", revision=1' in prepared.content
+            assert ">     Title: OpenAPI client topic" in prepared.content
             assert "Prefers concise Chinese explanations." in prepared.content
             assert 'Artifact: family="profile", id="profile", revision=1' in prepared.content
             assert prepared.content.index("## Experience") < prepared.content.index("## Memory")
@@ -160,6 +197,7 @@ def test_client_assembles_approved_evidence_and_preserves_exact_memory_versions(
                 PrepareContextRequest.model_validate({"scope_id": scope_id, "query": "OpenAPI", "assembly": {}})
             )
             assert default_text.content is not None and "## Profile" not in default_text.content
+            assert "## Topic Memory" not in default_text.content
             empty = await transport.post(
                 "/v1/context/prepare",
                 json={
@@ -188,6 +226,114 @@ def test_client_assembles_approved_evidence_and_preserves_exact_memory_versions(
             )
             assert experience_only.content is not None
             assert "## Experience" in experience_only.content and "## Memory" not in experience_only.content
+
+    asyncio.run(scenario())
+
+
+def test_topic_only_assembly_searches_current_scope_and_skips_other_families(tmp_path, monkeypatch):
+    async def scenario():
+        async with _server(tmp_path) as (runtime, _, client):
+            shared = await client.create_scope(
+                CreateScopeRequest(title="Shared", summary="Topic", idempotency_key="shared")
+            )
+            current = await client.create_scope(
+                CreateScopeRequest(
+                    title="Current", summary="Topic", idempotency_key="current", context_references=[shared.scope_id]
+                )
+            )
+            await _seed_topics(
+                SQLiteConfig(url=f"sqlite+aiosqlite:///{tmp_path / 'assembly.db'}"),
+                [shared.scope_id, current.scope_id],
+            )
+
+            async def unavailable(*args, **kwargs):
+                raise RuntimeError("Unselected backend is unavailable")  # noqa: TRY003
+
+            monkeypatch.setattr(MemoryService, "search", unavailable)
+            monkeypatch.setattr(runtime, "_experience_recall", unavailable)
+            assert runtime.profiles is not None
+            monkeypatch.setattr(runtime.profiles, "latest", unavailable)
+            prepared = await client.prepare_context(
+                PrepareContextRequest.model_validate({
+                    "scope_id": current.scope_id,
+                    "query": "OpenAPI client",
+                    "assembly": {"sections": [{"family": "topic-memory", "limit": 8}]},
+                })
+            )
+            assert prepared.content is not None
+            assert prepared.content.count('family="topic-memory"') == 1
+            assert f'Scope: "{current.scope_id}"' in prepared.content
+            assert shared.scope_id not in prepared.content
+            assert "## Memory" not in prepared.content and "## Experience" not in prepared.content
+            assert "## Profile" not in prepared.content
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("max_entries", [1, 8, 9])
+def test_configured_assembly_total_limit_applies_before_recall(tmp_path, monkeypatch, max_entries):
+    monkeypatch.setenv("POWERCONTEXT_SERVER_RUNTIME_CONTEXT_ASSEMBLY_MAX_ENTRIES", str(max_entries))
+
+    async def scenario():
+        async with _server(tmp_path) as (runtime, transport, client):
+            scope = await client.create_scope(
+                CreateScopeRequest(title="Configured assembly", summary="Entry limit", idempotency_key="entry-limit")
+            )
+            for index in range(8):
+                await client.remember_memory(
+                    RememberMemoryRequest(
+                        scope_id=scope.scope_id, kind="fact", text=f"OpenAPI assembly requirement number {index}."
+                    )
+                )
+            profile = await transport.post(
+                f"/v1/scopes/{scope.scope_id}/artifacts",
+                json={"family": "profile", "content": {"content": "Prefers explicit verification."}},
+            )
+            assert profile.status_code == 201
+            legacy = await client.prepare_context(
+                PrepareContextRequest(scope_id=scope.scope_id, query="OpenAPI assembly")
+            )
+            assert legacy.content is not None and legacy.content.count('"entry_id"') == 8
+            sections = [{"family": "profile", "limit": 1}, {"family": "memory", "limit": 1 if max_entries == 1 else 8}]
+            request = PrepareContextRequest.model_validate({
+                "scope_id": scope.scope_id,
+                "query": "OpenAPI assembly",
+                "assembly": {"sections": sections},
+            })
+            if max_entries >= 9:
+                prepared = await client.prepare_context(request)
+                assert prepared.content is not None
+                assert prepared.content.count("Artifact: family=") == 9
+                assert prepared.content.count('family="memory"') == 8
+                assert prepared.content_bytes == len(prepared.content.encode("utf-8")) <= request.max_bytes
+            else:
+
+                async def unavailable(*args, **kwargs):
+                    raise RuntimeError("Recall must not run for an oversized assembly")  # noqa: TRY003
+
+                monkeypatch.setattr(MemoryService, "search", unavailable)
+                assert runtime.profiles is not None
+                monkeypatch.setattr(runtime.profiles, "latest", unavailable)
+                rejected = await transport.post("/v1/context/prepare", json=request.model_dump(mode="json"))
+                assert rejected.status_code == 422
+                assert rejected.json()["error"]["code"] == "invalid_request"
+                assert "OpenAPI assembly" not in rejected.text
+                with pytest.raises(InvalidRuntimeRequestError, match="context-assembly-entry-limit"):
+                    await runtime.context.for_scope(scope.scope_id).prepare(
+                        RuntimePrepareContextRequest.model_validate({
+                            "query": "OpenAPI assembly",
+                            "assembly": {"sections": sections},
+                        })
+                    )
+
+            empty = await client.prepare_context(
+                PrepareContextRequest.model_validate({
+                    "scope_id": scope.scope_id,
+                    "query": "OpenAPI",
+                    "assembly": {"sections": []},
+                })
+            )
+            assert empty.status == "empty"
 
     asyncio.run(scenario())
 
@@ -376,6 +522,9 @@ def test_prepare_profile_uses_committed_head_across_review_and_replacement(tmp_p
         {"sections": [{"family": "profile", "limit": 1}, {"family": "profile", "limit": 1}]},
         {"sections": [{"family": "profile", "limit": 9}]},
         {"sections": [{"family": "profile", "limit": 8}, {"family": "memory", "limit": 1}]},
+        {"sections": [{"family": "topic-memory", "limit": 9}]},
+        {"sections": [{"family": "topic-memory", "limit": 8}, {"family": "profile", "limit": 1}]},
+        {"sections": [{"family": "topic-memory", "limit": 1}, {"family": "topic-memory", "limit": 1}]},
         {"sections": [{"family": "memory", "limit": 1}, {"family": "memory", "limit": 1}]},
         {"sections": [{"family": "memory", "limit": 8}, {"family": "experience", "limit": 1}]},
         {"show": ["confidence", "confidence"]},

@@ -6330,15 +6330,36 @@ OPENAPI_SCHEMA: dict[str, JsonValue] = {
                         "is "
                         "limited "
                         "to "
-                        "two; "
-                        "all "
+                        "two. "
+                        "All "
                         "section "
                         "limits "
                         "together "
                         "must "
                         "not "
                         "exceed "
-                        "eight.",
+                        "the "
+                        "Server's "
+                        "runtime.context_assembly_max_entries "
+                        "policy "
+                        "(default "
+                        "8); "
+                        "exceeding "
+                        "it "
+                        "returns "
+                        "HTTP "
+                        "422 "
+                        "before "
+                        "recall. "
+                        "The "
+                        "byte "
+                        "budget "
+                        "may "
+                        "reduce "
+                        "the "
+                        "actual "
+                        "output "
+                        "count.",
                     },
                 },
                 "additionalProperties": False,
@@ -6354,7 +6375,7 @@ OPENAPI_SCHEMA: dict[str, JsonValue] = {
                     "sections": {
                         "items": {"$ref": "#/components/schemas/ContextAssemblySection"},
                         "type": "array",
-                        "maxItems": 3,
+                        "maxItems": 4,
                         "description": "Unique "
                         "families "
                         "in "
@@ -6386,6 +6407,26 @@ OPENAPI_SCHEMA: dict[str, JsonValue] = {
                         "filtering "
                         "or "
                         "generation. "
+                        "Topic "
+                        "Memory "
+                        "searches "
+                        "only "
+                        "the "
+                        "current "
+                        "Scope "
+                        "and "
+                        "includes "
+                        "title, "
+                        "summary, "
+                        "and an "
+                        "optional "
+                        "matching "
+                        "snippet, "
+                        "with "
+                        "an "
+                        "exact "
+                        "revision "
+                        "citation. "
                         "An "
                         "empty "
                         "array "
@@ -6409,7 +6450,7 @@ OPENAPI_SCHEMA: dict[str, JsonValue] = {
                 "preserve the existing context "
                 "format; null is invalid.",
             },
-            "ContextAssemblyFamily": {"type": "string", "enum": ["memory", "experience", "profile"]},
+            "ContextAssemblyFamily": {"type": "string", "enum": ["memory", "experience", "profile", "topic-memory"]},
             "ContextAssemblyFormat": {"type": "string", "enum": ["markdown"]},
             "ContextAssemblyMetadata": {"type": "string", "enum": ["confidence", "recall_rank"]},
             "ProposeExperienceRequest": {

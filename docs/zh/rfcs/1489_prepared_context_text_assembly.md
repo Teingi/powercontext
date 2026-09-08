@@ -12,7 +12,7 @@
 `PreparedContext(schema, status, content, content_bytes)`；`content` 是已经完成选择、排序、渲染和预算控制的
 最终字符串，接入端校验后原样注入。
 
-支持 Memory、Experience，以及显式选择的 Profile 快照。章节内沿用已有召回顺序，不增加组装阶段的模型调用。置信度可显示为
+支持 Memory、Experience、显式选择的 Profile 快照，以及 Topic Memory。章节内沿用已有召回顺序，不增加组装阶段的模型调用。置信度可显示为
 `unknown (not assessed)`，但不生成分数，也不支持置信度筛选或排序。省略 `assembly` 的请求继续采用既有输出。
 
 # Motivation
@@ -148,7 +148,7 @@ version ID。不能把精确引用替换为最新 Head。
 | 持久化 | 不新增表、Artifact、Revision、Recipe 或服务端组装配置。 |
 
 首版不包括自定义模板、任意排序表达式、跨类别统一重排、数字置信度、按具体引用固定选入条目，以及 Skill、
-Handoff、Topic Memory 或原始 Source 的自动拼接。类别是 Artifact family，不是 Memory Entry 的 `kind`。
+Handoff 或原始 Source 的自动拼接。类别是 Artifact family，不是 Memory Entry 的 `kind`。
 
 ## 请求 contract
 
@@ -158,10 +158,14 @@ Handoff、Topic Memory 或原始 Source 的自动拼接。类别是 Artifact fam
 | 字段 | 类型及默认值 | 约束 |
 | --- | --- | --- |
 | `assembly.format` | enum，默认 `markdown` | 首版只接受 `markdown`。 |
-| `assembly.sections` | 有序数组，默认 Memory 6、Experience 2 | 0–3 项；同一 family 不能重复。显式空数组不应用默认值。 |
-| `sections[].family` | 必填 enum | `memory`、`experience` 或 `profile`。 |
-| `sections[].limit` | 必填整数 | Memory 和 Profile 为 1–8；Experience 为 1–2；所有 section limit 之和不超过 8。 |
+| `assembly.sections` | 有序数组，默认 Memory 6、Experience 2 | 0–4 项；同一 family 不能重复。显式空数组不应用默认值。 |
+| `sections[].family` | 必填 enum | `memory`、`experience`、`profile` 或 `topic-memory`。 |
+| `sections[].limit` | 必填整数 | Memory、Profile 和 Topic Memory 为 1–8；Experience 为 1–2；所有 section limit 之和不超过接收请求的 Runtime 配置的 `context_assembly_max_entries`（默认 8）。 |
 | `assembly.show` | enum 数组，默认 `[]` | 只接受 `confidence`、`recall_rank`，不得重复；数组顺序不改变元数据顺序。 |
+
+`POWERCONTEXT_SERVER_RUNTIME_CONTEXT_ASSEMBLY_MAX_ENTRIES` 配置这一正整数总量上限。
+Runtime 在召回前执行总量校验；共享请求模型只校验结构和各类别单独上限。
+各类别条数、字节预算和省略 `assembly` 时的原有输出行为独立于此配置。
 
 默认数组完整定义为：
 
@@ -182,6 +186,9 @@ Profile 按“当前 Scope、直接 Context References”的顺序读取各 Scop
 不贡献快照；有待审替换时，既有正式 Head 仍可输出。limit 统计 Scope 快照数量，沿用精确引用、授权、正文
 截断和总字节预算。Profile 的 `recall_rank` 仅代表候选顺序。默认章节仍为 Memory 和 Experience。
 
+Topic Memory 只检索当前 Scope，保留检索顺序，输出标题、摘要和可选命中片段，并带有 Scope 和精确 Revision 引用。
+prepare 不触发新主题生成；完整详情通过已有的精确读取操作获取。
+
 受支持但未配置召回源的类别按无候选处理。已配置的检索服务失败仍按现有错误映射返回，不伪装成正常空结果。
 认证、授权和服务错误沿用该 operation 的现有响应；不增加新的错误类型。
 
@@ -191,9 +198,9 @@ Profile 按“当前 Scope、直接 Context References”的顺序读取各 Scop
 
 1. 校验请求，解析当前 Scope 及其现有 Context References。类别配置不增加 Scope，也不提供额外读取权限。
 2. 对非空类别选择，在读取前检查将要访问的 Scope 的读取权限；任何必需授权失败时整个请求失败，不返回部分正文。
-3. 只为被选择的 family 召回候选。每个 Scope 的搜索沿用现有候选上限：Memory 16、Experience 8；输出 limit
-   不扩大候选池，也不触发为了补满输出而重复搜索。
-4. 对每个 family，保留每个 Scope 返回的 hit 顺序。先按“当前 Scope、Context References 配置顺序”轮流取条目，
+3. 只为被选择的 family 召回候选。每个 Scope 的搜索沿用现有候选上限：Memory 16、Experience 8；
+   Topic Memory 只从当前 Scope 召回最多 8 条候选。输出 limit 不扩大候选池，也不触发为了补满输出而重复搜索。
+4. 对 Memory 和 Experience，保留每个 Scope 返回的 hit 顺序。先按“当前 Scope、Context References 配置顺序”轮流取条目，
    再将合并候选截到 Memory 16 或 Experience 8。已有 Memory reranker 的结果顺序不能被原始 `score` 排序覆盖。
 5. 在有界候选内移除无正文项，并按精确身份去重，保留首次出现的位置。身份包含 Scope、family、Artifact ID 和
    revision；Memory 再包含 entry ID 和 entry version ID。相同正文、不同身份的条目不做语义去重。

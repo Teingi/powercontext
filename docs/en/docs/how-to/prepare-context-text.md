@@ -1,12 +1,12 @@
 ---
 title: Prepare standard context text
-description: Choose Memory, Experience, and Profile sections, order, limits, and visible metadata for prepared context.
+description: Choose Memory, Experience, Profile, and Topic Memory sections, order, limits, and visible metadata for prepared context.
 ---
 
 # Prepare standard context text
 
 Add `assembly` to `POST /v1/context/prepare` to receive Markdown organized by Artifact family. You can select Memory,
-approved Experience, and committed Profile snapshots, arrange their sections, set entry limits, and display retrieval
+approved Experience, committed Profile snapshots, and Topic Memory, arrange their sections, set entry limits, and display retrieval
 rank and confidence status.
 Use an existing Scope that you can read; reading referenced Scopes also requires permission.
 
@@ -72,12 +72,13 @@ asyncio.run(export_context())
 | One `memory` section | Recall only Memory; its limit is 1–8. |
 | One `experience` section | Recall only approved Experience; its limit is 1–2. |
 | One `profile` section | Read the latest committed Profile snapshot from each selected Scope; its limit is 1–8. |
-| Two or three sections | Their order controls both presentation and byte-budget priority. Limits must total at most 8. |
+| One `topic-memory` section | Search Topic Memory in the current Scope; its limit is 1–8. |
+| Two to four sections | Their order controls both presentation and byte-budget priority. Limits must total at most the configured `context_assembly_max_entries` (default 8). |
 | `show: ["recall_rank"]` | Display each entry's position in its family's deduplicated candidate list. |
 | `show: ["confidence"]` | Display `unknown (not assessed)`; no numerical confidence has been assessed. |
 
 Default prepare requests without `assembly` also recall Topic Memory from the current Scope when available.
-Explicit `assembly` accepts Memory, Experience, and Profile; Topic Memory is not recalled in that mode.
+With explicit `assembly`, select `topic-memory` to include it. `assembly: {}` still selects only Memory and Experience.
 
 Entries retain retrieval order within a family. Existing Memory reranking remains authoritative. Rank can have gaps
 when an earlier entry cannot fit. An excluded family is not recalled. Duplicate families, invalid limits, unsupported
@@ -87,6 +88,23 @@ fields such as `sort_by` or `min_confidence`, and explicit `assembly: null` retu
 bytes. When space is insufficient, the Server shortens a body or skips it while retaining complete citations and
 boundaries. It may return fewer entries than requested. Hosts must validate the envelope and budget and preserve
 the returned text; they must not trim it again. Hosts may add their own notice outside it.
+
+## Configure the combined entry limit
+
+Set the Server environment variable and restart the Server to allow a larger combined selection:
+
+```dotenv
+POWERCONTEXT_SERVER_RUNTIME_CONTEXT_ASSEMBLY_MAX_ENTRIES=16
+```
+
+The value must be a positive integer and defaults to 8. Embedded runtimes can set
+`BuiltinConfig(runtime=RuntimeConfig(context_assembly_max_entries=16))`.
+The receiving Runtime validates the sum before recall; exceeding its configured limit returns HTTP 422.
+Each section still allows 1–8 entries, except Experience at 1–2, so the four families can request at most
+26 entries combined. This setting does not expand per-family recall pools or the byte budget.
+When lowering it below 8, provide explicit section limits whose sum fits: `assembly: {}` still requests
+Memory 6 plus Experience 2 and is rejected if that total exceeds the policy. `sections: []` remains valid.
+Requests that omit `assembly` retain the legacy selection and eight-entry cap.
 
 ## Include Profile snapshots
 
@@ -111,6 +129,26 @@ It does not generate a new Profile, search it using `query`, or include pending/
 traverse indirect references or subject bindings. Every referenced Scope requires read permission. Revision
 citations remain exact after replacements, and a truncated snapshot is marked `Truncated: yes`.
 `recall_rank` is its position in the Profile candidate list, not a relevance or confidence score.
+
+## Combine Topic Memory and Profile
+
+Use the following `assembly` to place preferences before relevant topics and other evidence:
+
+```json
+{
+  "sections": [
+    {"family": "profile", "limit": 1},
+    {"family": "topic-memory", "limit": 2},
+    {"family": "memory", "limit": 3},
+    {"family": "experience", "limit": 2}
+  ]
+}
+```
+
+Topic Memory uses the existing query-based search in the current Scope. It does not search Context References
+or generate new topics during prepare. Each item contains its title, summary, and optional matching snippet,
+with the Scope and exact Artifact revision. The full detail remains available through `POST /v1/topic-memory/get`
+using that citation. Retrieval order, section limits, optional metadata, and the shared UTF-8 budget apply.
 
 ## Enable automatic plugin recall
 

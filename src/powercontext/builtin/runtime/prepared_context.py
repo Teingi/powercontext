@@ -169,7 +169,14 @@ class PreparedContextBuilder:
             raise PreparedContextInvariantError("experience-candidate-limit")
 
         if request.assembly is not None:
-            return self._build_text(request, memory_candidates, experience_candidates, profile_candidates)
+            return self._build_text(
+                request,
+                current_scope_id=current_scope_id,
+                memory_candidates=memory_candidates,
+                experience_candidates=experience_candidates,
+                profile_candidates=profile_candidates,
+                topic_memory_hits=topic_memory_hits,
+            )
 
         memory_entries = _interleave_groups(
             tuple(
@@ -207,9 +214,12 @@ class PreparedContextBuilder:
     def _build_text(
         self,
         request: PrepareContextRequest,
+        *,
+        current_scope_id: str | None,
         memory_candidates: Sequence[PreparedMemoryCandidates],
         experience_candidates: Sequence[PreparedExperienceCandidates],
         profile_candidates: Sequence[PreparedProfileCandidate],
+        topic_memory_hits: Sequence[TopicMemorySearchHit],
     ) -> PreparedContextBuild:
         assembly = request.assembly
         if assembly is None:
@@ -219,6 +229,8 @@ class PreparedContextBuilder:
         for section in assembly.sections:
             if section.family == "profile":
                 entries = self._profile_entries(profile_candidates)
+            elif section.family == "topic-memory":
+                entries = self._topic_memory_entries(topic_memory_hits, scope_id=current_scope_id)
             else:
                 groups = (
                     tuple(
@@ -337,6 +349,8 @@ class PreparedContextBuilder:
     def _topic_memory_entries(
         self,
         hits: Sequence[TopicMemorySearchHit],
+        *,
+        scope_id: str | None = None,
     ) -> tuple[_PreparedContextEntry, ...]:
         topic_entries: list[_PreparedContextEntry] = []
         seen_topics: set[tuple[str, int]] = set()
@@ -352,12 +366,19 @@ class PreparedContextBuilder:
             content = {"title": hit.title, "summary": hit.summary}
             if hit.snippet is not None:
                 content["snippet"] = hit.snippet
+            origin: PreparedContextOrigin = hit.artifact_ref
+            citation = {"artifact_ref": hit.artifact_ref.model_dump(mode="json")}
+            body = json.dumps(content, ensure_ascii=False, separators=(",", ":"))
+            if scope_id is not None:
+                origin = ArtifactAddress(scope_id=scope_id, artifact=hit.artifact_ref)
+                citation = {"artifact": origin.model_dump(mode="json")}
+                body = "\n\n".join(f"{label.capitalize()}: {value}" for label, value in content.items())
             topic_entries.append(
                 _PreparedContextEntry(
-                    origin=hit.artifact_ref,
+                    origin=origin,
                     kind="topic-memory",
-                    citation={"artifact_ref": hit.artifact_ref.model_dump(mode="json")},
-                    content=json.dumps(content, ensure_ascii=False, separators=(",", ":")),
+                    citation=citation,
+                    content=body,
                     truncated=False,
                 )
             )

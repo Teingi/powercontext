@@ -48,7 +48,12 @@ it('opts into standard text only for explicit assembly configuration', () => {
     {},
     { sections: [] },
     { sections: [{ family: 'experience', limit: 2 }] },
-    { sections: [{ family: 'profile', limit: 1 }, { family: 'memory', limit: 5 }, { family: 'experience', limit: 2 }] },
+    { sections: [
+      { family: 'profile', limit: 1 },
+      { family: 'topic-memory', limit: 2 },
+      { family: 'memory', limit: 3 },
+      { family: 'experience', limit: 2 },
+    ] },
   ]) {
     expect(resolveConfig({ POWERCONTEXT_PI_CONTEXT_ASSEMBLY: JSON.stringify(assembly) }).contextAssembly).toEqual(assembly)
   }

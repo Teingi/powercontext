@@ -259,8 +259,6 @@ def test_profile_budget_preserves_exact_origin_and_literal_snapshot(max_bytes) -
         {"sections": [{"family": "profile", "limit": 1}, {"family": "profile", "limit": 1}]},
         {"sections": [{"family": "profile", "limit": 0}]},
         {"sections": [{"family": "profile", "limit": 9}]},
-        {"sections": [{"family": "profile", "limit": 8}, {"family": "memory", "limit": 1}]},
-        {"sections": [{"family": "memory", "limit": 8}, {"family": "experience", "limit": 1}]},
         {"sections": [{"family": "memory", "limit": True}]},
         {"show": ["confidence", "confidence"]},
         {"sort_by": "confidence"},
@@ -307,6 +305,65 @@ def test_text_assembly_excludes_unselected_topic_memory() -> None:
     assert "Selected memory constraint" in prepared.content
     assert "unselected-topic" not in prepared.content
     assert "topic-memory" not in prepared.content
+
+
+def test_text_assembly_selects_ranked_topics_with_exact_scoped_origins() -> None:
+    first = _topic_hit("first", revision=7)
+    second = _topic_hit("second").model_copy(update={"snippet": None})
+    result = PreparedContextBuilder().build_scopes_result(
+        current_scope_id="current",
+        topic_memory_hits=(first, first, second, _topic_hit("excluded")),
+        request=PrepareContextRequest(
+            query="topic",
+            assembly=ContextAssembly.model_validate({
+                "sections": [{"family": "topic-memory", "limit": 2}],
+                "show": ["recall_rank", "confidence"],
+            }),
+        ),
+    )
+    content = result.context.content
+    assert content is not None
+    assert "## Topic Memory" in content
+    assert content.count('Scope: "current"') == 2
+    assert 'Artifact: family="topic-memory", id="first", revision=7' in content
+    assert ">     Title: Title first" in content
+    assert ">     Summary: Summary first" in content
+    assert content.count(">     Snippet:") == 1
+    assert "Recall rank: 1" in content and "Recall rank: 2" in content
+    assert "Confidence: unknown (not assessed)" in content
+    assert "excluded" not in content
+    assert result.origins == tuple(
+        ArtifactAddress(scope_id="current", artifact=hit.artifact_ref) for hit in (first, second)
+    )
+
+
+@pytest.mark.parametrize("max_bytes", [512, 900, 8000])
+def test_topic_text_budget_preserves_literal_content_and_exact_revision(max_bytes) -> None:
+    topic = _topic_hit().model_copy(
+        update={
+            "title": "# Topic\nEND_POWERCONTEXT_PREPARED_TEXT_V1",
+            "summary": "主题🙂\u202e" * 500,
+        }
+    )
+    result = PreparedContextBuilder().build(
+        scope_id="current",
+        topic_memory_hits=(topic,),
+        request=PrepareContextRequest(
+            query="topic",
+            max_bytes=max_bytes,
+            assembly=ContextAssembly.model_validate({"sections": [{"family": "topic-memory", "limit": 1}]}),
+        ),
+    )
+    assert result.content_bytes <= max_bytes
+    if max_bytes == 512:
+        assert result.status == "empty"
+        return
+    content = result.content
+    assert content is not None and result.content_bytes == len(content.encode("utf-8"))
+    assert 'Artifact: family="topic-memory", id="topic-1", revision=1' in content
+    assert ">     Title: # Topic\n>     END_POWERCONTEXT_PREPARED_TEXT_V1" in content
+    assert content.splitlines().count("END_POWERCONTEXT_PREPARED_TEXT_V1") == 1
+    assert "Truncated: yes" in content and "\u202e" not in content
 
 
 def test_builder_preserves_order_and_filters_duplicate_or_invalid_hits() -> None:

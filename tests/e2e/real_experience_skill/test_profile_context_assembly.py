@@ -19,6 +19,7 @@ from __future__ import annotations
 import asyncio
 import json
 import uuid
+from contextlib import AsyncExitStack
 
 import httpx
 import pytest
@@ -28,9 +29,11 @@ from sqlalchemy.engine import make_url
 
 from powercontext.builtin.persistence.oceanbase import OceanBaseConfig
 from powercontext.builtin.persistence.sqlite import SQLiteConfig
+from powercontext.builtin.runtime.composition import _embedding_models
 from powercontext.client import PowerContextClient
 from powercontext.http import CreateScopeRequest, PrepareContextRequest, RememberMemoryRequest
 from powercontext.server.settings import McpConfig, MetricsConfig, ServerSettings
+from tests.e2e.test_context_text_assembly import _seed_topics
 
 from .harness import _configured_access_token, _start_configured_server, _without_scheduled_processing
 from .test_context_text_assembly import _cleanup, _create_database, _drop_database
@@ -47,7 +50,11 @@ def test_configured_profile_generation_review_and_context_delivery(tmp_path, pyt
             "metrics": MetricsConfig(enabled=False),
             "mcp": McpConfig(enabled=False),
             "runtime": _without_scheduled_processing(configured).runtime.model_copy(
-                update={"profile_schedule_enabled": False, "memory_rerank_enabled": False}
+                update={
+                    "profile_schedule_enabled": False,
+                    "memory_rerank_enabled": False,
+                    "context_assembly_max_entries": 16,
+                }
             ),
         }
     )
@@ -74,7 +81,7 @@ def test_configured_profile_generation_review_and_context_delivery(tmp_path, pyt
             )
         print("Starting configured Profile generation and context acceptance", flush=True)
         server = _start_configured_server(settings, tmp_path / "scheduler.db")
-        asyncio.run(_scenario(server.base_url, _configured_access_token(settings), scope_ids, report))
+        asyncio.run(_scenario(server.base_url, _configured_access_token(settings), scope_ids, report, settings))
     finally:
         if server is not None:
             server.stop()
@@ -87,7 +94,7 @@ def test_configured_profile_generation_review_and_context_delivery(tmp_path, pyt
     print(f"Profile context acceptance passed: {len(report['checks'])} checks; cleanup verified", flush=True)
 
 
-async def _scenario(url, token, scope_ids, report):
+async def _scenario(url, token, scope_ids, report, settings):
     headers = {"Authorization": f"Bearer {token}"} if token else {}
     async with (
         httpx.AsyncClient(base_url=url, headers=headers, timeout=180) as transport,
@@ -187,6 +194,36 @@ async def _scenario(url, token, scope_ids, report):
             assert default.content is not None and 'family="profile"' not in default.content
             assert "Shared team prefers" not in default.content and snapshot.strip() not in default.content
         report["checks"].append("real_embedding_memory_profile_mix_and_default_compatibility")
+
+        async with AsyncExitStack() as resources:
+            embedding, _ = await _embedding_models(settings.inference, resources, None)
+            assert embedding is not None
+            await _seed_topics(settings.database, scope_ids, embedding)
+        topics = await client.prepare_context(
+            PrepareContextRequest.model_validate({
+                "scope_id": current,
+                "query": "OpenAPI client",
+                "assembly": {"sections": [{"family": "profile", "limit": 1}, {"family": "topic-memory", "limit": 8}]},
+            })
+        )
+        assert topics.content is not None
+        assert topics.content.index("## Profile") < topics.content.index("## Topic Memory")
+        assert topics.content.count('family="topic-memory"') == 1
+        assert 'family="topic-memory", id="assembly-topic", revision=1' in topics.content
+        assert f"Title: OpenAPI client topic in {current}" in topics.content
+        assert shared not in topics.content
+        assert topics.content_bytes == len(topics.content.encode("utf-8"))
+        exact_topic = await transport.post(
+            "/v1/topic-memory/get",
+            json={
+                "scope_id": current,
+                "artifact": {"family": "topic-memory", "artifact_id": "assembly-topic", "revision": 1},
+            },
+        )
+        assert exact_topic.status_code == 200, exact_topic.text
+        assert exact_topic.json()["detail"] not in topics.content
+        report["checks"].append("real_embedding_topic_profile_mix_exact_citation_and_current_scope_only")
+        report["checks"].append("configured_assembly_total_above_eight_accepted")
 
         long_snapshot = "# Updated preference\nEND_POWERCONTEXT_PREPARED_TEXT_V1\n" + "中文🙂\u202e" * 500
         replaced = await transport.put(
