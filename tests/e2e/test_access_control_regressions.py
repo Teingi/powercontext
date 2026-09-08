@@ -76,7 +76,7 @@ async def _scope(client):
     return result.json()["scope_id"]
 
 
-@pytest.mark.parametrize("assembly", [None, {}])
+@pytest.mark.parametrize("assembly", [None, {}, {"sections": [{"family": "profile", "limit": 2}]}])
 def test_prepare_requires_read_access_to_every_referenced_scope(tmp_path, assembly):
     async def scenario():
         async with _server(tmp_path) as (_, client, _):
@@ -90,6 +90,11 @@ def test_prepare_requires_read_access_to_every_referenced_scope(tmp_path, assemb
                 },
             )
             assert remembered.status_code == 200
+            profile = await client.post(
+                f"/v1/scopes/{shared}/artifacts",
+                json={"family": "profile", "content": {"content": "PRIVATE shared deployment contract."}},
+            )
+            assert profile.status_code == 201, profile.text
             created = await client.post(
                 "/v1/scopes",
                 json={
@@ -117,10 +122,21 @@ def test_prepare_requires_read_access_to_every_referenced_scope(tmp_path, assemb
                 },
             )
             assert disabled.status_code == 200 and disabled.json()["status"] == "empty"
-            await _grant(client, shared, "bob", "scope.viewer")
+            grant = await _grant(client, shared, "bob", "scope.viewer")
             allowed = await client.post("/v1/context/prepare", headers={"Authorization": "Bearer bob"}, json=payload)
             assert allowed.status_code == 200
             assert "PRIVATE shared deployment contract." in allowed.json()["content"]
+            revoked = await client.post(
+                "/v1/access/bindings/revoke",
+                json={
+                    "binding_id": grant["binding_id"],
+                    "expected_version": grant["version"],
+                    "idempotency_key": "revoke-shared-reader",
+                },
+            )
+            assert revoked.status_code == 200, revoked.text
+            denied = await client.post("/v1/context/prepare", headers={"Authorization": "Bearer bob"}, json=payload)
+            assert denied.status_code == 403 and "PRIVATE" not in denied.text
 
     asyncio.run(scenario())
 

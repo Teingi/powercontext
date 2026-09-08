@@ -175,6 +175,7 @@ from powercontext.builtin.runtime.prepared_context import (
     PreparedContextBuilder,
     PreparedExperienceCandidates,
     PreparedMemoryCandidates,
+    PreparedProfileCandidate,
 )
 from powercontext.builtin.runtime.protocols import (
     BuiltinTriggers,
@@ -688,6 +689,14 @@ class ScopedContextApplication:
             experience_candidates,
             builder.experience_candidate_limit,
         )
+        profile_candidates: list[PreparedProfileCandidate] = []
+        profiles = self._runtime.profiles
+        if "profile" in families and profiles is not None:
+            async with profiles.database.transaction() as connection:
+                for scope_id in scope_ids:
+                    profile = await profiles.latest(connection, scope_id)
+                    if profile is not None:
+                        profile_candidates.append(PreparedProfileCandidate(scope_id=scope_id, profile=profile))
 
         with self._runtime._stage(
             "context.build",
@@ -699,6 +708,7 @@ class ScopedContextApplication:
                 "powercontext.context.build.experience_candidate_count": sum(
                     len(candidates.hits) for candidates in experience_candidates
                 ),
+                "powercontext.context.build.profile_candidate_count": len(profile_candidates),
             },
         ) as span:
             build = builder.build_scopes_result(
@@ -706,6 +716,7 @@ class ScopedContextApplication:
                 current_scope_id=self.scope_id,
                 memory_candidates=memory_candidates,
                 experience_candidates=experience_candidates,
+                profile_candidates=profile_candidates,
             )
             if span is not None:
                 span.set_attributes({

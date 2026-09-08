@@ -25,6 +25,7 @@ from typing import TypeVar
 from powercontext.artifacts import ArtifactAddress, ArtifactRef
 from powercontext.builtin.artifacts.experience import Experience, ExperienceSearchHit, render_experience
 from powercontext.builtin.artifacts.memory.models import MemoryCitation, MemoryHit
+from powercontext.builtin.artifacts.profile.models import Profile
 from powercontext.builtin.runtime.errors import PreparedContextInvariantError
 from powercontext.builtin.runtime.models import PrepareContextRequest, PreparedContext
 from powercontext.builtin.runtime.prepared_text import (
@@ -87,6 +88,14 @@ class PreparedExperienceCandidates:
     hits: tuple[ExperienceSearchHit, ...] = ()
 
 
+@dataclass(frozen=True)
+class PreparedProfileCandidate:
+    """The latest committed Profile snapshot read from one Scope."""
+
+    scope_id: str
+    profile: Profile
+
+
 class PreparedContextBuilder:
     """Select and render final context without I/O, persistence, or reranking."""
 
@@ -142,6 +151,7 @@ class PreparedContextBuilder:
         current_scope_id: str | None,
         memory_candidates: Sequence[PreparedMemoryCandidates] = (),
         experience_candidates: Sequence[PreparedExperienceCandidates] = (),
+        profile_candidates: Sequence[PreparedProfileCandidate] = (),
     ) -> PreparedContextBuild:
         if sum(len(candidates.hits) for candidates in memory_candidates) > self.memory_candidate_limit:
             raise PreparedContextInvariantError("memory-candidate-limit")
@@ -149,7 +159,7 @@ class PreparedContextBuilder:
             raise PreparedContextInvariantError("experience-candidate-limit")
 
         if request.assembly is not None:
-            return self._build_text(request, memory_candidates, experience_candidates)
+            return self._build_text(request, memory_candidates, experience_candidates, profile_candidates)
 
         memory_entries = _interleave_groups(
             tuple(
@@ -188,6 +198,7 @@ class PreparedContextBuilder:
         request: PrepareContextRequest,
         memory_candidates: Sequence[PreparedMemoryCandidates],
         experience_candidates: Sequence[PreparedExperienceCandidates],
+        profile_candidates: Sequence[PreparedProfileCandidate],
     ) -> PreparedContextBuild:
         assembly = request.assembly
         if assembly is None:
@@ -195,21 +206,28 @@ class PreparedContextBuilder:
         included: list[ContextTextItem] = []
         origins: list[PreparedContextOrigin] = []
         for section in assembly.sections:
-            groups = (
-                tuple(
-                    tuple(self._memory_entries(group.memory_ref, (hit,), scope_id=group.scope_id) for hit in group.hits)
-                    for group in memory_candidates
+            if section.family == "profile":
+                entries = self._profile_entries(profile_candidates)
+            else:
+                groups = (
+                    tuple(
+                        tuple(
+                            self._memory_entries(group.memory_ref, (hit,), scope_id=group.scope_id)
+                            for hit in group.hits
+                        )
+                        for group in memory_candidates
+                    )
+                    if section.family == "memory"
+                    else tuple(
+                        tuple(self._experience_entries((hit,), scope_id=group.scope_id) for hit in group.hits)
+                        for group in experience_candidates
+                    )
                 )
-                if section.family == "memory"
-                else tuple(
-                    tuple(self._experience_entries((hit,), scope_id=group.scope_id) for hit in group.hits)
-                    for group in experience_candidates
-                )
-            )
+                entries = tuple(chain.from_iterable(_interleave_groups(groups)))
             seen: set[tuple[str, str, str, int, str | None, str | None]] = set()
             rank = 0
             selected_count = 0
-            for entry in chain.from_iterable(_interleave_groups(groups)):
+            for entry in entries:
                 item = _text_item(entry)
                 artifact = item.artifact
                 identity = (
@@ -238,6 +256,21 @@ class PreparedContextBuilder:
             context=PreparedContext(status="ready", content=content, content_bytes=len(content.encode("utf-8"))),
             origins=tuple(origins),
         )
+
+    def _profile_entries(self, candidates: Sequence[PreparedProfileCandidate]) -> tuple[_PreparedContextEntry, ...]:
+        entries = []
+        for candidate in candidates:
+            origin = ArtifactAddress(scope_id=candidate.scope_id, artifact=candidate.profile.as_ref())
+            entries.append(
+                _PreparedContextEntry(
+                    origin=origin,
+                    kind="profile",
+                    citation={"artifact": origin.model_dump(mode="json")},
+                    content=candidate.profile.content.content,
+                    truncated=False,
+                )
+            )
+        return tuple(entries)
 
     def _memory_entries(
         self,

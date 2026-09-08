@@ -1,12 +1,13 @@
 ---
 title: Prepare standard context text
-description: Choose Memory and Experience sections, order, limits, and visible metadata for prepared context.
+description: Choose Memory, Experience, and Profile sections, order, limits, and visible metadata for prepared context.
 ---
 
 # Prepare standard context text
 
-Add `assembly` to `POST /v1/context/prepare` to receive Markdown organized by Artifact family. You can select Memory
-and approved Experience, arrange their sections, set entry limits, and display retrieval rank and confidence status.
+Add `assembly` to `POST /v1/context/prepare` to receive Markdown organized by Artifact family. You can select Memory,
+approved Experience, and committed Profile snapshots, arrange their sections, set entry limits, and display retrieval
+rank and confidence status.
 Use an existing Scope that you can read; reading referenced Scopes also requires permission.
 
 ## Select and order sections
@@ -70,7 +71,8 @@ asyncio.run(export_context())
 | `"assembly": {"sections": []}` | Return an empty result after request and current-Scope checks; perform no candidate recall. |
 | One `memory` section | Recall only Memory; its limit is 1–8. |
 | One `experience` section | Recall only approved Experience; its limit is 1–2. |
-| Two sections | Their order controls both presentation and byte-budget priority. Limits must total at most 8. |
+| One `profile` section | Read the latest committed Profile snapshot from each selected Scope; its limit is 1–8. |
+| Two or three sections | Their order controls both presentation and byte-budget priority. Limits must total at most 8. |
 | `show: ["recall_rank"]` | Display each entry's position in its family's deduplicated candidate list. |
 | `show: ["confidence"]` | Display `unknown (not assessed)`; no numerical confidence has been assessed. |
 
@@ -82,6 +84,30 @@ fields such as `sort_by` or `min_confidence`, and explicit `assembly: null` retu
 bytes. When space is insufficient, the Server shortens a body or skips it while retaining complete citations and
 boundaries. It may return fewer entries than requested. Hosts must validate the envelope and budget and preserve
 the returned text; they must not trim it again. Hosts may add their own notice outside it.
+
+## Include Profile snapshots
+
+Select Profile explicitly to put the current Scope's preferences before task memories:
+
+```json
+{
+  "sections": [
+    {"family": "profile", "limit": 1},
+    {"family": "memory", "limit": 6}
+  ]
+}
+```
+
+Use this object as `assembly` or as a plugin's context assembly setting. Profile is excluded when `assembly` is
+omitted or `{}`. Each Profile item is one complete Scope snapshot before the usual body and total-byte limits
+are applied. `limit` counts snapshots, not individual preferences. A missing snapshot contributes no item;
+`limit: 1` selects the first available snapshot in current-Scope then direct-Context-Reference order.
+
+The Server reads the latest committed `family=profile, artifact_id=profile` revision in each selected Scope.
+It does not generate a new Profile, search it using `query`, or include pending/rejected Candidates. It does not
+traverse indirect references or subject bindings. Every referenced Scope requires read permission. Revision
+citations remain exact after replacements, and a truncated snapshot is marked `Truncated: yes`.
+`recall_rank` is its position in the Profile candidate list, not a relevance or confidence score.
 
 ## Enable automatic plugin recall
 

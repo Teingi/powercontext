@@ -12,7 +12,7 @@ for recall, set section order and per-family limits, and receive consistently fo
 citations. The HTTP response remains `PreparedContext(schema, status, content, content_bytes)`. Its `content` is
 the final string after selection, ordering, rendering, and budgeting; a host validates it and injects it unchanged.
 
-The first release supports Memory and Experience. Entries within each section retain their existing retrieval
+The first release supports Memory, Experience, and explicitly selected Profile snapshots. Entries within each section retain their existing retrieval
 order, and assembly adds no model calls. Confidence may be displayed as `unknown (not assessed)`, but the system
 does not generate scores or support confidence filtering or ordering. Requests that omit `assembly` retain the
 existing output behavior.
@@ -162,7 +162,7 @@ entry ID and entry version ID. An exact citation must not be replaced with the l
 
 The first release excludes custom templates, arbitrary ordering expressions, joint reranking across families,
 numeric confidence, selection pinned to explicit references, and automatic assembly of Skill, Handoff, Topic
-Memory, Profile, or raw Sources. A family denotes an Artifact family, not a Memory Entry's `kind`.
+Memory or raw Sources. A family denotes an Artifact family, not a Memory Entry's `kind`.
 
 ## Request contract
 
@@ -173,9 +173,9 @@ must not be `null`. All new objects reject unknown fields.
 | Field | Type and default | Constraints |
 | --- | --- | --- |
 | `assembly.format` | Enum, default `markdown` | Only `markdown` is accepted in the first release. |
-| `assembly.sections` | Ordered array, default Memory 6 then Experience 2 | 0–2 items; a family cannot appear twice. An explicit empty array does not apply defaults. |
-| `sections[].family` | Required enum | `memory` or `experience`. |
-| `sections[].limit` | Required integer | 1–8 for Memory, 1–2 for Experience; the sum of section limits must not exceed 8. |
+| `assembly.sections` | Ordered array, default Memory 6 then Experience 2 | 0–3 items; a family cannot appear twice. An explicit empty array does not apply defaults. |
+| `sections[].family` | Required enum | `memory`, `experience`, or `profile`. |
+| `sections[].limit` | Required integer | 1–8 for Memory and Profile, 1–2 for Experience; the sum of section limits must not exceed 8. |
 | `assembly.show` | Enum array, default `[]` | Only `confidence` and `recall_rank`, without duplicates; array order does not change metadata order. |
 
 The complete default section array is:
@@ -192,6 +192,12 @@ Unknown or duplicate families, invalid limits, duplicate or unknown `show` entri
 server must not silently ignore a caller's selection or ordering requirements. Expressible schema constraints
 belong in OpenAPI. Runtime must also enforce family-specific limits and the total limit, rather than relying
 only on generated models. Direct Runtime calls apply the same semantic validation.
+
+Profile reads the latest committed `profile/profile` snapshot per current Scope and direct Context Reference,
+in that order. It is opt-in, independent of `query`, and never generates content during prepare. Missing Profiles
+and pending/rejected Candidates contribute no snapshot; a pending replacement leaves the committed head eligible.
+Profile limits count Scope snapshots. The same exact citations, authorization, body truncation, and total-byte
+budget apply. Profile `recall_rank` denotes candidate order only. Default sections remain Memory and Experience.
 
 A supported family whose recall source is not configured has no candidates. Failure of a configured retrieval
 service retains the existing error mapping and is not converted into a normal empty result. Authentication,

@@ -76,6 +76,11 @@ def test_client_assembles_approved_evidence_and_preserves_exact_memory_versions(
                 )
             )
             scope_id = scope.scope_id
+            profile = await transport.post(
+                f"/v1/scopes/{scope_id}/artifacts",
+                json={"family": "profile", "content": {"content": "Prefers concise Chinese explanations."}},
+            )
+            assert profile.status_code == 201, profile.text
             remembered = await client.remember_memory(
                 RememberMemoryRequest(
                     scope_id=scope_id,
@@ -109,7 +114,11 @@ def test_client_assembles_approved_evidence_and_preserves_exact_memory_versions(
                 "scope_id": scope_id,
                 "query": "OpenAPI client",
                 "assembly": {
-                    "sections": [{"family": "experience", "limit": 2}, {"family": "memory", "limit": 5}],
+                    "sections": [
+                        {"family": "profile", "limit": 1},
+                        {"family": "experience", "limit": 2},
+                        {"family": "memory", "limit": 5},
+                    ],
                 },
             })
             pending = await client.prepare_context(request)
@@ -124,6 +133,9 @@ def test_client_assembles_approved_evidence_and_preserves_exact_memory_versions(
             )
             prepared = await client.prepare_context(request)
             assert prepared.content is not None
+            assert prepared.content.index("## Profile") < prepared.content.index("## Experience")
+            assert "Prefers concise Chinese explanations." in prepared.content
+            assert 'Artifact: family="profile", id="profile", revision=1' in prepared.content
             assert prepared.content.index("## Experience") < prepared.content.index("## Memory")
             assert citation.entry_version_id in prepared.content
             assert prepared.content_bytes == len(prepared.content.encode("utf-8")) <= request.max_bytes
@@ -143,6 +155,11 @@ def test_client_assembles_approved_evidence_and_preserves_exact_memory_versions(
             assert legacy.content is not None
             assert '"items":[' in legacy.content
             assert "BEGIN_POWERCONTEXT_PREPARED_CONTEXT_V1" in legacy.content
+            assert "Prefers concise Chinese explanations." not in legacy.content
+            default_text = await client.prepare_context(
+                PrepareContextRequest.model_validate({"scope_id": scope_id, "query": "OpenAPI", "assembly": {}})
+            )
+            assert default_text.content is not None and "## Profile" not in default_text.content
             empty = await transport.post(
                 "/v1/context/prepare",
                 json={
@@ -226,11 +243,137 @@ def test_excluded_recall_source_failure_does_not_affect_selected_memory(tmp_path
     asyncio.run(scenario())
 
 
+def test_profile_selection_reads_only_current_and_direct_scopes_without_search(tmp_path, monkeypatch):
+    async def scenario():
+        async with _server(tmp_path) as (runtime, transport, client):
+            scopes = {}
+            for name, references in [
+                ("transitive", []),
+                ("unrelated", []),
+                ("shared", ["transitive"]),
+                ("current", ["shared"]),
+            ]:
+                scope = await client.create_scope(
+                    CreateScopeRequest(
+                        title=name,
+                        summary="Profile assembly scope",
+                        idempotency_key=name,
+                        context_references=[scopes[reference] for reference in references],
+                    )
+                )
+                scopes[name] = scope.scope_id
+                created = await transport.post(
+                    f"/v1/scopes/{scope.scope_id}/artifacts",
+                    json={"family": "profile", "content": {"content": f"{name} snapshot"}},
+                )
+                assert created.status_code == 201, created.text
+
+            async def unavailable(*args, **kwargs):
+                raise RuntimeError("Unselected search backend is unavailable")  # noqa: TRY003
+
+            monkeypatch.setattr(MemoryService, "search", unavailable)
+            monkeypatch.setattr(runtime, "_experience_recall", unavailable)
+            assert runtime.profiles is not None
+            monkeypatch.setattr(runtime.profiles, "generator", None)
+            for limit, expected in [(1, ["current"]), (8, ["current", "shared"])]:
+                result = await client.prepare_context(
+                    PrepareContextRequest.model_validate({
+                        "scope_id": scopes["current"],
+                        "query": "a completely unrelated query",
+                        "assembly": {
+                            "sections": [{"family": "profile", "limit": limit}],
+                            "show": ["recall_rank", "confidence"],
+                        },
+                    })
+                )
+                assert result.content is not None
+                assert result.content.count('Artifact: family="profile"') == len(expected)
+                for name in scopes:
+                    assert (f"{name} snapshot" in result.content) == (name in expected)
+                if limit == 8:
+                    assert result.content.index("current snapshot") < result.content.index("shared snapshot")
+                    assert 'Scope: "' + scopes["shared"] + '"' in result.content
+                    assert "Recall rank: 2" in result.content
+                assert "Confidence: unknown (not assessed)" in result.content
+                assert "## Memory" not in result.content and "## Experience" not in result.content
+                assert result.content_bytes == len(result.content.encode("utf-8"))
+
+    asyncio.run(scenario())
+
+
+def test_prepare_profile_uses_committed_head_across_review_and_replacement(tmp_path):
+    class Generator:
+        async def generate(self, value):
+            return "Reviewed preference"
+
+    async def scenario():
+        async with _server(tmp_path) as (runtime, transport, client):
+            scope = await client.create_scope(
+                CreateScopeRequest(title="Profile", summary="Snapshot lifecycle", idempotency_key="profile")
+            )
+            path = f"/v1/scopes/{scope.scope_id}"
+            request = PrepareContextRequest.model_validate({
+                "scope_id": scope.scope_id,
+                "query": "preferences",
+                "assembly": {"sections": [{"family": "profile", "limit": 1}]},
+            })
+            assert (await client.prepare_context(request)).status == "empty"
+            policy = await transport.put(
+                path + "/profile-policy",
+                json={"generation_enabled": True, "activation_mode": "review_required", "expected_version": 0},
+            )
+            assert policy.status_code == 200, policy.text
+            assert runtime.profiles is not None
+            runtime.profiles.generator = Generator()
+            source = await transport.post(path + "/sources", json={"content": "Reviewed preference evidence"})
+            assert source.status_code == 201, source.text
+            pending = await transport.post("/v1/profile/flush", json={"scope_id": scope.scope_id})
+            assert pending.status_code == 200 and pending.json()["status"] == "review_pending"
+            assert (await client.prepare_context(request)).status == "empty"
+            approved = await transport.post(
+                "/v1/artifact-candidates/approve",
+                json={
+                    "scope_id": scope.scope_id,
+                    "candidate_id": pending.json()["candidate_id"],
+                    "expected_version": 1,
+                },
+            )
+            assert approved.status_code == 200, approved.text
+            first = await client.prepare_context(request)
+            assert first.content is not None and "Reviewed preference" in first.content
+            assert 'family="profile", id="profile", revision=1' in first.content
+
+            current = await transport.get(path + "/artifacts/profile/profile")
+            replaced = await transport.put(
+                path + "/artifacts/profile/profile",
+                headers={"If-Match": current.headers["ETag"]},
+                json={"content": {"content": "Updated preference"}},
+            )
+            assert replaced.status_code == 200, replaced.text
+            latest = await client.prepare_context(request)
+            assert latest.content is not None and "Updated preference" in latest.content
+            assert "Reviewed preference" not in latest.content
+            assert 'family="profile", id="profile", revision=2' in latest.content
+            exact = await transport.get(path + "/artifacts/profile/profile/revisions/1")
+            assert exact.json()["content"]["content"].strip() == "Reviewed preference"
+
+            source = await transport.post(path + "/sources", json={"content": "Another review window"})
+            assert source.status_code == 201
+            pending = await transport.post("/v1/profile/flush", json={"scope_id": scope.scope_id})
+            assert pending.status_code == 200 and pending.json()["status"] == "review_pending"
+            assert (await client.prepare_context(request)).content == latest.content
+
+    asyncio.run(scenario())
+
+
 @pytest.mark.parametrize(
     "assembly",
     [
         None,
         {"sections": [{"family": "experience", "limit": 3}]},
+        {"sections": [{"family": "profile", "limit": 1}, {"family": "profile", "limit": 1}]},
+        {"sections": [{"family": "profile", "limit": 9}]},
+        {"sections": [{"family": "profile", "limit": 8}, {"family": "memory", "limit": 1}]},
         {"sections": [{"family": "memory", "limit": 1}, {"family": "memory", "limit": 1}]},
         {"sections": [{"family": "memory", "limit": 8}, {"family": "experience", "limit": 1}]},
         {"show": ["confidence", "confidence"]},

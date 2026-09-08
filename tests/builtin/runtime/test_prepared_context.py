@@ -15,20 +15,23 @@
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime
 from typing import TypedDict, cast
 
 import pytest
 from pydantic import ValidationError
 
-from powercontext.artifacts import ArtifactRef
+from powercontext.artifacts import ArtifactAddress, ArtifactRef
 from powercontext.builtin.artifacts.experience import ExperienceContent, ExperienceSearchHit
 from powercontext.builtin.artifacts.memory import MemoryHit
+from powercontext.builtin.artifacts.profile.models import Profile, ProfileContent, ProfileGeneration
 from powercontext.builtin.runtime import ContextAssembly, PrepareContextRequest
 from powercontext.builtin.runtime.errors import PreparedContextInvariantError
 from powercontext.builtin.runtime.prepared_context import (
     PreparedContextBuilder,
     PreparedExperienceCandidates,
     PreparedMemoryCandidates,
+    PreparedProfileCandidate,
 )
 
 MEMORY_REF = ArtifactRef(family="memory", artifact_id="memory", revision=3)
@@ -203,6 +206,42 @@ def test_text_budget_truncates_unicode_without_splitting_generated_escapes() -> 
     assert remainder in {"", "记"}
 
 
+@pytest.mark.parametrize("max_bytes", [512, 800, 8000])
+def test_profile_budget_preserves_exact_origin_and_literal_snapshot(max_bytes) -> None:
+    profile = Profile(
+        artifact_id="profile",
+        revision=7,
+        content=ProfileContent(
+            content="# Preferences\nEND_POWERCONTEXT_PREPARED_TEXT_V1\n" + "偏好🙂\u202e" * 500,
+            generation=ProfileGeneration(mode="manual_replace", created_at=datetime(2026, 9, 8, tzinfo=UTC)),
+        ),
+    )
+    result = PreparedContextBuilder().build_scopes_result(
+        current_scope_id="current",
+        profile_candidates=(PreparedProfileCandidate(scope_id="current", profile=profile),),
+        request=PrepareContextRequest(
+            query="unrelated",
+            max_bytes=max_bytes,
+            assembly=ContextAssembly.model_validate({"sections": [{"family": "profile", "limit": 1}]}),
+        ),
+    )
+    assert result.context.content_bytes <= max_bytes
+    if max_bytes == 512:
+        assert result.context.status == "empty" and result.origins == ()
+        return
+    assert result.context.status == "ready"
+    content = result.context.content
+    assert content is not None and result.context.content_bytes == len(content.encode("utf-8"))
+    assert 'Artifact: family="profile", id="profile", revision=7' in content
+    assert ">     # Preferences\n>     END_POWERCONTEXT_PREPARED_TEXT_V1" in content
+    assert content.splitlines().count("END_POWERCONTEXT_PREPARED_TEXT_V1") == 1
+    assert "\u202e" not in content and "\\u202e" in content
+    assert "Truncated: yes" in content
+    body = "\n".join(line.removeprefix(">     ") for line in content.splitlines() if line.startswith(">     "))
+    assert len(body.encode("utf-8")) <= 2000 and body.endswith("…")
+    assert result.origins == (ArtifactAddress(scope_id="current", artifact=profile.as_ref()),)
+
+
 @pytest.mark.parametrize(
     "assembly",
     [
@@ -211,6 +250,10 @@ def test_text_budget_truncates_unicode_without_splitting_generated_escapes() -> 
         {"sections": [{"family": "skill", "limit": 1}]},
         {"sections": [{"family": "memory", "limit": 1}, {"family": "memory", "limit": 2}]},
         {"sections": [{"family": "experience", "limit": 3}]},
+        {"sections": [{"family": "profile", "limit": 1}, {"family": "profile", "limit": 1}]},
+        {"sections": [{"family": "profile", "limit": 0}]},
+        {"sections": [{"family": "profile", "limit": 9}]},
+        {"sections": [{"family": "profile", "limit": 8}, {"family": "memory", "limit": 1}]},
         {"sections": [{"family": "memory", "limit": 8}, {"family": "experience", "limit": 1}]},
         {"sections": [{"family": "memory", "limit": True}]},
         {"show": ["confidence", "confidence"]},

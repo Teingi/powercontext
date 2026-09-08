@@ -6195,6 +6195,13 @@ OPENAPI_SCHEMA: dict[str, JsonValue] = {
                         "description": "Maximum "
                         "included "
                         "entries. "
+                        "Each "
+                        "Profile "
+                        "entry "
+                        "is "
+                        "one "
+                        "Scope "
+                        "snapshot. "
                         "Experience "
                         "is "
                         "limited "
@@ -6223,7 +6230,7 @@ OPENAPI_SCHEMA: dict[str, JsonValue] = {
                     "sections": {
                         "items": {"$ref": "#/components/schemas/ContextAssemblySection"},
                         "type": "array",
-                        "maxItems": 2,
+                        "maxItems": 3,
                         "description": "Unique "
                         "families "
                         "in "
@@ -6232,6 +6239,29 @@ OPENAPI_SCHEMA: dict[str, JsonValue] = {
                         "byte-budget "
                         "priority "
                         "order. "
+                        "Profile "
+                        "explicitly "
+                        "includes "
+                        "the "
+                        "latest "
+                        "committed "
+                        "snapshot "
+                        "from "
+                        "the "
+                        "current "
+                        "Scope "
+                        "and "
+                        "direct "
+                        "Context "
+                        "References, "
+                        "in "
+                        "that "
+                        "order, "
+                        "without "
+                        "query "
+                        "filtering "
+                        "or "
+                        "generation. "
                         "An "
                         "empty "
                         "array "
@@ -6255,7 +6285,7 @@ OPENAPI_SCHEMA: dict[str, JsonValue] = {
                 "preserve the existing context "
                 "format; null is invalid.",
             },
-            "ContextAssemblyFamily": {"type": "string", "enum": ["memory", "experience"]},
+            "ContextAssemblyFamily": {"type": "string", "enum": ["memory", "experience", "profile"]},
             "ContextAssemblyFormat": {"type": "string", "enum": ["markdown"]},
             "ContextAssemblyMetadata": {"type": "string", "enum": ["confidence", "recall_rank"]},
             "ProposeExperienceRequest": {

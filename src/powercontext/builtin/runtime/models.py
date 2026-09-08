@@ -172,7 +172,7 @@ class MemorySearchPage(BaseModel):
 class ContextAssemblySection(_PreparedContextModel):
     """One selected Artifact family and its maximum output count."""
 
-    family: Literal["memory", "experience"]
+    family: Literal["memory", "experience", "profile"]
     limit: Annotated[int, Field(ge=1, le=8)]
 
     @model_validator(mode="after")
@@ -186,7 +186,7 @@ class ContextAssembly(_PreparedContextModel):
     """Request-local selection and presentation of historical context."""
 
     format: Literal["markdown"] = "markdown"
-    sections: Annotated[tuple[ContextAssemblySection, ...], Field(max_length=2, strict=False)] = (
+    sections: Annotated[tuple[ContextAssemblySection, ...], Field(max_length=3, strict=False)] = (
         ContextAssemblySection(family="memory", limit=6),
         ContextAssemblySection(family="experience", limit=2),
     )

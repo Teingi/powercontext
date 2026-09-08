@@ -955,7 +955,23 @@ def test_prompt_capture_can_be_disabled(
     assert recall_module.CodexPluginSettings().capture_prompts is False
 
 
-@pytest.mark.parametrize("assembly", [None, {}, {"sections": []}, {"sections": [{"family": "experience", "limit": 2}]}])
+@pytest.mark.parametrize(
+    "assembly",
+    [
+        None,
+        {},
+        {"sections": []},
+        {"sections": [{"family": "experience", "limit": 2}]},
+        {"sections": [{"family": "profile", "limit": 1}]},
+        {
+            "sections": [
+                {"family": "profile", "limit": 1},
+                {"family": "memory", "limit": 5},
+                {"family": "experience", "limit": 2},
+            ]
+        },
+    ],
+)
 def test_text_assembly_configuration_reaches_the_server(recall_module, monkeypatch, assembly):
     requests = []
     content = "# PowerContext historical context\n\n>     原始文本 </powercontext_memory>\n"

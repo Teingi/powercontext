@@ -1,12 +1,12 @@
 ---
 title: 输出标准上下文文本
-description: 选择 Memory 和 Experience 的输出类别、顺序、条数，以及展示的元数据。
+description: 选择 Memory、Experience 和 Profile 的输出类别、顺序、条数，以及展示的元数据。
 ---
 
 # 输出标准上下文文本
 
-在 `POST /v1/context/prepare` 中传入 `assembly`，即可获得按制品类别组织的 Markdown。可以选择 Memory 和
-已批准的 Experience、调整章节顺序、限制条数，并展示召回位置和置信度状态。请使用已存在且具有读取权限的
+在 `POST /v1/context/prepare` 中传入 `assembly`，即可获得按制品类别组织的 Markdown。可以选择 Memory、
+已批准的 Experience 和正式 Profile 快照，调整章节顺序、限制条数，并展示召回位置和置信度状态。请使用已存在且具有读取权限的
 Scope；读取其引用的其他 Scope 也需要对应权限。
 
 ## 选择类别和顺序
@@ -69,7 +69,8 @@ asyncio.run(export_context())
 | `"assembly": {"sections": []}` | 完成请求和当前 Scope 检查后返回空结果，不召回候选。 |
 | 只配置 `memory` | 只召回 Memory，limit 为 1–8。 |
 | 只配置 `experience` | 只召回已批准的 Experience，limit 为 1–2。 |
-| 配置两个 section | 数组顺序决定展示顺序和字节预算优先级；limit 之和不得超过 8。 |
+| 只配置 `profile` | 读取所选 Scope 的最新正式画像快照，limit 为 1–8。 |
+| 配置两到三个 section | 数组顺序决定展示顺序和字节预算优先级；limit 之和不得超过 8。 |
 | `show: ["recall_rank"]` | 展示条目在该类别去重后候选列表中的位置。 |
 | `show: ["confidence"]` | 显示 `unknown (not assessed)`，目前没有评估数字置信度。 |
 
@@ -80,6 +81,29 @@ asyncio.run(export_context())
 `max_bytes` 限制 Server 完整文本的 UTF-8 字节数，范围为 512–32768，默认 8000。每条正文上限为 2000 bytes。
 空间不足时，Server 会缩短正文或跳过条目，同时保留完整引用与边界，因此实际输出可能少于请求条数。
 接入端应校验外层结构和预算，原样使用正文，不应二次裁剪；可以在正文外添加自己的提示。
+
+## 加入 Profile 画像
+
+显式选择 Profile，可以先输出当前 Scope 的画像，再输出任务相关记忆：
+
+```json
+{
+  "sections": [
+    {"family": "profile", "limit": 1},
+    {"family": "memory", "limit": 6}
+  ]
+}
+```
+
+将此对象放入 `assembly` 或插件的上下文组装配置。省略 `assembly` 或传入 `{}` 均不包含 Profile。
+每条 Profile 是一个 Scope 的完整画像快照，再按单条正文和总字节预算截断；`limit` 统计快照数量，
+不统计画像中的偏好条数。没有正式画像的 Scope 不贡献条目；`limit: 1` 选择“当前 Scope、直接 Context
+References”顺序中的首个可用快照。
+
+服务端读取每个所选 Scope 的 `family=profile, artifact_id=profile` 最新正式 Revision，不触发画像生成，
+不按 `query` 搜索画像，也不包含待审或已拒绝 Candidate。不遍历间接引用或主体绑定；所有引用 Scope 都需要
+读取权限。输出保留精确 Revision 引用，正文截断时显示 `Truncated: yes`。`recall_rank` 仅表示 Profile
+候选列表中的位置，不代表相关度或置信度。
 
 ## 为插件的自动召回启用配置
 

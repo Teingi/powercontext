@@ -1233,6 +1233,7 @@ class MemoryCitation(BaseModel):
 class ContextAssemblyFamily(StrEnum):
     MEMORY = "memory"
     EXPERIENCE = "experience"
+    PROFILE = "profile"
 
 
 class ContextAssemblyFormat(StrEnum):
@@ -2712,7 +2713,7 @@ class ContextAssemblySection(BaseModel):
     limit: Annotated[
         StrictInt,
         Field(
-            description="Maximum included entries. Experience is limited to two; all section limits together must not exceed eight.",
+            description="Maximum included entries. Each Profile entry is one Scope snapshot. Experience is limited to two; all section limits together must not exceed eight.",
             ge=1,
             le=8,
         ),
@@ -2727,8 +2728,8 @@ class ContextAssembly(BaseModel):
     sections: Annotated[
         list[ContextAssemblySection],
         Field(
-            description="Unique families in output and byte-budget priority order. An empty array disables candidate recall.",
-            max_length=2,
+            description="Unique families in output and byte-budget priority order. Profile explicitly includes the latest committed snapshot from the current Scope and direct Context References, in that order, without query filtering or generation. An empty array disables candidate recall.",
+            max_length=3,
             validate_default=True,
         ),
     ] = [

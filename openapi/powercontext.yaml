@@ -7248,7 +7248,7 @@ components:
           type: integer
           minimum: 1
           maximum: 8
-          description: Maximum included entries. Experience is limited to two; all section limits together must not exceed eight.
+          description: Maximum included entries. Each Profile entry is one Scope snapshot. Experience is limited to two; all section limits together must not exceed eight.
     ContextAssembly:
       type: object
       additionalProperties: false
@@ -7260,8 +7260,8 @@ components:
           default: markdown
         sections:
           type: array
-          maxItems: 2
-          description: Unique families in output and byte-budget priority order. An empty array disables candidate recall.
+          maxItems: 3
+          description: Unique families in output and byte-budget priority order. Profile explicitly includes the latest committed snapshot from the current Scope and direct Context References, in that order, without query filtering or generation. An empty array disables candidate recall.
           default:
             - {family: memory, limit: 6}
             - {family: experience, limit: 2}
@@ -7276,7 +7276,7 @@ components:
             $ref: "#/components/schemas/ContextAssemblyMetadata"
     ContextAssemblyFamily:
       type: string
-      enum: [memory, experience]
+      enum: [memory, experience, profile]
     ContextAssemblyFormat:
       type: string
       enum: [markdown]

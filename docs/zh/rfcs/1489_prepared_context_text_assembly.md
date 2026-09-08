@@ -12,7 +12,7 @@
 `PreparedContext(schema, status, content, content_bytes)`；`content` 是已经完成选择、排序、渲染和预算控制的
 最终字符串，接入端校验后原样注入。
 
-首版支持 Memory 与 Experience。章节内沿用已有召回顺序，不增加组装阶段的模型调用。置信度可显示为
+支持 Memory、Experience，以及显式选择的 Profile 快照。章节内沿用已有召回顺序，不增加组装阶段的模型调用。置信度可显示为
 `unknown (not assessed)`，但不生成分数，也不支持置信度筛选或排序。省略 `assembly` 的请求继续采用既有输出。
 
 # Motivation
@@ -148,7 +148,7 @@ version ID。不能把精确引用替换为最新 Head。
 | 持久化 | 不新增表、Artifact、Revision、Recipe 或服务端组装配置。 |
 
 首版不包括自定义模板、任意排序表达式、跨类别统一重排、数字置信度、按具体引用固定选入条目，以及 Skill、
-Handoff、Topic Memory、Profile 或原始 Source 的自动拼接。类别是 Artifact family，不是 Memory Entry 的 `kind`。
+Handoff、Topic Memory 或原始 Source 的自动拼接。类别是 Artifact family，不是 Memory Entry 的 `kind`。
 
 ## 请求 contract
 
@@ -158,9 +158,9 @@ Handoff、Topic Memory、Profile 或原始 Source 的自动拼接。类别是 Ar
 | 字段 | 类型及默认值 | 约束 |
 | --- | --- | --- |
 | `assembly.format` | enum，默认 `markdown` | 首版只接受 `markdown`。 |
-| `assembly.sections` | 有序数组，默认 Memory 6、Experience 2 | 0–2 项；同一 family 不能重复。显式空数组不应用默认值。 |
-| `sections[].family` | 必填 enum | `memory` 或 `experience`。 |
-| `sections[].limit` | 必填整数 | Memory 为 1–8；Experience 为 1–2；所有 section limit 之和不超过 8。 |
+| `assembly.sections` | 有序数组，默认 Memory 6、Experience 2 | 0–3 项；同一 family 不能重复。显式空数组不应用默认值。 |
+| `sections[].family` | 必填 enum | `memory`、`experience` 或 `profile`。 |
+| `sections[].limit` | 必填整数 | Memory 和 Profile 为 1–8；Experience 为 1–2；所有 section limit 之和不超过 8。 |
 | `assembly.show` | enum 数组，默认 `[]` | 只接受 `confidence`、`recall_rank`，不得重复；数组顺序不改变元数据顺序。 |
 
 默认数组完整定义为：
@@ -176,6 +176,11 @@ Handoff、Topic Memory、Profile 或原始 Source 的自动拼接。类别是 Ar
 或未知 format 都返回 HTTP 422，使用现有 `invalid_request` 错误格式。不能静默忽略调用方指定的选择或排序要求。
 JSON Schema 可表达的限制放入 OpenAPI；family 对应的 limit 和总和约束同时由 Runtime 校验，不能只依赖生成模型。
 直接调用 Runtime 时执行同样的语义校验。
+
+Profile 按“当前 Scope、直接 Context References”的顺序读取各 Scope 的最新正式 `profile/profile` 快照。
+只有显式选择时才读取，不按 `query` 检索，也不在 prepare 中生成画像。缺失画像、待审或已拒绝 Candidate
+不贡献快照；有待审替换时，既有正式 Head 仍可输出。limit 统计 Scope 快照数量，沿用精确引用、授权、正文
+截断和总字节预算。Profile 的 `recall_rank` 仅代表候选顺序。默认章节仍为 Memory 和 Experience。
 
 受支持但未配置召回源的类别按无候选处理。已配置的检索服务失败仍按现有错误映射返回，不伪装成正常空结果。
 认证、授权和服务错误沿用该 operation 的现有响应；不增加新的错误类型。

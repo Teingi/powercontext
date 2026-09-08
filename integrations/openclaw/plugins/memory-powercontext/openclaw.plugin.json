@@ -104,7 +104,7 @@
     },
     "contextAssembly": {
       "label": "Context text assembly",
-      "help": "Select Memory and Experience sections and their order, limits, and displayed metadata."
+      "help": "Select Memory, Experience, and Profile sections and their order, limits, and displayed metadata."
     }
   }
 }
