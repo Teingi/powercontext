@@ -27,6 +27,17 @@ import {createPageUi, createRequestGate} from "./page-ui.js?v=locale-complete";
 
 const translations = {
   en: {
+    memoryReferences: "Memory entry citations",
+    noMemoryReferences: "No direct Memory entry citations",
+    expandedEvidence: "Exact evidence and root groups",
+    evidenceLoading: "Checking current evidence access…",
+    evidenceUnavailable: "Evidence cannot be expanded: {code}",
+    evidenceHistorical: "Historical version",
+    evidenceCurrent: "Current version",
+    rootIndependenceUnknown: "Independence unknown",
+    rootIndependenceAttested: "Task identity attested",
+    dreamOrigin: "Dream origin",
+    rootGroups: "Root groups",
     pageTitle: "PowerContext Review",
     dashboardTitle: "Overview",
     sharedTitle: "Shared with me",
@@ -191,6 +202,17 @@ const translations = {
     detailLoadFailed: "The Candidate detail could not be loaded. HTTP {status}."
   },
   zh: {
+    memoryReferences: "记忆条目引用",
+    noMemoryReferences: "没有直接引用记忆条目",
+    expandedEvidence: "精确证据与根来源分组",
+    evidenceLoading: "正在校验当前证据读取权限…",
+    evidenceUnavailable: "无法展开证据：{code}",
+    evidenceHistorical: "历史版本",
+    evidenceCurrent: "当前版本",
+    rootIndependenceUnknown: "独立性未知",
+    rootIndependenceAttested: "任务身份已验证",
+    dreamOrigin: "梦境来源",
+    rootGroups: "根来源分组",
     pageTitle: "PowerContext 审核",
     dashboardTitle: "概览",
     sharedTitle: "与我共享",
@@ -405,6 +427,9 @@ const packagePath = document.getElementById("review-package-path");
 const packagePreview = document.getElementById("review-package-preview");
 const sourceRefs = document.getElementById("review-source-refs");
 const artifactRefs = document.getElementById("review-artifact-refs");
+const memoryRefs = document.getElementById("review-memory-refs");
+const evidenceExpansion = document.getElementById("review-evidence-expansion");
+const evidenceRequests = createRequestGate();
 const lineageFields = document.getElementById("review-lineage-fields");
 const publicationSection = document.getElementById("review-publication");
 const publicationState = document.getElementById("review-publication-state");
@@ -1492,6 +1517,9 @@ function clearDetail() {
   packagePreview.textContent = "";
   sourceRefs.replaceChildren();
   artifactRefs.replaceChildren();
+  memoryRefs.replaceChildren();
+  evidenceRequests.cancel();
+  evidenceExpansion.replaceChildren();
   lineageFields.replaceChildren();
   projectionRequests.cancel();
   projectionView = null;
@@ -1602,6 +1630,10 @@ async function loadPackagePreview(candidate, reference, path) {
 }
 
 function renderEvidence(candidate) {
+  renderReferenceList(memoryRefs, candidate.memory_citations || [],
+    (ref) => `${formatArtifactReference(ref.memory_ref)} · ${ref.entry_id} · ${ref.entry_version_id}`,
+    "noMemoryReferences");
+  void loadExpandedEvidence(candidate);
   renderReferenceList(
     sourceRefs,
     candidate.source_refs,
@@ -1614,6 +1646,64 @@ function renderEvidence(candidate) {
     formatArtifactReference,
     "noArtifactReferences"
   );
+}
+
+async function loadExpandedEvidence(candidate) {
+  const request = evidenceRequests.start();
+  evidenceExpansion.replaceChildren();
+  evidenceExpansion.textContent = translate("evidenceLoading");
+  try {
+    const view = await requestJson("/dashboard/artifact-candidates/evidence", {
+      scope_id: currentScopeId, candidate_id: candidate.candidate_id, expected_version: candidate.version
+    });
+    if (!request.isCurrent() || selectedCandidateId !== candidate.candidate_id) return;
+    evidenceExpansion.replaceChildren();
+    if (view.unavailable || !view.resolved) {
+      evidenceExpansion.textContent = translate("evidenceUnavailable", {code: view.unavailable || "unavailable"});
+      return;
+    }
+    const manifest = view.resolved.manifest;
+    const groups = document.createElement("dl");
+    for (const group of manifest.root_groups) {
+      const term = document.createElement("dt");
+      term.textContent = `${group.group_id} · ${translate(group.independence === "attested"
+        ? "rootIndependenceAttested" : "rootIndependenceUnknown")}`;
+      const value = document.createElement("dd");
+      value.textContent = group.sources.map((ref) => `${ref.source_type}/${ref.source_id}`).join(" · ");
+      groups.append(term, value);
+    }
+    evidenceExpansion.append(groups);
+    for (const evidence of view.resolved.projection.evidence) {
+      const details = document.createElement("details");
+      const summary = document.createElement("summary");
+      const node = manifest.nodes.find((item) => item.evidence_id === evidence.evidence_id);
+      const identity = node?.memory_citations?.map((ref) => `${ref.entry_id} · ${ref.entry_version_id}`).join("; ")
+        || (node?.artifact ? formatArtifactReference(node.artifact) : evidence.evidence_id);
+      summary.textContent = `${evidence.kind} · ${identity} · ${translate(evidence.historical
+        ? "evidenceHistorical" : "evidenceCurrent")}`;
+      const roots = document.createElement("p");
+      roots.textContent = `${translate("rootGroups")}: ${evidence.root_group_ids.join(" · ")}`;
+      const body = document.createElement("pre");
+      body.textContent = evidenceBody(evidence.text);
+      details.append(summary, roots, body);
+      evidenceExpansion.append(details);
+    }
+  } catch (error) {
+    if (!request.isCurrent()) return;
+    evidenceExpansion.textContent = translate("evidenceUnavailable", {code: error.code || "request_failed"});
+    handleAuthenticationError(error);
+  }
+}
+
+function evidenceBody(text) {
+  try {
+    const value = JSON.parse(text);
+    if (typeof value.text === "string") return value.text;
+    if (typeof value.content === "string") return value.content;
+    return JSON.stringify(value, null, 2);
+  } catch {
+    return text;
+  }
 }
 
 function renderReferenceList(list, references, formatter, emptyKey) {
@@ -1636,6 +1726,9 @@ function renderReferenceList(list, references, formatter, emptyKey) {
 
 function renderLineage(candidate) {
   lineageFields.replaceChildren();
+  if (candidate.candidate_id.startsWith("cand_dream_dr_")) {
+    appendDefinition(lineageFields, "dreamOrigin", candidate.candidate_id.slice("cand_dream_".length));
+  }
   appendDefinition(lineageFields, "reason", candidate.reason || translate("notProvided"));
   appendDefinition(lineageFields, "target", candidate.target ? formatArtifactReference(candidate.target) : translate("notProvided"));
   appendDefinition(

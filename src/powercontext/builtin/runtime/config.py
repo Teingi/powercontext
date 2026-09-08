@@ -24,6 +24,7 @@ from pydantic import AnyHttpUrl, BaseModel, ConfigDict, Field, JsonValue, Secret
 
 from powercontext.builtin.artifacts.memory.prompts import MemoryExtractionProfile
 from powercontext.builtin.artifacts.skill import AgentSkillTarget, CodexSkillRoot
+from powercontext.builtin.dream.models import DreamBudget
 from powercontext.builtin.persistence.oceanbase import OceanBaseConfig
 from powercontext.builtin.persistence.seekdb import SeekDBConfig
 from powercontext.builtin.persistence.sqlite import SQLiteConfig
@@ -61,6 +62,11 @@ class RuntimeConfig(BaseModel):
 
     schedule_seconds: float | None = Field(default=None, gt=0)
     experience_schedule_seconds: float | None = Field(default=None, gt=0)
+    dream_enabled: bool = True
+    dream_poll_seconds: float = Field(default=1.0, gt=0, le=60)
+    dream_max_pending_per_scope: int = Field(default=32, ge=1, le=1000)
+    generation_concurrency: int = Field(default=4, ge=1, le=64)
+    dream_budget: DreamBudget = Field(default_factory=DreamBudget)
 
 
 class HandoffReportConfig(BaseModel):

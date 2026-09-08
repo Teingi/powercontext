@@ -618,6 +618,7 @@ def _artifact_record(
         content=content,
         sources=artifact.lineage.sources,
         artifacts=artifact.lineage.artifacts,
+        memory_citations=artifact.lineage.memory_citations,
         content_digest=_content_digest(content),
     )
 

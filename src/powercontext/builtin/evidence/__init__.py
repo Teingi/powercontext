@@ -12,25 +12,4 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Immutable artifacts and their read-only catalog contract."""
-
-from powercontext.artifacts.models import (
-    Artifact,
-    ArtifactAddress,
-    ArtifactDraft,
-    ArtifactLineage,
-    ArtifactRef,
-    MemoryCitation,
-)
-from powercontext.artifacts.protocols import ArtifactCatalog, ArtifactStore
-
-__all__ = [
-    "Artifact",
-    "ArtifactAddress",
-    "ArtifactCatalog",
-    "ArtifactDraft",
-    "ArtifactLineage",
-    "ArtifactRef",
-    "ArtifactStore",
-    "MemoryCitation",
-]
+"""Bounded, exact evidence resolution shared by generation and review."""

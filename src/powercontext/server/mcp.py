@@ -39,15 +39,18 @@ from powercontext.http._generated.operations import (
     CLEAR_SCOPE_BINDING,
     COMMIT_HANDOFF,
     CONTINUE_HANDOFF,
+    CREATE_DREAM_RUN,
     CREATE_SCOPE,
     CREATE_WORK_CONTRACT,
     FINALIZE_HANDOFF,
     GET_ARTIFACT_CANDIDATE,
+    GET_DREAM_RUN,
     GET_HANDOFF_REPORT,
     GET_MEMORY_ENTRY,
     GET_SCOPE,
     HANDOFF_CURRENT_WORK,
     LIST_ARTIFACT_CANDIDATES,
+    LIST_DREAM_RUNS,
     LIST_MEMORY_ENTRIES,
     LIST_SCOPES,
     PUBLISH_ARTIFACT,
@@ -74,6 +77,9 @@ from powercontext.server.tracing import McpTracingMiddleware, ServerTracing
 MCP_PATH = "/mcp"
 MCP_SERVER_NAME = "PowerContext Server"
 _MCP_OPERATION_IDS = frozenset({
+    CREATE_DREAM_RUN.operation_id,
+    GET_DREAM_RUN.operation_id,
+    LIST_DREAM_RUNS.operation_id,
     CAPTURE_CONTENT_SOURCE.operation_id,
     CREATE_WORK_CONTRACT.operation_id,
     HANDOFF_CURRENT_WORK.operation_id,
@@ -104,6 +110,8 @@ _MCP_OPERATION_IDS = frozenset({
     PUBLISH_ARTIFACT.operation_id,
 })
 _MCP_READ_ONLY_OPERATION_IDS = frozenset({
+    GET_DREAM_RUN.operation_id,
+    LIST_DREAM_RUNS.operation_id,
     CONTINUE_HANDOFF.operation_id,
     SEARCH_MEMORY.operation_id,
     LIST_MEMORY_ENTRIES.operation_id,
@@ -150,7 +158,7 @@ def _annotate_mcp_component(
             idempotentHint=False,
             openWorldHint=False,
         )
-    elif route.operation_id == COMMIT_HANDOFF.operation_id:
+    elif route.operation_id in {COMMIT_HANDOFF.operation_id, CREATE_DREAM_RUN.operation_id}:
         component.annotations = ToolAnnotations(
             readOnlyHint=False,
             destructiveHint=False,

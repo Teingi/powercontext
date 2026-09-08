@@ -67,6 +67,50 @@ var ServerResponseError = class extends ClientError {
 //#endregion
 //#region src/operations.generated.ts
 const OPERATIONS = {
+	create_subject_source: {
+		method: "POST",
+		path: "/v1/scopes/{scope_id}/subject-sources",
+		location: "body",
+		scopeMode: "none",
+		pathParameters: ["scope_id"],
+		queryParams: [],
+		headerParams: [],
+		successStatuses: [201],
+		emptyStatuses: []
+	},
+	get_profile_policy: {
+		method: "GET",
+		path: "/v1/scopes/{scope_id}/profile-policy",
+		location: null,
+		scopeMode: "none",
+		pathParameters: ["scope_id"],
+		queryParams: [],
+		headerParams: [],
+		successStatuses: [200],
+		emptyStatuses: []
+	},
+	put_profile_policy: {
+		method: "PUT",
+		path: "/v1/scopes/{scope_id}/profile-policy",
+		location: "body",
+		scopeMode: "none",
+		pathParameters: ["scope_id"],
+		queryParams: [],
+		headerParams: [],
+		successStatuses: [200],
+		emptyStatuses: []
+	},
+	flush_profile: {
+		method: "POST",
+		path: "/v1/profile/flush",
+		location: "body",
+		scopeMode: "none",
+		pathParameters: [],
+		queryParams: [],
+		headerParams: [],
+		successStatuses: [200],
+		emptyStatuses: []
+	},
 	get_liveness: {
 		method: "GET",
 		path: "/health/live",
@@ -469,6 +513,44 @@ const OPERATIONS = {
 		location: "body",
 		scopeMode: "current",
 		pathParameters: [],
+		queryParams: [],
+		headerParams: [],
+		successStatuses: [200],
+		emptyStatuses: []
+	},
+	list_dream_runs: {
+		method: "GET",
+		path: "/v1/scopes/{scope_id}/dream",
+		location: "query",
+		scopeMode: "none",
+		pathParameters: ["scope_id"],
+		queryParams: [
+			"status",
+			"operation",
+			"cursor",
+			"limit"
+		],
+		headerParams: [],
+		successStatuses: [200],
+		emptyStatuses: []
+	},
+	create_dream_run: {
+		method: "POST",
+		path: "/v1/scopes/{scope_id}/dream",
+		location: "body",
+		scopeMode: "none",
+		pathParameters: ["scope_id"],
+		queryParams: [],
+		headerParams: [],
+		successStatuses: [202, 200],
+		emptyStatuses: []
+	},
+	get_dream_run: {
+		method: "GET",
+		path: "/v1/scopes/{scope_id}/dream/{run_id}",
+		location: null,
+		scopeMode: "none",
+		pathParameters: ["scope_id", "run_id"],
 		queryParams: [],
 		headerParams: [],
 		successStatuses: [200],

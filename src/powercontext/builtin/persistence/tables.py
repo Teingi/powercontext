@@ -189,6 +189,7 @@ ARTIFACTS_TABLE = Table(
     Column("artifact_id", identity_string(MAX_ARTIFACT_ID_LENGTH), primary_key=True),
     Column("revision", Integer, primary_key=True),
     Column("content", _canonical_payload_type(), nullable=False),
+    Column("memory_citations", _canonical_payload_type(), nullable=True),
 )
 
 ARTIFACT_HEADS_TABLE = Table(
@@ -334,6 +335,7 @@ ARTIFACT_CANDIDATE_VERSIONS_TABLE = Table(
     Column("proposal", _canonical_payload_type(), nullable=False),
     Column("source_refs", _canonical_payload_type(), nullable=False),
     Column("artifact_refs", _canonical_payload_type(), nullable=False),
+    Column("memory_citations", _canonical_payload_type(), nullable=True),
     Column("target_family", identity_string(MAX_ARTIFACT_FAMILY_LENGTH)),
     Column("target_artifact_id", identity_string(MAX_ARTIFACT_ID_LENGTH)),
     Column("target_revision", Integer),
@@ -793,4 +795,27 @@ ARTIFACT_TAGS_TABLE = Table(
 
 STATISTICS_TABLES = (MODEL_USAGE_DAILY_TABLE, RECALL_TOKEN_DAILY_TABLE)
 
-BUILTIN_TABLES = SCOPE_TABLES + SHARED_TABLES + MEMORY_TABLES + STATISTICS_TABLES + (ARTIFACT_TAGS_TABLE,)
+DREAM_RUNS_TABLE = Table(
+    "pc_dream_runs",
+    SHARED_METADATA,
+    Column("scope_id", identity_string(MAX_SCOPE_ID_LENGTH), primary_key=True),
+    Column("run_id", identity_string(64), primary_key=True),
+    Column("principal_key", identity_string(64), nullable=False),
+    Column("idempotency_key", identity_string(128), nullable=False),
+    Column("request_digest", identity_string(71), nullable=False),
+    Column("operation", identity_string(32), nullable=False),
+    Column("status", identity_string(16), nullable=False),
+    Column("accepted_at", BigInteger, nullable=False),
+    Column("generation", Integer, nullable=False),
+    Column("lease_expires_at", BigInteger),
+    Column("payload", _canonical_payload_type(), nullable=False),
+    ForeignKeyConstraint(("scope_id",), ("pc_scopes.scope_id",), ondelete="CASCADE"),
+    UniqueConstraint("scope_id", "principal_key", "idempotency_key", name="uq_pc_dream_idempotency"),
+    Index("ix_pc_dream_dispatch", "status", "lease_expires_at"),
+    Index("ix_pc_dream_list", "scope_id", "accepted_at", "run_id"),
+    CheckConstraint("generation >= 0", name="ck_pc_dream_generation"),
+)
+
+BUILTIN_TABLES = (
+    SCOPE_TABLES + SHARED_TABLES + MEMORY_TABLES + STATISTICS_TABLES + (ARTIFACT_TAGS_TABLE, DREAM_RUNS_TABLE)
+)

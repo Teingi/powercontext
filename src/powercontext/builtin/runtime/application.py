@@ -98,6 +98,9 @@ from powercontext.builtin.artifacts.skill.publication import (
 )
 from powercontext.builtin.artifacts.skill.registry import ExternalSkillRegistryService
 from powercontext.builtin.context import BuiltinArtifacts, BuiltinSources
+from powercontext.builtin.dream.application import DreamApplication
+from powercontext.builtin.dream.service import CandidateAttester, DreamAuthorizer, DreamService
+from powercontext.builtin.evidence.resolver import AuthorizationContext, ScopedEvidenceAuthorizer
 from powercontext.builtin.inference.models import InferenceUsage
 from powercontext.builtin.inference.usage import bind_usage_reporter
 from powercontext.builtin.persistence.agent_skill_targets import RemoteAgentSkillTarget
@@ -856,6 +859,7 @@ class ScopedExperienceApplication:
                 request.proposal,
                 sources=request.sources,
                 artifacts=request.artifacts,
+                memory_citations=request.memory_citations,
                 target=request.target,
                 reason=request.reason,
             )
@@ -1513,6 +1517,12 @@ class ScopedReviewApplication:
         async with self._runtime._scoped_operation(self.scope_id):
             return await self._runtime._review(self.scope_id).get_candidate(request.candidate_id)
 
+    async def inspect_evidence(self, candidate_id: str, expected_version: int):
+        """Expand the selected Candidate version, including exact entry provenance."""
+
+        async with self._runtime._scoped_operation(self.scope_id):
+            return await self._runtime._review(self.scope_id).inspect_evidence(candidate_id, expected_version)
+
     async def approve(self, request: ApproveArtifactCandidateRequest, /) -> ReviewedCandidate:
         async with self._runtime._scoped_operation(self.scope_id), self._runtime._locked(self.scope_id):
             return await self._runtime._review(self.scope_id).approve(
@@ -1536,6 +1546,7 @@ class ScopedReviewApplication:
                 request.proposal,
                 sources=request.sources,
                 artifacts=request.artifacts,
+                memory_citations=request.memory_citations,
                 target=request.target,
                 reason=request.reason,
             )
@@ -1941,6 +1952,8 @@ class BuiltinRuntime:
         scheduled_source_runner: ScheduledSourceRunner | None = None,
         scheduled_experience_runner: ScheduledExperienceRunner | None = None,
         remote_ingestion: RemoteIngestion | None = None,
+        dream_service: DreamService | None = None,
+        generation_concurrency: int = 4,
     ) -> None:
         if source_window_limit < 1:
             raise _RuntimeConfigurationError("source_window_limit")
@@ -1952,6 +1965,12 @@ class BuiltinRuntime:
         self.profiles = profiles
         self.subject_sources = subject_sources
         self._generation_service = generation_service
+        self._dream_service = dream_service
+        self._review_evidence_authorizer: ScopedEvidenceAuthorizer | None = None
+        self._review_authorization_context: AuthorizationContext = nullcontext
+        self._generation_slots = asyncio.Semaphore(generation_concurrency)
+        self._generation_owners: set[asyncio.Task[Any]] = set()
+        self._generation_concurrency = generation_concurrency
         self._experience_recall = experience_recall
         self._skill_recall = skill_recall
         self._skill_lister = skill_lister
@@ -1997,6 +2016,7 @@ class BuiltinRuntime:
         self.ingestion = RemoteIngestionApplication(self, remote_ingestion)
         self.context = ContextApplication(self)
         self.experience = ExperienceApplication(self)
+        self.dream = DreamApplication(self)
         self.external_skills = ExternalSkillApplication(self)
         self.handoff = HandoffApplication(self)
         self.work = WorkApplication(self)
@@ -2110,6 +2130,76 @@ class BuiltinRuntime:
             self._scheduler = None
             raise
 
+    def configure_evidence_authorization(
+        self,
+        *,
+        dream: DreamAuthorizer,
+        review: ScopedEvidenceAuthorizer,
+        context: AuthorizationContext,
+        attest_candidate: CandidateAttester,
+    ) -> None:
+        """Bind a trusted Server adapter's current authorization policy."""
+
+        self._review_evidence_authorizer = review
+        self._review_authorization_context = context
+        if self._dream_service is not None:
+            self._dream_service.authorize = dream
+            self._dream_service.authorization_context = context
+            self._dream_service.attest_candidate = attest_candidate
+
+    def start_dreams(self, poll_seconds: float) -> None:
+        """Wake durable Dream work through the Runtime's scheduler lifecycle."""
+
+        from apscheduler.jobstores.memory import MemoryJobStore
+        from apscheduler.schedulers.asyncio import AsyncIOScheduler
+
+        if self._dream_service is None or self._dream_service.generator is None:
+            return
+        if self._scheduler is None:
+            self._scheduler = AsyncIOScheduler(timezone="UTC")
+            self._scheduler.start()
+        self._scheduler.add_jobstore(MemoryJobStore(), alias="dream")
+        self._scheduler.add_job(
+            self.process_dreams,
+            "interval",
+            seconds=poll_seconds,
+            id="powercontext.dream.dispatch.v1",
+            jobstore="dream",
+            max_instances=1,
+            coalesce=True,
+            next_run_time=self._clock(),
+        )
+
+    async def process_dreams(self) -> None:
+        """Drain one bounded batch; database leases coordinate other workers."""
+
+        if self._dream_service is None or self._closing:
+            return
+        service = self._dream_service
+        async with self._operation():
+            async with service.database.transaction() as connection:
+                ready = await service.repository.ready(
+                    connection,
+                    limit=self._generation_concurrency,
+                    trusted_runtime_only=service.authorize is None,
+                )
+
+            async def execute(scope_id: str, run_id: str) -> None:
+                async with service.database.transaction() as connection:
+                    record = await service.repository.get(connection, scope_id, run_id)
+                purpose = (
+                    ModelUsagePurpose.SKILL_GENERATION
+                    if record.run.operation == "derive_skill"
+                    else ModelUsagePurpose.EXPERIENCE_GENERATION
+                )
+                async with self._scoped_operation(
+                    scope_id,
+                    generation_purpose=purpose,
+                ):
+                    await service.execute(scope_id, run_id)
+
+            await asyncio.gather(*(execute(scope_id, run_id) for scope_id, run_id in ready))
+
     async def close(self) -> None:
         """Stop accepting work and await in-flight operations without closing the provider."""
 
@@ -2181,13 +2271,26 @@ class BuiltinRuntime:
         embedding_purpose: ModelUsagePurpose | None = None,
     ) -> AsyncIterator[None]:
         scope = validate_scope_id(scope_id)
-        async with self._scope_operation(scope):
+        async with self._scope_operation(scope), self._generation_slot(generation_purpose is not None):
             with bind_usage_reporter(
                 self.statistics.for_scope(scope).record_model_usage,
                 generation_purpose=generation_purpose,
                 embedding_purpose=embedding_purpose,
             ):
                 yield
+
+    @asynccontextmanager
+    async def _generation_slot(self, required: bool) -> AsyncIterator[None]:
+        task = asyncio.current_task()
+        if not required or task is None or task in self._generation_owners:
+            yield
+            return
+        async with self._generation_slots:
+            self._generation_owners.add(task)
+            try:
+                yield
+            finally:
+                self._generation_owners.remove(task)
 
     @asynccontextmanager
     async def _context(
@@ -2249,7 +2352,12 @@ class BuiltinRuntime:
     def _review(self, scope_id: str) -> ReviewService:
         if self._review_service is None:
             raise _RuntimeStateError("review")
-        return self._review_service(validate_scope_id(scope_id))
+        scope = validate_scope_id(scope_id)
+        service = self._review_service(scope)
+        authorizer = self._review_evidence_authorizer
+        if authorizer is not None:
+            service.configure_authorization(lambda ref: authorizer(scope, ref), self._review_authorization_context)
+        return service
 
     def _records(self) -> RecordService:
         if self._record_service is None:

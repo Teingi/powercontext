@@ -109,6 +109,14 @@ class DashboardScope(BaseModel):
     parent_scope_id: str | None = None
 
 
+class DashboardCandidateEvidenceRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    scope_id: str = Field(min_length=1, max_length=256)
+    candidate_id: str = Field(min_length=1, max_length=MAX_ARTIFACT_ID_LENGTH)
+    expected_version: int = Field(ge=1)
+
+
 class DashboardSkillProjectionRequest(BaseModel):
     """Select one exact approved managed Skill Revision from the Review UI."""
 
@@ -367,6 +375,23 @@ def mount_web_ui(  # noqa: C901
     publish_targets = tuple(target for target in agent_skill_targets if target.allow_managed_publish)
     skill_projection_routes = _DashboardSkillProjectionRoutes(publish_targets)
     templates = _templates()
+
+    async def inspect_candidate_evidence(body: DashboardCandidateEvidenceRequest, request: Request) -> JSONResponse:
+        await _authorize_dashboard_scope(
+            request,
+            body.scope_id,
+            AccessAction.SCOPE_READ,
+            operation="dashboard_candidate_evidence",
+        )
+        application = request.app.state.application
+        if application is None:
+            return _web_error(503, "runtime_not_ready", "The Runtime is not ready.")
+        scoped = application.review.for_scope(body.scope_id)
+        if not hasattr(scoped, "inspect_evidence"):
+            return _web_error(503, "capability_unavailable", "Evidence expansion is unavailable.")
+        view = await scoped.inspect_evidence(body.candidate_id, body.expected_version)
+        return JSONResponse(view.model_dump(mode="json"), headers={"Cache-Control": "no-store"})
+
     if dashboard_enabled:
         templates.env.get_template("pages/dashboard.html")
         templates.env.get_template("pages/review.html")
@@ -378,6 +403,13 @@ def mount_web_ui(  # noqa: C901
     static_files = _DashboardStaticFiles(packages=[("powercontext.server", "static")])
 
     router = APIRouter(include_in_schema=False)
+    if dashboard_enabled:
+        router.add_api_route(
+            "/dashboard/artifact-candidates/evidence",
+            inspect_candidate_evidence,
+            methods=["POST"],
+            name="dashboard_candidate_evidence",
+        )
 
     async def dashboard_page(request: Request) -> Response:
         return templates.TemplateResponse(

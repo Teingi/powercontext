@@ -548,6 +548,7 @@ def propose_experience_request(value: ProposeExperienceRequest) -> RuntimePropos
         proposal=experience_content(value.proposal),
         sources=tuple(runtime_source_reference(source) for source in value.source_refs),
         artifacts=tuple(runtime_artifact_reference(artifact) for artifact in value.artifact_refs),
+        memory_citations=tuple(runtime_citation(citation) for citation in value.memory_citations or ()),
         target=None if value.target is None else runtime_artifact_reference(value.target),
         reason=value.reason,
     )
@@ -625,6 +626,11 @@ def revise_candidate_request(value: ReviseArtifactCandidateRequest) -> RuntimeRe
         proposal=reviewed_content(value.proposal),
         sources=tuple(runtime_source_reference(source) for source in value.source_refs),
         artifacts=tuple(runtime_artifact_reference(artifact) for artifact in value.artifact_refs),
+        memory_citations=(
+            None
+            if value.memory_citations is None
+            else tuple(runtime_citation(citation) for citation in value.memory_citations or ())
+        ),
         target=None if value.target is None else runtime_artifact_reference(value.target),
         reason=value.reason,
     )
@@ -805,6 +811,7 @@ def candidate_response(value: RuntimeArtifactCandidate[Any]) -> ArtifactCandidat
         proposal=reviewed_proposal(value.proposal),
         source_refs=[source_reference(source) for source in value.sources],
         artifact_refs=[artifact_reference(artifact) for artifact in value.artifacts],
+        memory_citations=[transport_citation(citation) for citation in value.memory_citations],
         target=None if value.target is None else artifact_reference(value.target),
         reason=value.reason,
         result_artifact=None if value.result_artifact is None else artifact_reference(value.result_artifact),
@@ -832,6 +839,7 @@ def experience_response(value: Experience) -> ExperienceArtifact:
         content=experience_proposal(value.content),
         source_refs=[source_reference(source) for source in value.lineage.sources],
         artifact_refs=[artifact_reference(artifact) for artifact in value.lineage.artifacts],
+        memory_citations=[transport_citation(citation) for citation in value.lineage.memory_citations],
     )
 
 
@@ -841,6 +849,7 @@ def skill_response(value: Skill) -> SkillArtifact:
         content=skill_proposal(value.content),
         source_refs=[source_reference(source) for source in value.lineage.sources],
         artifact_refs=[artifact_reference(artifact) for artifact in value.lineage.artifacts],
+        memory_citations=[],
     )
 
 
