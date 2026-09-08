@@ -59,6 +59,10 @@ from powercontext.builtin.artifacts.memory import (
     MemoryService,
     MemoryWritePlan,
 )
+from powercontext.builtin.artifacts.profile import Profile
+from powercontext.builtin.artifacts.profile.management import ProfileManagementWriter
+from powercontext.builtin.artifacts.profile.models import ProfileCandidateProposal
+from powercontext.builtin.artifacts.profile.service import RelationalProfileService
 from powercontext.builtin.artifacts.prompt import Prompt, PromptRegistry
 from powercontext.builtin.artifacts.prompt.builtin import builtin_prompt_definitions
 from powercontext.builtin.artifacts.prompt.service import (
@@ -108,6 +112,7 @@ from powercontext.builtin.persistence.family_management import (
     PromptManagementWriter,
     SkillManagementWriter,
 )
+from powercontext.builtin.persistence.generation_sources import GenerationSourceAccess
 from powercontext.builtin.persistence.handoff import (
     RelationalHandoffBackend,
     RelationalHandoffEvidenceResolver,
@@ -143,6 +148,7 @@ from powercontext.builtin.runtime.protocols import BuiltinTriggers
 from powercontext.builtin.runtime.recall import RelationalRecallTokenEstimator
 from powercontext.builtin.runtime.statistics import RelationalScopedStatistics
 from powercontext.builtin.scope import ScopeApplication
+from powercontext.builtin.scope.subject_sources import SubjectSourceService
 from powercontext.builtin.source_eligibility import is_generation_eligible, require_source_eligible
 from powercontext.builtin.sources import (
     BUILTIN_SOURCE_REGISTRY,
@@ -241,6 +247,9 @@ class _ScopedServices:
     prompts: PromptService
     generation_receipts: HandoffGenerationReceipts
 
+    def generation_sources(self) -> GenerationSourceAccess:
+        return GenerationSourceAccess(self.repositories.sources)
+
     def sources(
         self,
         connection: AsyncConnection | None = None,
@@ -273,7 +282,13 @@ class _ScopedServices:
             embedding_model=self.embedding_model,
             reranker=self.memory_reranker,
             rerank_candidate_limit=self.memory_rerank_candidate_limit,
-            source_resolver=source_resolver,
+            source_resolver=_RelationalMemorySourceResolver(
+                database=self.database,
+                scope_id=self.scope_id,
+                catalog=source_resolver,
+                access=self.generation_sources(),
+                connection=connection,
+            ),
             artifact_resolver=_RelationalArtifactResolver(
                 database=self.database,
                 scope_id=self.scope_id,
@@ -291,7 +306,7 @@ class _ScopedServices:
             artifacts=self.repositories.artifacts,
             experience_index=self.experience_index,
             skill_packages=self.repositories.skill_packages,
-            sources=self.repositories.sources,
+            sources=self.generation_sources(),
             id_factory=self.id_factory,
             connection=connection,
         )
@@ -301,7 +316,7 @@ class _ScopedServices:
             prompt_context=ScopedPrompts(self.prompts, self.scope_id),
             database=self.database,
             scope_id=self.scope_id,
-            sources=self.repositories.sources,
+            sources=self.generation_sources(),
             artifacts=self.repositories.artifacts,
             review=self.review(),
             experience_generator=self.experience_generator,
@@ -320,7 +335,7 @@ class _ScopedServices:
             return RelationalHandoffEvidenceResolver(
                 database=services.database,
                 scope_id=scope_id,
-                sources=services.repositories.sources,
+                sources=services.generation_sources(),
                 artifacts=services.repositories.artifacts,
                 memory=services.memory(catalog),
             )
@@ -338,7 +353,7 @@ class _ScopedServices:
             evidence_resolver=RelationalHandoffEvidenceResolver(
                 database=self.database,
                 scope_id=self.scope_id,
-                sources=self.repositories.sources,
+                sources=self.generation_sources(),
                 artifacts=self.repositories.artifacts,
                 memory=memory,
             ),
@@ -417,7 +432,7 @@ class RelationalContexts:
         self.experience_index = NoExperienceIndex() if experience_index is None else experience_index
         source_repository = SourceRepository(self.source_registry)
         artifact_repository = ArtifactRepository(
-            (Handoff, Memory, Experience, Skill, Prompt),
+            (Handoff, Memory, Experience, Skill, Profile, Prompt),
             sources=source_repository,
         )
         self.repositories = _Repositories(
@@ -427,6 +442,7 @@ class RelationalContexts:
             candidates=CandidateRepository({
                 Experience.family: ExperienceContent,
                 Skill.family: SkillContent,
+                Profile.family: ProfileCandidateProposal,
             }),
             connector_checkpoints=ConnectorCheckpointRepository(),
             source_definitions=SourceDefinitionManifestRepository(),
@@ -460,6 +476,7 @@ class RelationalContexts:
         )
         family_writers = FamilyManagementWriterRegistry((
             PromptManagementWriter(self.repositories.artifacts, self.prompt_registry),
+            ProfileManagementWriter(self.repositories.artifacts),
             MemoryManagementWriter(
                 database=database,
                 artifacts=self.repositories.artifacts,
@@ -483,6 +500,14 @@ class RelationalContexts:
                 handoff_artifact_id=handoff_artifact_id,
             ),
         ))
+        self.profiles = RelationalProfileService(
+            database,
+            self.repositories.sources,
+            self.repositories.artifacts,
+            self.repositories.candidates,
+            id_factory=id_factory,
+        )
+        self.subject_sources = SubjectSourceService(database, self.repositories.sources)
         self.records = RelationalRecordService(
             database,
             self.repositories.sources,
@@ -1056,6 +1081,40 @@ class RelationalContexts:
         )
 
 
+class _RelationalMemorySourceResolver:
+    """Admit Memory evidence without changing the ordinary Source catalog."""
+
+    def __init__(
+        self,
+        *,
+        database: AsyncDatabase,
+        scope_id: str,
+        catalog: SourceCatalog,
+        access: GenerationSourceAccess,
+        connection: AsyncConnection | None = None,
+    ) -> None:
+        self._database = database
+        self._scope_id = scope_id
+        self._catalog = catalog
+        self._access = access
+        self._connection = connection
+
+    def as_ref(self, source: Source, /) -> SourceRef:
+        return self._catalog.as_ref(source)
+
+    async def get(self, source: Source, /) -> Source:
+        try:
+            async with self._database.connection(self._connection) as connection:
+                (stored,) = await self._access.require_for_generation(
+                    connection, self._scope_id, (self.as_ref(source),)
+                )
+        except RepositoryNotFoundError:
+            raise SourceNotFoundError(source) from None
+        if type(stored.value) is not type(source) or stored.value != source:
+            raise SourceNotFoundError(source)
+        return stored.value
+
+
 class _RelationalSources:
     def __init__(
         self,
@@ -1086,9 +1145,7 @@ class _RelationalSources:
         ref = self._as_ref(source)
         try:
             async with self._database.connection(self._bound_connection) as connection:
-                value = (await self._repository.get(connection, self._scope_id, ref)).value
-                require_source_eligible(ref, value)
-                return value
+                return (await self._repository.get(connection, self._scope_id, ref)).value
         except RepositoryNotFoundError:
             raise SourceNotFoundError(source) from None
 
@@ -1166,10 +1223,10 @@ class _RelationalTriggers:
         async with self._lock:
             async with self._services.database.transaction() as connection:
                 try:
-                    source = await self._services.repositories.sources.get(
+                    (source,) = await self._services.generation_sources().require_for_generation(
                         connection,
                         self._services.scope_id,
-                        request.boundary_source,
+                        (request.boundary_source,),
                     )
                 except RepositoryNotFoundError:
                     raise HandoffEvidenceUnavailableError(
@@ -1292,10 +1349,11 @@ class _RelationalTriggers:
         connection: AsyncConnection,
         action: ProcessSourceWindow,
     ) -> tuple[Source, ...]:
-        rows = await self._services.repositories.sources.list(
+        rows = await self._services.generation_sources().list_window_for_generation(
             connection,
             self._services.scope_id,
             after=action.after,
+            through=action.through,
         )
         return tuple(
             row.value for row in rows if row.journal_position <= action.through and is_generation_eligible(row.value)
@@ -1411,11 +1469,11 @@ class _RelationalExperienceIncubator:
         connection: AsyncConnection,
         action: ProcessSourceWindow,
     ) -> tuple[StoredSource, ...]:
-        return await self._services.repositories.sources.list(
+        return await self._services.generation_sources().list_window_for_generation(
             connection,
             self._services.scope_id,
             after=action.after,
-            limit=action.through - action.after,
+            through=action.through,
         )
 
 
