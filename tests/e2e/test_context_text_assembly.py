@@ -214,6 +214,7 @@ def test_excluded_recall_source_failure_does_not_affect_selected_memory(tmp_path
                 raise RuntimeError("Excluded Experience backend is unavailable")  # noqa: TRY003
 
             monkeypatch.setattr(runtime, "_experience_recall", unavailable)
+            monkeypatch.setattr(runtime, "_topic_memory_search", unavailable)
             result = await client.prepare_context(
                 PrepareContextRequest.model_validate({
                     "scope_id": scope.scope_id,
@@ -273,6 +274,7 @@ def test_profile_selection_reads_only_current_and_direct_scopes_without_search(t
 
             monkeypatch.setattr(MemoryService, "search", unavailable)
             monkeypatch.setattr(runtime, "_experience_recall", unavailable)
+            monkeypatch.setattr(runtime, "_topic_memory_search", unavailable)
             assert runtime.profiles is not None
             monkeypatch.setattr(runtime.profiles, "generator", None)
             for limit, expected in [(1, ["current"]), (8, ["current", "shared"])]:

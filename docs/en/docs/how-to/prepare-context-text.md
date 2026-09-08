@@ -76,6 +76,9 @@ asyncio.run(export_context())
 | `show: ["recall_rank"]` | Display each entry's position in its family's deduplicated candidate list. |
 | `show: ["confidence"]` | Display `unknown (not assessed)`; no numerical confidence has been assessed. |
 
+Default prepare requests without `assembly` also recall Topic Memory from the current Scope when available.
+Explicit `assembly` accepts Memory, Experience, and Profile; Topic Memory is not recalled in that mode.
+
 Entries retain retrieval order within a family. Existing Memory reranking remains authoritative. Rank can have gaps
 when an earlier entry cannot fit. An excluded family is not recalled. Duplicate families, invalid limits, unsupported
 fields such as `sort_by` or `min_confidence`, and explicit `assembly: null` return HTTP 422.

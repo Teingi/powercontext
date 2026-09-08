@@ -26,6 +26,7 @@ from powercontext.artifacts import ArtifactAddress, ArtifactRef
 from powercontext.builtin.artifacts.experience import Experience, ExperienceSearchHit, render_experience
 from powercontext.builtin.artifacts.memory.models import MemoryCitation, MemoryHit
 from powercontext.builtin.artifacts.profile.models import Profile
+from powercontext.builtin.artifacts.topic_memory import TopicMemory, TopicMemorySearchHit
 from powercontext.builtin.runtime.errors import PreparedContextInvariantError
 from powercontext.builtin.runtime.models import PrepareContextRequest, PreparedContext
 from powercontext.builtin.runtime.prepared_text import (
@@ -100,9 +101,11 @@ class PreparedContextBuilder:
     """Select and render final context without I/O, persistence, or reranking."""
 
     memory_candidate_limit = 16
+    topic_memory_candidate_limit = 8
     experience_candidate_limit = 8
     candidate_limit = memory_candidate_limit
     entry_limit = 8
+    topic_memory_entry_limit = 8
     experience_entry_limit = 2
     max_entry_content_bytes = 2000
 
@@ -116,6 +119,7 @@ class PreparedContextBuilder:
         scope_id: str | None = None,
         memory_ref: ArtifactRef | None = None,
         hits: Sequence[MemoryHit] = (),
+        topic_memory_hits: Sequence[TopicMemorySearchHit] = (),
         experience_hits: Sequence[ExperienceSearchHit] = (),
     ) -> PreparedContext:
         return self.build_result(
@@ -123,6 +127,7 @@ class PreparedContextBuilder:
             scope_id=scope_id,
             memory_ref=memory_ref,
             hits=hits,
+            topic_memory_hits=topic_memory_hits,
             experience_hits=experience_hits,
         ).context
 
@@ -133,6 +138,7 @@ class PreparedContextBuilder:
         scope_id: str | None = None,
         memory_ref: ArtifactRef | None = None,
         hits: Sequence[MemoryHit] = (),
+        topic_memory_hits: Sequence[TopicMemorySearchHit] = (),
         experience_hits: Sequence[ExperienceSearchHit] = (),
     ) -> PreparedContextBuild:
         return self.build_scopes_result(
@@ -142,6 +148,7 @@ class PreparedContextBuilder:
                 PreparedMemoryCandidates(scope_id=scope_id or "", memory_ref=memory_ref, hits=tuple(hits)),
             ),
             experience_candidates=(PreparedExperienceCandidates(scope_id=scope_id or "", hits=tuple(experience_hits)),),
+            topic_memory_hits=topic_memory_hits,
         )
 
     def build_scopes_result(
@@ -150,11 +157,14 @@ class PreparedContextBuilder:
         request: PrepareContextRequest,
         current_scope_id: str | None,
         memory_candidates: Sequence[PreparedMemoryCandidates] = (),
+        topic_memory_hits: Sequence[TopicMemorySearchHit] = (),
         experience_candidates: Sequence[PreparedExperienceCandidates] = (),
         profile_candidates: Sequence[PreparedProfileCandidate] = (),
     ) -> PreparedContextBuild:
         if sum(len(candidates.hits) for candidates in memory_candidates) > self.memory_candidate_limit:
             raise PreparedContextInvariantError("memory-candidate-limit")
+        if len(topic_memory_hits) > self.topic_memory_candidate_limit:
+            raise PreparedContextInvariantError("topic-memory-candidate-limit")
         if sum(len(candidates.hits) for candidates in experience_candidates) > self.experience_candidate_limit:
             raise PreparedContextInvariantError("experience-candidate-limit")
 
@@ -171,6 +181,7 @@ class PreparedContextBuilder:
                 for candidates in memory_candidates
             )
         )
+        topic_memory_entries = self._topic_memory_entries(topic_memory_hits)
         experience_entries = _interleave_groups(
             tuple(
                 self._experience_entries(
@@ -180,7 +191,7 @@ class PreparedContextBuilder:
                 for candidates in experience_candidates
             )
         )[: self.experience_entry_limit]
-        entries = self._fit_entries(request, memory_entries, experience_entries)
+        entries = self._fit_entries(request, memory_entries, topic_memory_entries, experience_entries)
 
         if not entries:
             return PreparedContextBuild(context=self.empty(), origins=())
@@ -323,6 +334,35 @@ class PreparedContextBuilder:
             )
         return tuple(memory_entries)
 
+    def _topic_memory_entries(
+        self,
+        hits: Sequence[TopicMemorySearchHit],
+    ) -> tuple[_PreparedContextEntry, ...]:
+        topic_entries: list[_PreparedContextEntry] = []
+        seen_topics: set[tuple[str, int]] = set()
+        for hit in hits:
+            if hit.artifact_ref.family != TopicMemory.family:
+                raise PreparedContextInvariantError("topic-memory-family-mismatch")
+            identity = (hit.artifact_ref.artifact_id, hit.artifact_ref.revision)
+            if identity in seen_topics:
+                continue
+            seen_topics.add(identity)
+            if len(topic_entries) >= self.topic_memory_entry_limit:
+                break
+            content = {"title": hit.title, "summary": hit.summary}
+            if hit.snippet is not None:
+                content["snippet"] = hit.snippet
+            topic_entries.append(
+                _PreparedContextEntry(
+                    origin=hit.artifact_ref,
+                    kind="topic-memory",
+                    citation={"artifact_ref": hit.artifact_ref.model_dump(mode="json")},
+                    content=json.dumps(content, ensure_ascii=False, separators=(",", ":")),
+                    truncated=False,
+                )
+            )
+        return tuple(topic_entries)
+
     def _experience_entries(
         self,
         hits: Sequence[ExperienceSearchHit],
@@ -358,10 +398,11 @@ class PreparedContextBuilder:
         self,
         request: PrepareContextRequest,
         memory_entries: Sequence[_PreparedContextEntry],
+        topic_memory_entries: Sequence[_PreparedContextEntry],
         experience_entries: Sequence[_PreparedContextEntry],
     ) -> tuple[_PreparedContextEntry, ...]:
         entries: list[_PreparedContextEntry] = []
-        for candidate in _interleave(memory_entries, experience_entries):
+        for candidate in _interleave(memory_entries, topic_memory_entries, experience_entries):
             if len(entries) >= self.entry_limit:
                 break
             fitted = self._fit_entry(
@@ -425,14 +466,17 @@ class PreparedContextBuilder:
 
 def _interleave(
     memory: Sequence[_PreparedContextEntry],
+    topics: Sequence[_PreparedContextEntry],
     experiences: Sequence[_PreparedContextEntry],
 ) -> tuple[_PreparedContextEntry, ...]:
-    """Keep Memory primary while reserving early positions for relevant Experience."""
+    """Preserve each family's rank while alternating Memory, Topic, Experience."""
 
     ordered: list[_PreparedContextEntry] = []
-    for index in range(max(len(memory), len(experiences))):
+    for index in range(max(len(memory), len(topics), len(experiences))):
         if index < len(memory):
             ordered.append(memory[index])
+        if index < len(topics):
+            ordered.append(topics[index])
         if index < len(experiences):
             ordered.append(experiences[index])
     return tuple(ordered)

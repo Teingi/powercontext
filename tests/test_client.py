@@ -40,9 +40,12 @@ from powercontext.http import (
     AccessResource,
     AccessSubject,
     ArtifactAccessResource,
+    ArtifactReference,
     CaptureContentSourceRequest,
     ExactScopeSelection,
+    FlushTopicMemoryRequest,
     GetHandoffReportRequest,
+    GetTopicMemoryRequest,
     ListArtifactsRequest,
     PrepareContextRequest,
     ReplaceAccessBindingRequest,
@@ -53,6 +56,7 @@ from powercontext.http import (
     ReportFormat,
     ScopeId,
     ScopeSelection,
+    SearchTopicMemoryRequest,
     UpdateScopeRequest,
 )
 
@@ -97,6 +101,51 @@ def test_prepare_client_preserves_omitted_and_explicit_assembly() -> None:
             {"family": "experience", "limit": 2},
         ]
         assert bodies[2]["assembly"]["sections"] == []
+
+    asyncio.run(scenario())
+
+
+def test_client_exposes_all_three_topic_memory_http_operations_without_search_mode() -> None:
+    async def scenario() -> None:
+        requests: list[httpx.Request] = []
+
+        def respond(request: httpx.Request) -> httpx.Response:
+            requests.append(request)
+            payload = {
+                "/v1/topic-memory/flush": {"status": "accepted"},
+                "/v1/topic-memory/search": {"mode": "fts", "hits": []},
+                "/v1/topic-memory/get": {
+                    "artifact": {"family": "topic-memory", "artifact_id": "topic-a", "revision": 2},
+                    "title": "Topic A",
+                    "summary": "Summary",
+                    "detail": "Detail",
+                    "source_refs": [],
+                },
+            }[request.url.path]
+            return httpx.Response(200, json=payload)
+
+        reference = ArtifactReference(family="topic-memory", artifact_id="topic-a", revision=2)
+        async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as http_client:
+            client = PowerContextClient("https://memory.example", http_client=http_client)
+            assert (
+                await client.flush_topic_memory(FlushTopicMemoryRequest(scope_id="scope-a"))
+            ).status.value == "accepted"
+            assert (
+                await client.search_topic_memory(
+                    SearchTopicMemoryRequest(scope_id="scope-a", query="focused topic", limit=8)
+                )
+            ).mode.value == "fts"
+            assert (
+                await client.get_topic_memory(GetTopicMemoryRequest(scope_id="scope-a", artifact=reference))
+            ).artifact == reference
+
+        assert [request.url.path for request in requests] == [
+            "/v1/topic-memory/flush",
+            "/v1/topic-memory/search",
+            "/v1/topic-memory/get",
+        ]
+        search_payload = json.loads(requests[1].content)
+        assert search_payload == {"scope_id": "scope-a", "query": "focused topic", "limit": 8}
 
     asyncio.run(scenario())
 

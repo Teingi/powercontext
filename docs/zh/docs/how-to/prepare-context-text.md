@@ -74,6 +74,9 @@ asyncio.run(export_context())
 | `show: ["recall_rank"]` | 展示条目在该类别去重后候选列表中的位置。 |
 | `show: ["confidence"]` | 显示 `unknown (not assessed)`，目前没有评估数字置信度。 |
 
+省略 `assembly` 的默认 prepare 请求还会召回当前 Scope 中可用的 Topic Memory。
+显式 `assembly` 当前支持 Memory、Experience 和 Profile，该模式不召回 Topic Memory。
+
 同一类别内保留召回顺序，包括已有 Memory reranker 的排序。前面的候选因预算无法装入时，rank 可能不连续。
 被排除的类别不会参与召回。重复类别、非法 limit、`sort_by` 或 `min_confidence` 等不支持的字段，以及显式
 `assembly: null`，都会返回 HTTP 422。
