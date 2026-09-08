@@ -419,16 +419,16 @@ Memory 校验包含直接及传递引用的精确锚点、hash、当前 active �
 ## 执行归属、预算与现有处理器
 
 DreamRun 表示一次有明确结果的用户工作；Topic Memory 的 Pending/Source Cursor 表示需追赶的新 Source。
-两者采用不同进度记录，执行能力共享。
+两者分别保存进度。首版 Dream 使用 Runtime 的 scheduler 生命周期唤醒持久化 queued runs，以 Run 的数据库租约
+和 generation 防止重复提交；不另建全局选主服务，也不以 APScheduler 的进程内互斥替代数据库租约。
 
-实现使用 Runtime 的后台执行入口和预算。在 Topic Memory 的 ArtifactProcessingSupervisor 可用时，Dream
-作为其工作类型接入共享队列、并发配额和 fencing；该 Supervisor 仍属相关 RFC 的设计，不能宣称当前已实现。
-在其接入前，Builtin Runtime 可用现有 scheduler 生命周期唤醒持久化 queued runs，但不得另建一套全局选主服务
-或以 APScheduler 的进程内互斥替代数据库租约。
-接入 Supervisor 后，提交同时验证其 holder_id、调度 generation、租约有效性与 Run 租约 generation，
-防止已失去执行权的调度器提交；SQLite 的 Supervisor 租约不设到期时间，沿用其启动代际校验。
-部署边界沿用 Topic Memory 的设计：SQLite 仅支持单进程 all 模式并处理重启恢复；OceanBase 的多副本部署
-通过数据库租约和 generation 协调，不因引入 DreamRun 放宽该边界。
+Dream 首版仅在 `artifact_processing_role=all` 下提供生成能力。`api`、`background` 分离部署用于 Topic Memory
+的 ArtifactProcessingSupervisor，不接受新的 Dream 工作。SQLite 仅支持单进程 all 模式并处理重启恢复；
+OceanBase 的多个 all 副本通过 Run 数据库租约和 generation 协调。
+
+Dream 与 Topic Memory 当前分别限制执行并发。将 Dream 接入 ArtifactProcessingSupervisor 的共享配额和
+fencing 属于后续扩展；接入时必须同时检查 Supervisor 的 holder_id、调度 generation、租约有效性与 Run 的
+租约 generation，才能开放相应的分离部署能力。
 
 有工作执行能力的部署才接受 POST；缺少生成模型或执行配置时在创建 Run 前返回 503 capability_unavailable。
 进程启动扫描 queued 和可接管运行，保证已受理任务不会只存在于内存。周期性唤醒负责派发已请求的工作，

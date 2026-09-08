@@ -471,18 +471,17 @@ provenance and appear as unavailable during later use; automatic cascading retra
 ## Execution ownership, budgets, and existing processors
 
 DreamRun represents a user request with a specific result. Topic Memory Pending/Source Cursor records represent new
-Sources that need processing. Their progress records differ, while execution capacity is shared.
+Sources that need processing. Their progress records remain separate. Dream uses the Runtime scheduler lifecycle to wake
+persisted queued runs, with database Run leases and generations preventing duplicate commits. It does not create another
+global leader-election service or substitute APScheduler's in-process exclusion for database leases.
 
-Implementation uses Runtime background execution and budgets. When Topic Memory's ArtifactProcessingSupervisor is
-available, Dream joins it as a work type using its shared queue, concurrency quota, and fencing. That Supervisor remains
-a proposal in the related RFC and must not be presented as currently implemented. Before integration, Builtin Runtime may
-use the existing scheduler lifecycle to wake persisted queued runs. It must not create a second global leader-election
-service or substitute APScheduler's in-process exclusion for database leases.
-After Supervisor integration, commit checks its holder_id, scheduling generation, lease validity, and the Run lease
-generation so a scheduler that has lost execution authority cannot commit. SQLite Supervisor leases have no expiry and
-use startup-generation validation. Deployment boundaries follow Topic Memory: SQLite supports only
-single-process all mode with restart recovery; OceanBase coordinates multiple replicas through database leases and
-generations. DreamRun does not expand these deployment boundaries.
+Dream generation is available only with `artifact_processing_role=all`. The split `api` and `background` roles serve
+Topic Memory's ArtifactProcessingSupervisor and do not accept new Dream work. SQLite supports a single all process with
+restart recovery; multiple OceanBase all replicas coordinate through database Run leases and generations.
+
+Dream and Topic Memory currently enforce separate execution concurrency limits. Integrating Dream with the Supervisor's
+shared quota and fencing is a future extension. That integration must check the Supervisor holder_id, scheduling
+generation, lease validity, and Run lease generation together before enabling the corresponding split deployment.
 
 Only deployments capable of executing work accept POST. Missing generation models or execution configuration return
 503 capability_unavailable before creating a Run. Startup scans queued and recoverable runs so admitted work never exists

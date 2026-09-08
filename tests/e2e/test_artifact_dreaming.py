@@ -256,6 +256,31 @@ def test_memory_dream_approval_and_skill_preserve_exact_provenance(database: Dat
     asyncio.run(scenario())
 
 
+@pytest.mark.parametrize("role", ["api", "background"])
+def test_split_roles_do_not_accept_dream_work(database: DatabaseConfig, role: str) -> None:
+    if isinstance(database, SQLiteConfig):
+        pytest.skip("SQLite supports only the all process role")
+
+    async def scenario() -> None:
+        configured = config(database).model_copy(
+            update={"runtime": RuntimeConfig.model_validate({"artifact_processing_role": role})}
+        )
+        async with open_builtin_runtime(
+            configured, candidate_pipeline=MemoryPipeline(), dream_generator=Generator()
+        ) as runtime:
+            scope, _, citation = await seed(runtime)
+            assert not (await runtime.capabilities()).artifact_dreaming
+            with pytest.raises(DreamError, match="capability_unavailable"):
+                await runtime.dream.for_scope(scope).create(
+                    CreateDreamRunRequest(
+                        operation="refine_experience", memory_citations=(citation,), idempotency_key="split-role"
+                    )
+                )
+            assert not (await runtime.dream.for_scope(scope).list(ListDreamRunsRequest())).runs
+
+    asyncio.run(scenario())
+
+
 def test_retirement_during_generation_prevents_candidate_commit(database: DatabaseConfig) -> None:
     async def scenario() -> None:
         generator = Generator(blocked=True)
