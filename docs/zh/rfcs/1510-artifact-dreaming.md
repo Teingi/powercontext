@@ -1,6 +1,6 @@
 - Proposal Name: `artifact_dreaming`
 - Start Date: 2026-09-07
-- RFC PR: 未创建
+- RFC PR: [#1510](https://github.com/oceanbase/powercontext/pull/1510)
 - Tracking Issue: [#1509](https://github.com/oceanbase/powercontext/issues/1509)
 - Related RFCs: [Candidate 与 Review Inbox](0050_artifact_candidate_review_inbox.md)、
   [Experience 与 Skill](0051_experience_skill_artifact_families.md)、
