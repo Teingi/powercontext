@@ -305,6 +305,12 @@ The shared Candidate envelope and ArtifactLineage gain memory_citations, an arra
 MemoryCitation. Only Experiences may have nonempty values in the first release. These are direct entry references,
 not a substitute whole-Memory Ref or a synthetic Source carrying copied entry text.
 
+Ordinary Candidate proposal, revision, and approval validate transitive evidence without applying Dream's generation
+depth, graph, or projection budgets. Their 32-reference limit applies to direct references, including required Source
+dependencies of explicit Memory citations. Sources reachable only through an Artifact reference remain in that Artifact's
+lineage; review does not copy them into the Candidate's direct references. Current authorization and direct/transitive
+Memory validity checks still apply, with Memory head locks protecting approval against concurrent deactivation.
+
 - Experience propose and Candidate revise accept this optional field. On revise, omission or null retains the current set, an
   explicit array replaces it completely, and [] removes it. Re-resolve and validate source dependencies; keeping an entry
   citation cannot remove its required root Sources. No new review endpoint is added.

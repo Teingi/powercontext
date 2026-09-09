@@ -268,6 +268,11 @@ memory_citations；其中间条目仅作溯源，模型直接证据仍是所选 
 共享 Candidate envelope 和 ArtifactLineage 增加 `memory_citations`，默认空数组，元素复用现有 MemoryCitation。
 首版仅 Experience 可持有非空值。它是直接条目证据，不以整个 Memory Ref 代替，也不创建承载正文的合成 Source。
 
+普通 Candidate 的提议、修订和批准会校验传递证据，不套用 Dream 的生成深度、图大小或投影预算。
+32 项上限约束直接引用，包括显式 MemoryCitation 所需的根 Source 依赖。仅通过 Artifact 引用可达的
+Source 继续保留在该 Artifact 的 lineage 中，审核不会把它们复制到 Candidate 的直接引用。
+当前权限以及直接、传递 Memory 条目的有效性仍须校验，批准时通过 Memory head 锁防止并发停用绕过检查。
+
 - Experience propose 与 Candidate revise 请求接受该可选字段；revise 省略或设为 null 时保留当前集合，显式数组完整替换，
   `[]` 表示移除。来源依赖重新解析和校验，不能保留条目引用却移除其必要根来源。现有审核端点不增加。
 - Candidate Get 返回实际 memory_citations 和 sources/artifacts；Review Inbox 沿 exact read 展开条目正文和

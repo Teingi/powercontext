@@ -19,6 +19,7 @@ from __future__ import annotations
 import asyncio
 import os
 from collections.abc import Iterator
+from contextlib import nullcontext
 from pathlib import Path
 from typing import cast
 from uuid import uuid4
@@ -50,6 +51,7 @@ from powercontext.builtin.runtime import (
     ListDreamRunsRequest,
     PrepareContextRequest,
     ProposeExperienceRequest,
+    ProposeSkillRequest,
     RememberMemoryRequest,
     RetireMemoryEntryRequest,
     ReviseArtifactCandidateRequest,
@@ -1206,5 +1208,156 @@ def test_dream_keeps_prompt_lineage_out_of_factual_evidence(database: DatabaseCo
                 )
             )
             assert skill.result_artifact is not None and skill.result_artifact.family == "skill"
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("with_memory", [False, True])
+def test_ordinary_experience_revisions_do_not_inherit_dream_depth_budget(
+    database: DatabaseConfig, with_memory: bool
+) -> None:
+    async def scenario() -> None:
+        async with open_builtin_runtime(
+            config(database),
+            candidate_pipeline=MemoryPipeline() if with_memory else None,
+            dream_generator=Generator(),
+        ) as runtime:
+            assert runtime.scopes is not None
+            scope = (
+                await runtime.scopes.create(
+                    ScopeDraft(title="Revisions", summary="Ordinary review", idempotency_key="revisions")
+                )
+            ).scope_id
+            source = await runtime.sources.for_scope(scope).capture(
+                CaptureSource(source_id="task", content="The write replay preserved one row.", metadata={})
+            )
+            citations = ()
+            if with_memory:
+                await runtime.memory.for_scope(scope).flush()
+                entries = await runtime.memory.for_scope(scope).list()
+                citations = (entries.entries[0].citation,)
+            target = None
+            for revision in range(1, 13):
+                refs = () if target is None else (target,)
+                candidate = await runtime.experience.for_scope(scope).propose(
+                    ProposeExperienceRequest(
+                        proposal=experience(),
+                        sources=() if target is None and citations else (source.source_ref,),
+                        artifacts=refs,
+                        target=target,
+                        memory_citations=citations if target is None else (),
+                    )
+                )
+                approved = await runtime.review.for_scope(scope).approve(
+                    ApproveArtifactCandidateRequest(
+                        candidate_id=candidate.candidate_id, expected_version=candidate.version
+                    )
+                )
+                target = approved.result_artifact
+                assert target is not None and target.revision == revision
+                stored = await runtime.experience.for_scope(scope).get(GetExperienceRequest(artifact=target))
+                assert stored.lineage.sources == (source.source_ref,)
+                assert stored.lineage.artifacts == refs
+            with pytest.raises(EvidenceResolutionError, match="evidence_limit_exceeded"):
+                await runtime.dream.for_scope(scope).create(
+                    CreateDreamRunRequest(operation="derive_skill", artifacts=(target,), idempotency_key="bounded")
+                )
+            if citations:
+                candidate = await runtime.skill.for_scope(scope).propose(
+                    ProposeSkillRequest(
+                        proposal=SkillContent(
+                            name="verified-write-replay",
+                            description="Replay timed-out writes.",
+                            instructions="Reuse the same key.",
+                            validation=("Verify that a replay preserves one row.",),
+                        ),
+                        artifacts=(target,),
+                    )
+                )
+                await runtime.memory.for_scope(scope).retire(RetireMemoryEntryRequest(citation=citations[0]))
+                with pytest.raises(EvidenceResolutionError, match="memory_entry_inactive"):
+                    await runtime.review.for_scope(scope).approve(
+                        ApproveArtifactCandidateRequest(
+                            candidate_id=candidate.candidate_id, expected_version=candidate.version
+                        )
+                    )
+                pending = await runtime.review.for_scope(scope).get(
+                    GetArtifactCandidateRequest(candidate_id=candidate.candidate_id)
+                )
+                assert pending.status == "pending" and pending.result_artifact is None
+
+    asyncio.run(scenario())
+
+
+def test_ordinary_skill_review_keeps_indirect_sources_out_of_direct_reference_budget(database: DatabaseConfig) -> None:
+    async def scenario() -> None:
+        async with open_builtin_runtime(config(database)) as runtime:
+            assert runtime.scopes is not None
+            scope = (
+                await runtime.scopes.create(
+                    ScopeDraft(title="Source lineage", summary="Ordinary review", idempotency_key="sources")
+                )
+            ).scope_id
+            sources = tuple([
+                (
+                    await runtime.sources.for_scope(scope).capture(
+                        CaptureSource(source_id=f"task-{index}", content="The write replay passed.", metadata={})
+                    )
+                ).source_ref
+                for index in range(32)
+            ])
+            candidate = await runtime.experience.for_scope(scope).propose(
+                ProposeExperienceRequest(proposal=experience(), sources=sources)
+            )
+            approved = await runtime.review.for_scope(scope).approve(
+                ApproveArtifactCandidateRequest(candidate_id=candidate.candidate_id, expected_version=candidate.version)
+            )
+            assert approved.result_artifact is not None
+            refs = (approved.result_artifact,)
+            proposal = SkillContent(
+                name="verified-write-replay",
+                description="Replay timed-out writes.",
+                instructions="Reuse the same key.",
+                validation=("Verify that a replay preserves one row.",),
+            )
+            candidate = await runtime.skill.for_scope(scope).propose(
+                ProposeSkillRequest(proposal=proposal, artifacts=refs)
+            )
+            assert candidate.sources == () and candidate.artifacts == refs
+
+            denied = True
+
+            async def authorize_review(_scope, ref):
+                if denied and ref == sources[-1]:
+                    raise DreamError("access_revoked")
+
+            async def unused(*_args):
+                return None
+
+            runtime.configure_evidence_authorization(
+                dream=unused, review=authorize_review, context=nullcontext, attest_candidate=unused
+            )
+            revision = ReviseArtifactCandidateRequest(
+                candidate_id=candidate.candidate_id,
+                expected_version=candidate.version,
+                proposal=candidate.proposal,
+                artifacts=refs,
+            )
+            with pytest.raises(DreamError, match="access_revoked"):
+                await runtime.review.for_scope(scope).revise(revision)
+            denied = False
+            revised = await runtime.review.for_scope(scope).revise(revision)
+            assert revised.sources == () and revised.artifacts == refs
+            approval = ApproveArtifactCandidateRequest(
+                candidate_id=revised.candidate_id, expected_version=revised.version
+            )
+            denied = True
+            with pytest.raises(DreamError, match="access_revoked"):
+                await runtime.review.for_scope(scope).approve(approval)
+            denied = False
+            approved = await runtime.review.for_scope(scope).approve(approval)
+            assert approved.result_artifact is not None
+            skill = await runtime.skill.for_scope(scope).get(GetSkillRequest(artifact=approved.result_artifact))
+            assert skill.lineage.sources == () and skill.lineage.artifacts == refs
 
     asyncio.run(scenario())

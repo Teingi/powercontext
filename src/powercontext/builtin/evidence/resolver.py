@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+from collections import deque
 from collections.abc import Awaitable, Callable
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass, field
@@ -90,6 +91,65 @@ class EvidenceResolver:
         self.root_identity = root_identity
         self.source_projector = source_projector
         self.limits = EvidenceLimits() if limits is None else limits
+
+    async def validate(
+        self,
+        connection: AsyncConnection,
+        *,
+        sources: tuple[SourceRef, ...] = (),
+        artifacts: tuple[ArtifactRef, ...] = (),
+        memory_citations: tuple[MemoryCitation, ...] = (),
+    ) -> tuple[SourceRef, ...]:
+        """Validate Review lineage and return direct entry dependencies, without a model budget."""
+
+        refs: tuple[EvidenceReference, ...] = (*sources, *artifacts, *memory_citations)
+        state = await self._validate_lineage(connection, refs)
+        owners = tuple(citation for node in state.nodes.values() for citation in node.memory_citations)
+        if owners:
+            # Immutable lineage discovers the owners; current reads under ordered
+            # head locks serialize approval against entry deactivation.
+            await self._lock_memories(connection, owners)
+            state = await self._validate_lineage(connection, refs, locked=True)
+        roots: set[str] = set()
+        for citation in memory_citations:
+            roots.update(root_ids(evidence_id(citation), state.nodes, state.edges))
+        return tuple(source for key in sorted(roots) if (source := state.nodes[key].source) is not None)
+
+    async def _validate_lineage(
+        self,
+        connection: AsyncConnection,
+        refs: tuple[EvidenceReference, ...],
+        *,
+        locked: bool = False,
+    ) -> _Traversal:
+        state = _Traversal(project=False)
+        pending = deque((ref, True) for ref in refs)
+        visited: set[str] = set()
+        while pending:
+            ref, direct = pending.popleft()
+            key = reference_key(ref)
+            if key in visited:
+                continue
+            visited.add(key)
+            if self.authorize is not None:
+                await self.authorize(ref)
+            try:
+                node, _, children = await self._read(connection, ref, state, direct=direct, locked=locked)
+            except RepositoryNotFoundError as error:
+                raise EvidenceResolutionError("reference_not_found" if direct else "evidence_unavailable") from error
+            except (InvalidMemoryCitationError, MemoryEntryNotFoundError) as error:
+                raise EvidenceResolutionError("invalid_memory_citation") from error
+            previous = state.nodes.get(node.evidence_id)
+            if previous is not None:
+                node = previous.model_copy(
+                    update={
+                        "memory_citations": unique_references((*previous.memory_citations, *node.memory_citations)),
+                    }
+                )
+            state.nodes[node.evidence_id] = node
+            state.edges.update((node.evidence_id, evidence_id(child)) for child in children)
+            pending.extend((child, False) for child in children)
+        return state
 
     async def resolve(
         self,

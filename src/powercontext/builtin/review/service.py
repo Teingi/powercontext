@@ -452,15 +452,12 @@ class ReviewService:
         except RepositoryNotFoundError as error:
             raise InvalidCandidateError("evidence", "reference is not available in this scope") from error
         if self._evidence is not None:
-            resolved = await self._evidence.resolve(
+            roots = await self._evidence.validate(
                 connection,
                 sources=sources,
                 artifacts=artifacts,
                 memory_citations=memory_citations,
-                lock_memory=True,
-                project=False,
             )
-            roots = tuple(source for group in resolved.manifest.root_groups for source in group.sources)
             sources = _unique_sources((*sources, *roots))
         elif memory_citations:
             raise InvalidCandidateError("memory_citations", "Memory evidence resolution is unavailable")
