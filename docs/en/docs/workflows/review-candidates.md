@@ -63,11 +63,17 @@ items, 64 KiB of model input, two model calls, 4,096 output tokens per call, and
 Each Scope admits at most 32 queued or running requests by default. Restarted workers resume persisted requests under
 a lease; they keep the same evidence snapshot and execution deadline.
 
-In `/reviews`, inspect `memory_citations`, expand exact entry bodies and root Source groups, and check the Dream origin.
-Repeated citations to one root do not count as independent observations. Unknown independence remains explicitly unknown.
-The evidence expansion always uses the current Candidate version and the reviewer's current access; an unavailable or
-retired entry blocks approval. Omitting `memory_citations` or setting it to null on revision retains them; the HTTP request
+Use the Candidate commands below or `POST /v1/artifact-candidates/get` to read the current version and its
+`memory_citations`, then inspect reference bodies through `POST /v1/memory/entries/get` and exact Source/Artifact reads.
+The Dream run's `input_manifest` retains generation-time root Source groups and independence annotations. Repeated
+citations to one root do not count as independent observations; unknown independence remains unknown. Review revalidates
+evidence against the current Candidate version and reviewer permissions; an unavailable or retired entry blocks approval.
+Omitting `memory_citations` or setting it to null on revision retains them; the HTTP request
 can explicitly replace them, and `[]` clears them. Approved Experience revisions preserve these citations in their lineage.
+
+Dashboard is an opt-in personal content viewer using static Bearer authentication. It displays approved Experiences and
+Skills, with exact references linking to historical Memory entries. Dream creation, Run inspection, and Candidate review
+use the CLI, Client, or HTTP API. See [Install and run](../get-started/install-and-run.md) to enable personal access.
 
 The Runtime creates `pc_dream_runs` and adds nullable `memory_citations` columns to `pc_artifacts` and
 `pc_artifact_candidate_versions` on startup. Existing rows read as empty citations. No copy of Memory entry bodies is stored

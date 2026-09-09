@@ -249,8 +249,8 @@ identities do not by themselves establish independent observations. Preserve unc
 Descendants created by Dreaming, restatements in older Revisions, and model confidence do not count as new independent
 support.
 
-The Run manifest records citation anchor → entry/Experience → root Source group relationships. The model and Review page
-see the same group IDs and independence annotations. Project one body per SourceRef while retaining multiple paths.
+The Run manifest records citation anchor → entry/Experience → root Source group relationships, with the group IDs and
+independence annotations used by the model, for reviewers to inspect through Run Get. Project one body per SourceRef while retaining multiple paths.
 Different Source bodies in the same task group remain available; grouping only merges independent-support counts.
 Unknown independence must not appear as a verified task count.
 
@@ -315,9 +315,10 @@ Memory validity checks still apply, with Memory head locks protecting approval a
 - Experience propose and Candidate revise accept this optional field. On revise, omission or null retains the current set, an
   explicit array replaces it completely, and [] removes it. Re-resolve and validate source dependencies; keeping an entry
   citation cannot remove its required root Sources. No new review endpoint is added.
-- Candidate Get returns actual memory_citations and sources/artifacts. Review Inbox follows exact reads to expand entry
-  bodies and original sources, using the same resolution rules for deduplication groups and historical/inactive/unavailable
-  status. Bodies are read under current reviewer permissions; Run or Candidate references cannot expand read authority.
+- Candidate Get returns actual memory_citations and sources/artifacts. Reviewers use existing exact Memory entry,
+  Artifact, and Source reads to inspect bodies and historical versions, and Run Get to inspect generation-time evidence
+  groups. Revision and approval revalidate evidence against the current Candidate version. Bodies are read under current
+  reviewer permissions; Run or Candidate references cannot expand read authority.
 - Approval copies the current Candidate version's memory_citations into Experience Revision lineage in the same
   transaction as committed content, sources/artifacts, and the review result. Artifact exact read returns these citations;
   subsequent Dreams can follow them.
@@ -329,6 +330,15 @@ Reviewers continue to use revise/approve/reject. Candidates retain their immutab
 records the candidate_id/version created by the run. Later reviewer revisions do not rewrite the run result or reopen it.
 A revised Candidate uses its own complete proposal and evidence, validated against its revised evidence set without
 requiring an exact match to the original Run manifest. All authorization and source admission rules still apply.
+
+### Dashboard reading boundary
+
+Dashboard is an opt-in personal content viewer requiring a static Bearer token and enforced access control.
+It displays approved Experiences and Skills with clickable exact Artifact references and Memory citations. A Skill can
+link through its Experience to the original Memory entry version. Reference navigation reuses existing APIs and current
+authorization; it never substitutes the latest body for a historical version. Dream creation, Run inspection, and
+Candidate review use the existing HTTP API or Client. Dashboard provides no Dream management or Candidate review page.
+Evidence provenance and approval validation are backend contracts independent of Dashboard enablement.
 
 ## HTTP, Client, and operation permissions
 
@@ -463,7 +473,7 @@ back the whole transaction. A Candidate must not exist without a corresponding c
 committed but its response was lost, recovery reads the terminal state without calling generation again.
 
 Inputs always use manifest versions. A newer non-target Revision neither rewrites the snapshot nor counts as processed;
-the output and Review page should identify its historical baseline. If the target advances during generation, the run
+the Run manifest and exact Candidate references retain the historical baseline. If the target advances during generation, the run
 fails with artifact_conflict. If it advances after Candidate persistence, existing approval CAS prevents publication.
 
 A timeout, transient network error, or worker crash allows at most one additional attempt within the total budget.

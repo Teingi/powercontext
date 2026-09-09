@@ -220,8 +220,8 @@ SourceRef 相同的来源必须去重。存在受信任的任务尝试身份或�
 不同 SourceRef、相似正文或不同 Artifact identity 本身不足以证明独立观察；无法判断时保留未知状态。
 不能把梦境生成的后代、旧 Revision 的转述或模型 confidence 计入新的独立支持次数。
 
-Run manifest 保存“引用锚点 → 条目／Experience → 根 Source 组”的关系；模型与 Review 页面看到相同的组号和
-独立性说明。同一 SourceRef 的正文只投影一次，保留多条引用路径；同一任务组内不同 Source 的正文仍保留，
+Run manifest 保存“引用锚点 → 条目／Experience → 根 Source 组”的关系，以及模型使用的组号和
+独立性说明，供审核者通过 Run Get 核对。同一 SourceRef 的正文只投影一次，保留多条引用路径；同一任务组内不同 Source 的正文仍保留，
 分组只合并独立支持计数。未知独立性不显示成已验证任务数。
 
 提示词要求区分新增、佐证、细化和纠正，核对版本、时间、环境及适用条件：
@@ -276,8 +276,9 @@ Source 继续保留在该 Artifact 的 lineage 中，审核不会把它们复制
 
 - Experience propose 与 Candidate revise 请求接受该可选字段；revise 省略或设为 null 时保留当前集合，显式数组完整替换，
   `[]` 表示移除。来源依赖重新解析和校验，不能保留条目引用却移除其必要根来源。现有审核端点不增加。
-- Candidate Get 返回实际 memory_citations 和 sources/artifacts；Review Inbox 沿 exact read 展开条目正文和
-  原始来源，用同一解析规则展示去重组及历史／停用／不可用状态。正文始终按 Reviewer 的当前权限读取，
+- Candidate Get 返回实际 memory_citations 和 sources/artifacts；审核者通过现有 Memory 条目、Artifact 和 Source
+  精确读取接口核对正文与历史版本，通过 Run Get 核对生成时的证据分组。修订和批准按当前 Candidate 版本重新校验证据。
+  正文始终按 Reviewer 的当前权限读取，
   不能通过 Run 或 Candidate 引用扩大读取权限。
 - 批准时把当前 Candidate version 的 memory_citations 原样写入 Experience Revision 的 lineage，与正式内容、
   原有 sources/artifacts 和审核结果原子提交。Artifact exact read 返回这些引用；后续 Dream 可沿它们继续追溯。
@@ -288,6 +289,14 @@ Reviewer 继续调用现有 revise/approve/reject，Candidate 保留自己的不
 的 candidate_id/version；Reviewer 后续修订不会改写运行结果，也不会把 Run 自动重开。新的 Candidate version
 使用其自身完整 proposal 和证据，按新的证据集合校验，无需与原 Run manifest 完全相同；所有授权与来源准入
 规则仍然适用。
+
+### Dashboard 阅读边界
+
+Dashboard 是默认关闭的个人内容查看器，启用要求静态 Bearer token 和 enforced 访问控制。
+它展示已批准的 Experience 和 Skill，保留可点击的精确制品引用与 MemoryCitation；Skill 可沿 Experience
+继续读取当时的 Memory 条目。点击引用复用现有 API，继续校验当前权限，不用最新正文代替历史版本。
+Dream 创建、Run 查询及候选审核通过现有 HTTP API／Client 完成；Dashboard 不提供 Dream 管理或候选审核页面。
+审核溯源和批准校验属于后端契约，不依赖 Dashboard 是否启用。
 
 ## HTTP、Client 与操作权限
 
@@ -413,7 +422,7 @@ Candidate 与 Artifact 继续使用已有表和关系。无需新增 Memory 副�
 Run 却无法确认的半成品。若事务已提交但响应丢失，恢复直接读取终态，不再次调用生成器。
 
 输入内容始终按 manifest 的精确版本处理。非 target 输入出现新 Revision 不改写旧快照，也不能被标为已经处理；
-输出及 Review 页面应提示其历史基准。target 在生成期间前进则运行以 artifact_conflict 失败；
+运行 manifest 与候选精确引用保留其历史基准。target 在生成期间前进则运行以 artifact_conflict 失败；
 target 在候选落库后前进则由既有 approval CAS 阻止发布。
 
 超时、网络瞬态故障或 Worker 崩溃允许在总预算内最多一次额外尝试。确定性输入错误、权限撤回、目标冲突和
