@@ -344,7 +344,7 @@ request-local text policy.
 
 Hosts may add notices outside `content`; `content_bytes` measures only the server body. Host wrappers must not
 change the body's bytes. Configuration names and complete examples are documented in
-[Prepare standard context text](../docs/how-to/prepare-context-text.md).
+[Prepare standard context text](../docs/workflows/prepare-context-text.md).
 
 The Python Client uses `TypeAdapter(...).dump_python(..., by_alias=True)` for normal request serialization. For
 `prepare_context`, it removes `assembly` when that field was not supplied. Explicit `assembly: null` remains an

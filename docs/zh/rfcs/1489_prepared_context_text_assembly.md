@@ -301,7 +301,7 @@ prepare 不触发新主题生成；完整详情通过已有的精确读取操作
 | LangGraph | 使用 Python Client，并缓存当前用户回合的 prepare 结果。 | 传递配置，缓存同时区分组装配置与字节预算。 |
 
 Host 可以在 `content` 外添加说明，`content_bytes` 只计算服务端正文；包装不能改变正文的字节。
-配置入口和完整示例见[输出标准上下文文本](../docs/how-to/prepare-context-text.md)。
+配置入口和完整示例见[输出标准上下文文本](../docs/workflows/prepare-context-text.md)。
 
 Python Client 沿用 `TypeAdapter(...).dump_python(..., by_alias=True)` 完成普通请求序列化，在 `prepare_context`
 的传输边界省略未提供的 `assembly`。显式 `assembly: null` 仍是非法请求，其他 operation 中具有业务含义的显式
