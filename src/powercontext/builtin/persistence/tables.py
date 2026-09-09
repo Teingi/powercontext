@@ -1074,11 +1074,11 @@ DREAM_RUNS_TABLE = Table(
     Column("status", identity_string(16), nullable=False),
     Column("accepted_at", BigInteger, nullable=False),
     Column("generation", Integer, nullable=False),
-    Column("lease_expires_at", BigInteger),
+    Column("request_generation", BigInteger, nullable=False),
     Column("payload", _canonical_payload_type(), nullable=False),
     ForeignKeyConstraint(("scope_id",), ("pc_scopes.scope_id",), ondelete="CASCADE"),
     UniqueConstraint("scope_id", "principal_key", "idempotency_key", name="uq_pc_dream_idempotency"),
-    Index("ix_pc_dream_dispatch", "status", "lease_expires_at"),
+    Index("ix_pc_dream_dispatch", "scope_id", "operation", "status", "request_generation"),
     Index("ix_pc_dream_list", "scope_id", "accepted_at", "run_id"),
     CheckConstraint("generation >= 0", name="ck_pc_dream_generation"),
 )

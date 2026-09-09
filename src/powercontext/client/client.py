@@ -1227,7 +1227,7 @@ def _prepare_request(
             message = f"{operation.operation_id} does not accept a request"
             raise TypeError(message)
         payload = TypeAdapter(operation.request_type).dump_python(
-            request, mode="json", by_alias=True, exclude_unset=True
+            request, mode="json", by_alias=True, exclude_unset=operation is not PREPARE_CONTEXT
         )
         if not isinstance(payload, dict):
             message = "Request must serialize to an object."

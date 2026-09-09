@@ -102,7 +102,7 @@ from powercontext.builtin.artifacts.topic_memory import (
 )
 from powercontext.builtin.context import BuiltinArtifacts, BuiltinSources
 from powercontext.builtin.dream.generation import DreamGenerator
-from powercontext.builtin.dream.models import DreamBudget
+from powercontext.builtin.dream.models import DreamBudget, DreamOperation
 from powercontext.builtin.dream.service import CandidateAttester, DreamAuthorizer, DreamService
 from powercontext.builtin.evidence.resolver import AuthorizationContext, EvidenceAuthorizer, EvidenceResolver
 from powercontext.builtin.inference import EmbeddingModel, InvalidInferenceOutputError, TokenEstimator
@@ -646,6 +646,8 @@ class RelationalContexts:
         authorize: DreamAuthorizer | None = None,
         authorization_context: AuthorizationContext = nullcontext,
         attest_candidate: CandidateAttester | None = None,
+        operations: tuple[DreamOperation, ...] = (),
+        processing: ScopeInvocation | None = None,
     ) -> DreamService:
         return DreamService(
             database=self.database,
@@ -658,6 +660,8 @@ class RelationalContexts:
             authorize=authorize,
             authorization_context=authorization_context,
             attest_candidate=attest_candidate,
+            operations=operations,
+            processing=processing,
         )
 
     def generation(self, scope_id: str, /) -> ReviewedGenerationService:

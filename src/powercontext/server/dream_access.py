@@ -19,6 +19,8 @@ from __future__ import annotations
 import json
 from typing import TYPE_CHECKING
 
+from sqlalchemy.ext.asyncio import AsyncConnection
+
 from powercontext.artifacts import ArtifactRef, MemoryCitation
 from powercontext.builtin.dream.models import DreamError, DreamRecord
 from powercontext.builtin.dream.service import DreamPermission
@@ -113,9 +115,12 @@ class DreamAccess:
             raise AccessIdentityRequiredError
         await self.authorize(scope_id, principal_identity(principal), "read", ref)
 
-    async def attest_candidate(self, record: DreamRecord, candidate_id: str, family: str) -> None:
-        await self.authorize(record.run.scope_id, record.principal_id, "contribute", None)
-        await self.access.attest_candidate_owner(
+    async def attest_candidate(
+        self, connection: AsyncConnection, record: DreamRecord, candidate_id: str, family: str
+    ) -> None:
+        bound = DreamAccess(self.access.with_connection(connection))
+        await bound.authorize(record.run.scope_id, record.principal_id, "contribute", None)
+        await bound.access.attest_candidate_owner(
             scope_id=record.run.scope_id,
             candidate_id=candidate_id,
             family=family,

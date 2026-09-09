@@ -4620,7 +4620,7 @@ OPENAPI_SCHEMA: dict[str, JsonValue] = {
                     "usage": {"$ref": "#/components/schemas/DreamUsage"},
                     "budget": {"$ref": "#/components/schemas/DreamBudget"},
                     "prompt_version": {"type": "string", "default": "powercontext.dream.v1"},
-                    "model_config_id": {"type": "string"},
+                    "model_config_id": {"type": "string", "nullable": True},
                 },
                 "additionalProperties": False,
                 "type": "object",

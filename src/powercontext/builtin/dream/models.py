@@ -132,7 +132,7 @@ class DreamRun(BaseModel):
     usage: DreamUsage = Field(default_factory=DreamUsage)
     budget: DreamBudget = Field(default_factory=DreamBudget)
     prompt_version: str = DREAM_PROMPT_VERSION
-    model_config_id: str
+    model_config_id: str | None = None
 
     @property
     def terminal(self) -> bool:
@@ -162,8 +162,7 @@ class DreamRecord(BaseModel):
     request: CreateDreamRunRequest
     principal_id: str
     generation: int = 0
-    lease_owner: str | None = None
-    lease_expires_at: datetime | None = None
+    request_generation: int = 0
     deadline_at: datetime | None = None
 
 

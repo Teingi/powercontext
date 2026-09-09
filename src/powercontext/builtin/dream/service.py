@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import AsyncIterator, Awaitable, Callable
-from contextlib import AbstractAsyncContextManager, asynccontextmanager, nullcontext, suppress
+from contextlib import AbstractAsyncContextManager, asynccontextmanager, nullcontext
 from datetime import datetime
 from typing import Literal
 from uuid import uuid4
@@ -29,6 +29,7 @@ from sqlalchemy.ext.asyncio import AsyncConnection
 from powercontext.artifacts import ArtifactRef
 from powercontext.builtin.artifacts.experience import ExperienceContent
 from powercontext.builtin.artifacts.skill import SkillContent
+from powercontext.builtin.dream.bindings import DREAM_BINDINGS
 from powercontext.builtin.dream.generation import DreamGenerationInput, DreamGenerator
 from powercontext.builtin.dream.models import (
     DREAM_PROMPT_VERSION,
@@ -36,6 +37,7 @@ from powercontext.builtin.dream.models import (
     DreamBudget,
     DreamCandidateRef,
     DreamError,
+    DreamOperation,
     DreamPlan,
     DreamRecord,
     DreamRun,
@@ -55,16 +57,19 @@ from powercontext.builtin.inference.models import InferenceUsage
 from powercontext.builtin.persistence.artifacts import ArtifactRepository
 from powercontext.builtin.persistence.database import AsyncDatabase
 from powercontext.builtin.persistence.dream import DreamRepository, database_now
+from powercontext.builtin.persistence.errors import ArtifactProcessingLeadershipLostError
+from powercontext.builtin.persistence.processing_intents import ArtifactProcessingIntentRepository
 from powercontext.builtin.persistence.tables import SCOPES_TABLE
 from powercontext.builtin.review.errors import ArtifactTargetConflictError
 from powercontext.builtin.review.generation import SkillGenerationOrigin, validate_skill_lineage
 from powercontext.builtin.review.service import ReviewService
+from powercontext.builtin.runtime.processing_execution import InvocationAlreadyHandled, ScopeInvocation
 
 DreamPermission = Literal["read", "contribute", "write"]
 DreamAuthorizer = Callable[[str, str, DreamPermission, EvidenceReference | None], Awaitable[None]]
 EvidenceFactory = Callable[[str, EvidenceAuthorizer], EvidenceResolver]
 ReviewFactory = Callable[[str, AsyncConnection | None], ReviewService]
-CandidateAttester = Callable[[DreamRecord, str, str], Awaitable[None]]
+CandidateAttester = Callable[[AsyncConnection, DreamRecord, str, str], Awaitable[None]]
 
 
 class DreamService:
@@ -81,6 +86,8 @@ class DreamService:
         authorize: DreamAuthorizer | None = None,
         authorization_context: Callable[[], AbstractAsyncContextManager[None]] = nullcontext,
         attest_candidate: CandidateAttester | None = None,
+        operations: tuple[DreamOperation, ...] = (),
+        processing: ScopeInvocation | None = None,
     ) -> None:
         self.database = database
         self.repository = DreamRepository()
@@ -93,12 +100,15 @@ class DreamService:
         self.authorize = authorize
         self.authorization_context = authorization_context
         self.attest_candidate = attest_candidate
-        self.owner = "dream-worker-" + uuid4().hex
-        self.lease_seconds = 30.0
+        self.operations = operations
+        self.processing = processing
+        self.intents = ArtifactProcessingIntentRepository()
 
     @asynccontextmanager
     async def _transaction(self) -> AsyncIterator[AsyncConnection]:
         async with self.authorization_context(), self.database.transaction() as connection:
+            if self.processing is not None:
+                await self.processing.guard(connection)
             yield connection
 
     async def _authorize(
@@ -128,10 +138,14 @@ class DreamService:
             if existing is not None:
                 return existing.run
         await self._authorize(scope_id, principal_id, "contribute")
-        if self.generator is None:
+        if request.operation not in self.operations:
             raise DreamError("capability_unavailable")
         resolver = self._resolver(scope_id, principal_id)
         async with self._transaction() as connection:
+            # Lock the intent before business rows, matching Worker commit order.
+            binding = DREAM_BINDINGS[request.operation]
+            await self.intents.ensure(connection, scope_id, binding)
+            await self.intents.load(connection, scope_id, binding, for_update=True)
             # Scope-local admission capacity is durable and serialized across replicas.
             result = await connection.execute(
                 update(SCOPES_TABLE)
@@ -156,6 +170,7 @@ class DreamService:
             )
             if await self.repository.pending_count(connection, scope_id) >= self.max_pending_per_scope:
                 raise DreamError("capacity_exceeded")
+            intent = await self.intents.request(connection, scope_id, DREAM_BINDINGS[request.operation])
             record = DreamRecord(
                 run=DreamRun(
                     scope_id=scope_id,
@@ -164,10 +179,10 @@ class DreamService:
                     target=request.target,
                     accepted_at=await database_now(connection),
                     budget=self.budget,
-                    model_config_id=self.generator.config_id,
                 ),
                 request=request,
                 principal_id=principal_id,
+                request_generation=intent.requested_generation,
             )
             return (await self.repository.create(connection, record)).run
 
@@ -181,33 +196,58 @@ class DreamService:
         async with self._transaction() as connection:
             return await self.repository.list(connection, scope_id, request)
 
-    async def execute(self, scope_id: str, run_id: str) -> None:
+    async def execute(self) -> bool:
+        """Execute one accepted Run attempt within a Supervisor Scope invocation.
+
+        Returning false leaves a non-Dream invocation to the Family processor.
+        A completed attempt acknowledges this invocation and durably schedules
+        any remaining Runs, even when automatic processing is disabled.
+        """
+
+        if self.processing is None:
+            raise RuntimeError("Dream execution requires a Supervisor invocation")  # noqa: TRY003
+        work = self.processing.assignment
+        operation: DreamOperation = "derive_skill" if work.artifact_family == "skill" else "refine_experience"
+        if DREAM_BINDINGS[operation] != work.binding_name:
+            raise ValueError("Dream operation and processing binding do not match")  # noqa: TRY003
         async with self._transaction() as connection:
-            record = await self.repository.claim(
-                connection,
-                scope_id,
-                run_id,
-                owner=self.owner,
-                lease_seconds=self.lease_seconds,
+            await self.processing.start(connection)
+            record = await self.repository.next_pending(
+                connection, work.scope_id, operation, through_generation=work.claimed_request_generation
             )
-        if record is None or record.run.terminal:
-            return
-        heartbeat = asyncio.create_task(self._heartbeat(record))
+            if record is None:
+                return False
+            record = await self.repository.claim(
+                connection, record, model_config_id=None if self.generator is None else self.generator.config_id
+            )
+            if record.run.terminal:
+                await self._complete_invocation(connection, operation)
+                return True
         try:
             async with self._transaction() as connection:
                 remaining = _remaining_seconds(record, await database_now(connection))
             async with asyncio.timeout(max(remaining, 0)):
                 await self._execute(record)
+        except (ArtifactProcessingLeadershipLostError, InvocationAlreadyHandled):
+            raise
         except (InferenceTimeoutError, InferenceUnavailableError) as error:
             await self._fail_or_retry(record, _error_code(error), retry=True)
         except TimeoutError:
             await self._fail_or_retry(record, "budget_exceeded", retry=False)
         except Exception as error:
             await self._fail_or_retry(record, _error_code(error), retry=False)
-        finally:
-            heartbeat.cancel()
-            with suppress(asyncio.CancelledError, DreamError):
-                await heartbeat
+        return True
+
+    async def _complete_invocation(self, connection: AsyncConnection, operation: DreamOperation) -> None:
+        if self.processing is None:
+            raise RuntimeError("Dream execution requires a Supervisor invocation")  # noqa: TRY003
+        work = self.processing.assignment
+        current = await self.processing.guard(connection)
+        remaining = await self.repository.next_pending(connection, work.scope_id, operation)
+        if remaining is not None and current.requested_generation == work.claimed_request_generation:
+            await self.intents.request(connection, work.scope_id, work.binding_name)
+        # Dream never consumes or clears the Family's ordinary Source progress.
+        await self.processing.complete(connection, remaining_work=True)
 
     async def _execute(self, record: DreamRecord) -> None:
         run = record.run
@@ -256,9 +296,6 @@ class DreamService:
         if isinstance(plan.proposal, SkillContent):
             prepared = await self.review(run.scope_id, None).prepare_skill(plan.proposal)
             plan = plan.model_copy(update={"proposal": prepared})
-        if plan.outcome == "proposed" and self.attest_candidate is not None:
-            family = "skill" if run.operation == "derive_skill" else "experience"
-            await self.attest_candidate(record, _candidate_id(record), family)
         await self._commit(record, plan)
 
     async def _resolve(self, record: DreamRecord, connection: AsyncConnection | None = None) -> ResolvedEvidence:
@@ -285,6 +322,9 @@ class DreamService:
             resolved = await self._resolve(record, connection)
             candidate = None
             if plan.outcome == "proposed":
+                if self.attest_candidate is not None:
+                    family = "skill" if run.operation == "derive_skill" else "experience"
+                    await self.attest_candidate(connection, record, _candidate_id(record), family)
                 candidate = await self._propose(connection, record, plan, resolved)
             completed = run.model_copy(
                 update={
@@ -296,6 +336,7 @@ class DreamService:
                 }
             )
             await self.repository.finish(connection, record, completed)
+            await self._complete_invocation(connection, run.operation)
 
     async def _propose(
         self,
@@ -355,14 +396,8 @@ class DreamService:
         if current.as_ref() != target:
             raise DreamError("artifact_conflict")
 
-    async def _heartbeat(self, record: DreamRecord) -> None:
-        while True:
-            await asyncio.sleep(self.lease_seconds / 3)
-            async with self._transaction() as connection:
-                record = await self.repository.renew(connection, record, lease_seconds=self.lease_seconds)
-
     async def _fail_or_retry(self, record: DreamRecord, code: str, *, retry: bool) -> None:
-        if code == "lease_lost":
+        if code == "attempt_conflict":
             return
         try:
             async with self._transaction() as connection:
@@ -379,16 +414,15 @@ class DreamService:
                     queued = current.model_copy(
                         update={
                             "run": current.run.model_copy(update={"status": "queued"}),
-                            "lease_owner": None,
-                            "lease_expires_at": None,
                         }
                     )
                     await self.repository.checkpoint(connection, queued)
                 else:
                     failed = current.run.model_copy(update={"status": "failed", "error": code, "completed_at": now})
                     await self.repository.finish(connection, current, failed)
+                await self._complete_invocation(connection, current.run.operation)
         except DreamError as error:
-            if error.code != "lease_lost":
+            if error.code != "attempt_conflict":
                 raise
 
 

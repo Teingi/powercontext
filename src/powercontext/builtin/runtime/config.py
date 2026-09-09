@@ -114,6 +114,7 @@ class RuntimeConfig(BaseModel):
         "memory_max_workers",
         "topic_memory_max_workers",
         "experience_max_workers",
+        "skill_max_workers",
         "profile_max_workers",
         "profile_max_concurrency",
         "artifact_processing_max_workers",
@@ -154,7 +155,6 @@ class RuntimeConfig(BaseModel):
     memory_schedule_seconds: float | None = Field(default=None, gt=0)
     experience_schedule_seconds: float | None = Field(default=None, gt=0)
     dream_enabled: bool = True
-    dream_poll_seconds: float = Field(default=1.0, gt=0, le=60)
     dream_max_pending_per_scope: int = Field(default=32, ge=1, le=1000)
     generation_concurrency: int = Field(default=4, ge=1, le=64)
     dream_budget: DreamBudget = Field(default_factory=DreamBudget)
@@ -171,10 +171,12 @@ class RuntimeConfig(BaseModel):
     memory_max_workers: int = Field(default=1, ge=1)
     topic_memory_max_workers: int = Field(default=10, ge=1)
     experience_max_workers: int = Field(default=1, ge=1)
+    skill_max_workers: int = Field(default=1, ge=1)
     profile_max_workers: int = Field(default=4, ge=1)
     memory_worker_timeout_seconds: float = Field(default=600, gt=0)
     topic_memory_worker_timeout_seconds: float = Field(default=600, gt=0)
     experience_worker_timeout_seconds: float = Field(default=600, gt=0)
+    skill_worker_timeout_seconds: float = Field(default=600, gt=0)
     profile_worker_timeout_seconds: float = Field(default=600, gt=0)
 
     @model_validator(mode="after")

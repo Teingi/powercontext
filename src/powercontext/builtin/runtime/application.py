@@ -2254,7 +2254,6 @@ class BuiltinRuntime:
         self._review_authorization_context: AuthorizationContext = nullcontext
         self._generation_slots = asyncio.Semaphore(generation_concurrency)
         self._generation_owners: set[asyncio.Task[Any]] = set()
-        self._generation_concurrency = generation_concurrency
         self._experience_recall = experience_recall
         self._skill_recall = skill_recall
         self._skill_lister = skill_lister
@@ -2460,59 +2459,6 @@ class BuiltinRuntime:
             self._dream_service.authorize = dream
             self._dream_service.authorization_context = context
             self._dream_service.attest_candidate = attest_candidate
-
-    def start_dreams(self, poll_seconds: float) -> None:
-        """Wake durable Dream work through the Runtime's scheduler lifecycle."""
-
-        from apscheduler.jobstores.memory import MemoryJobStore
-        from apscheduler.schedulers.asyncio import AsyncIOScheduler
-
-        if self._dream_service is None or self._dream_service.generator is None:
-            return
-        if self._scheduler is None:
-            self._scheduler = AsyncIOScheduler(timezone="UTC")
-            self._scheduler.start()
-        self._scheduler.add_jobstore(MemoryJobStore(), alias="dream")
-        self._scheduler.add_job(
-            self.process_dreams,
-            "interval",
-            seconds=poll_seconds,
-            id="powercontext.dream.dispatch.v1",
-            jobstore="dream",
-            max_instances=1,
-            coalesce=True,
-            next_run_time=self._clock(),
-        )
-
-    async def process_dreams(self) -> None:
-        """Drain one bounded batch; database leases coordinate other workers."""
-
-        if self._dream_service is None or self._closing:
-            return
-        service = self._dream_service
-        async with self._operation():
-            async with service.database.transaction() as connection:
-                ready = await service.repository.ready(
-                    connection,
-                    limit=self._generation_concurrency,
-                    trusted_runtime_only=service.authorize is None,
-                )
-
-            async def execute(scope_id: str, run_id: str) -> None:
-                async with service.database.transaction() as connection:
-                    record = await service.repository.get(connection, scope_id, run_id)
-                purpose = (
-                    ModelUsagePurpose.SKILL_GENERATION
-                    if record.run.operation == "derive_skill"
-                    else ModelUsagePurpose.EXPERIENCE_GENERATION
-                )
-                async with self._scoped_operation(
-                    scope_id,
-                    generation_purpose=purpose,
-                ):
-                    await service.execute(scope_id, run_id)
-
-            await asyncio.gather(*(execute(scope_id, run_id) for scope_id, run_id in ready))
 
     async def close(self) -> None:
         """Stop accepting work and await in-flight operations without closing the provider."""

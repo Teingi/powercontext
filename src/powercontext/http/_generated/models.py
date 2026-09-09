@@ -3362,7 +3362,7 @@ class DreamRun(BaseModel):
     usage: DreamUsage | None = None
     budget: DreamBudget | None = None
     prompt_version: StrictStr = "powercontext.dream.v1"
-    model_config_id: StrictStr
+    model_config_id: Annotated[StrictStr | None, Field(...)]
 
 
 class DreamRunPage(BaseModel):

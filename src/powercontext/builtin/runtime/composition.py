@@ -120,7 +120,11 @@ from powercontext.builtin.runtime.config import BuiltinConfig, ExternalSkillsCon
 from powercontext.builtin.runtime.family_processing import FAMILY_BINDINGS, FamilyWorkerSpec, run_family_worker
 from powercontext.builtin.runtime.models import MemorySearchMode, RuntimeCapabilities
 from powercontext.builtin.runtime.processing_discovery import SourceProcessingPendingProvider, enabled_profile_scopes
-from powercontext.builtin.runtime.processing_registry import canonical_processing_manifest, processing_capabilities
+from powercontext.builtin.runtime.processing_registry import (
+    canonical_processing_manifest,
+    dream_operations,
+    processing_capabilities,
+)
 from powercontext.builtin.runtime.protocols import RuntimeTracing
 from powercontext.builtin.runtime.readiness import (
     CachedReadinessProbe,
@@ -318,19 +322,6 @@ async def open_builtin_runtime(
         configured_incubation = generated_incubation if experience_pipeline is None else experience_pipeline
         configured_experience = generated_experience if experience_generator is None else experience_generator
         configured_skill = generated_skill if skill_generator is None else skill_generator
-        configured_dream = (
-            (
-                dream_generator
-                or await _dream_generator(
-                    config.inference,
-                    config.runtime.dream_budget,
-                    resources,
-                    instrumentation,
-                )
-            )
-            if config.runtime.dream_enabled and config.runtime.artifact_processing_role == "all"
-            else None
-        )
         configured_handoff = generated_handoff if handoff_pipeline is None else handoff_pipeline
         configured_reranker = generated_reranker if memory_reranker is None else memory_reranker
         components = (
@@ -417,8 +408,9 @@ async def open_builtin_runtime(
             injected_token_estimator=token_estimator,
             injected_pipelines={
                 "memory": candidate_pipeline,
-                "experience": experience_pipeline,
+                "experience": experience_pipeline if experience_pipeline is not None else dream_generator,
                 "profile": profile_generator,
+                "skill": dream_generator,
             },
             worker_security=worker_security,
             source_registry=configured_source_registry,
@@ -448,6 +440,14 @@ async def open_builtin_runtime(
                 ],
             },
         )
+        configured_operations = dream_operations(config)
+        if dream_generator is not None and config.runtime.dream_enabled:
+            registered_families = {binding.artifact_family for binding in processing_bindings}
+            configured_operations = tuple(
+                operation
+                for operation, family in (("refine_experience", "experience"), ("derive_skill", "skill"))
+                if family in registered_families
+            )
         topic_memory_processing_available = _topic_memory_processing_available(config, processing_bindings)
         runtime = await resources.enter_async_context(
             BuiltinRuntime(
@@ -456,7 +456,7 @@ async def open_builtin_runtime(
                     memory_extraction=contexts.memory_extraction,
                     experience_generation=contexts.experience_generation,
                     managed_skill_generation=contexts.managed_skill_generation,
-                    artifact_dreaming=configured_dream is not None,
+                    artifact_dreaming=bool(configured_operations),
                     external_skill_registry=contexts.external_skill_registry,
                     memory_search_modes=_search_modes(contexts.index.capabilities),
                     handoff_generation=contexts.handoff_generation,
@@ -473,7 +473,8 @@ async def open_builtin_runtime(
                 subject_sources=contexts.subject_sources,
                 generation_service=contexts.generation,
                 dream_service=contexts.dream(
-                    configured_dream,
+                    dream_generator,
+                    operations=configured_operations,
                     budget=config.runtime.dream_budget,
                     max_pending_per_scope=config.runtime.dream_max_pending_per_scope,
                     authorize=dream_authorizer,
@@ -527,7 +528,6 @@ async def open_builtin_runtime(
             )
         if config.runtime.memory_rerank_enabled and configured_reranker is None:
             raise BuiltinConfigurationError("memory-reranker")
-        runtime.start_dreams(config.runtime.dream_poll_seconds)
         yield runtime
 
 
@@ -579,6 +579,7 @@ def _artifact_processing_bindings(  # noqa: C901 - validate and assemble one reg
         "topic-memory": config.runtime.topic_memory_schedule_seconds,
         "experience": config.runtime.experience_schedule_seconds,
         "profile": config.runtime.profile_schedule_enabled or None,
+        "skill": None,
     }
     for family, schedule in automatic.items():
         if schedule is not None and family not in declared | registered:
@@ -637,7 +638,9 @@ def _artifact_processing_bindings(  # noqa: C901 - validate and assemble one reg
                 if family == "profile" and config.runtime.profile_schedule_enabled
                 else None,
                 timezone=config.runtime.profile_timezone if family == "profile" else "Asia/Shanghai",
-                pending_provider=SourceProcessingPendingProvider(contexts.database, binding, family),
+                pending_provider=None
+                if family == "skill"
+                else SourceProcessingPendingProvider(contexts.database, binding, family),
                 automatic_scope_filter=enabled_profile_scopes if family == "profile" else None,
             )
         )

@@ -7,7 +7,8 @@
   [标准 Skill 生命周期](1351_standard_skill_package_lifecycle.md)、
   [访问控制](1396_handoff_access_control.md)、
   [Source 与 Artifact 基础 API](1437_source_artifact_rest_api.md)、
-  [Topic Memory 与后台处理](1417_topic_memory.md)
+  [Topic Memory 与后台处理](1417_topic_memory.md)、
+  [Artifact Processing Supervisor](1515_artifact_processing_supervisor.md)
 
 # Summary
 
@@ -383,26 +384,30 @@ Python Client 与 Runtime 暴露对应 create/get/list；CLI 可以投影为 `dr
 
 - 相同 key、相同请求返回原 run，不重新运行；queued/running 返回 202，终态返回 200；
 - 相同 key、不同请求返回 409 idempotency_conflict；
-- 每个 accepted run 固定当时的策略与模型配置标识，重放不能切换新配置；
+- 受理时固定策略和预算；首次执行固定模型配置标识，重试与接管不能切换配置；
 - failed run 使用原 key 仍返回原失败；显式重试使用新 key；
 - 首版不承诺不同 key 之间的语义去重。自动发现上线前需增加稳定 work key 和已拒绝提案抑制。
 
 身份、请求格式与当前 Scope 读取权限检查通过后，先查幂等记录，再执行新 Run 的准入检查。匹配记录按当前
 查询权限返回；目标已前进、模型配置已移除或容量已满均不影响原结果重放，也不触发重新生成。
 
-新增 DreamRun 表保存规范化请求、manifest、生成配置标识、预算、状态、attempt、租约及结果。
+`pc_dream_runs` 保存规范化请求、manifest、生成配置标识、预算、状态、attempt、请求代次及结果。
+`request_generation` 把每个 Run 关联到所属 Family 的已接受调用；Run 与通用调度意图在同一事务中受理。
 `pc_artifact_candidate_versions` 和 `pc_artifacts` 各增加可空的 memory_citations 序列化列，旧行解码为空集合；
 Candidate 与 Artifact 继续使用已有表和关系。无需新增 Memory 副本表或条目证据关系表。幂等唯一键、状态和结果
 均位于权威数据库；正式 Revision 的条目溯源不依赖 Run 留存或日志。
 
-运行状态只有 `queued | running | succeeded | failed`。Worker 用带单调 generation 的租约领取工作；接管只允许
-已到期的租约，旧 Worker 不能提交。第一次开始执行时记录绝对截止时间，重试和接管不重置它。
+运行状态只有 `queued | running | succeeded | failed`。Supervisor 任期是执行归属的唯一权威；每次 Run 尝试
+另有单调 generation 防止覆盖其他尝试，但不拥有独立租约或心跳。第一次开始执行时记录绝对截止时间及模型配置标识，
+重试和接管不重置它们。尚未执行时 `model_config_id` 为 null；输入快照持久化后不可改写。
 
 模型调用、内容投影和必要的包准备在写事务外完成。成功提交使用同一短事务：
 
-1. 检查租约 generation、运行状态、当前授权、条目锚点与当前 active 状态、来源可用性和目标 head；
+1. 在同一事务中检查 Supervisor holder、generation、有效任期和请求代次，再检查 Run 尝试 generation、运行状态、
+   当前授权、条目锚点与当前 active 状态、来源可用性和目标 head；
 2. 通过绑定同一事务的 Review writer 创建至多一个 Candidate；
-3. 写入 outcome、精确候选引用和 completed_at，将运行标记 succeeded。
+3. 写入候选归属、outcome、精确候选引用和 completed_at，将运行标记 succeeded，并确认本次 Scope 调用；
+   仍有未完成 Run 时，在同一事务中保留或登记后继调用。
 
 无变化和证据不足同样保存有理由的终态，但不创建 Candidate。任一步失败整体回滚，不能留下 Candidate 已生成、
 Run 却无法确认的半成品。若事务已提交但响应丢失，恢复直接读取终态，不再次调用生成器。
@@ -412,7 +417,7 @@ Run 却无法确认的半成品。若事务已提交但响应丢失，恢复直�
 target 在候选落库后前进则由既有 approval CAS 阻止发布。
 
 超时、网络瞬态故障或 Worker 崩溃允许在总预算内最多一次额外尝试。确定性输入错误、权限撤回、目标冲突和
-无效模型输出直接失败。租约恢复和内部 provider retry 都计入总尝试/调用预算。无法确认的调用用量保存 unknown，
+无效模型输出直接失败。任期接管和内部 provider retry 都计入总尝试/调用预算。无法确认的调用用量保存 unknown，
 不能报告为零成本。
 
 Dream-origin Candidate 批准时仍需重新检查当前候选版本实际引用的证据是否可用且允许使用。实现可以加强共用
@@ -423,21 +428,46 @@ Memory 校验包含直接及传递引用的精确锚点、hash、当前 active �
 
 ## 执行归属、预算与现有处理器
 
-DreamRun 表示一次有明确结果的用户工作；Topic Memory 的 Pending/Source Cursor 表示需追赶的新 Source。
-两者分别保存进度。首版 Dream 使用 Runtime 的 scheduler 生命周期唤醒持久化 queued runs，以 Run 的数据库租约
-和 generation 防止重复提交；不另建全局选主服务，也不以 APScheduler 的进程内互斥替代数据库租约。
+Dream 使用 [Artifact Processing Supervisor](1515_artifact_processing_supervisor.md) 执行，没有独立的 scheduler、
+轮询执行器或 Run 租约。DreamRun 是用户请求的业务记录，不是新的 Artifact Family，也不是通用调度任务历史。
 
-Dream 首版仅在 `artifact_processing_role=all` 下提供生成能力。`api`、`background` 分离部署用于 Topic Memory
-的 ArtifactProcessingSupervisor，不接受新的 Dream 工作。SQLite 仅支持单进程 all 模式并处理重启恢复；
-OceanBase 的多个 all 副本通过 Run 数据库租约和 generation 协调。
+| Dream operation | 所属 Family | Supervisor binding |
+| --- | --- | --- |
+| `refine_experience` | `experience` | 复用 Experience 孵化的规范 binding |
+| `derive_skill` | `skill` | `skill.dream.v1` |
 
-Dream 与 Topic Memory 当前分别限制执行并发。将 Dream 接入 ArtifactProcessingSupervisor 的共享配额和
-fencing 属于后续扩展；接入时必须同时检查 Supervisor 的 holder_id、调度 generation、租约有效性与 Run 的
-租约 generation，才能开放相应的分离部署能力。
+每个 Family 保持一个 binding。Experience 处理器先检查当前请求代次内是否有待执行 Dream；有则处理最早的一个
+Run 的一次尝试，否则执行既有 Source 孵化流程。一次 Dream 调用不推进、清空或重新解释 Experience 的 Source Cursor。
+Skill 的 Dream 处理没有自动 Source 扫描。两者均不自动发现值得提炼的新制品，也不因启用周期配置获得自动审核权限。
 
-有工作执行能力的部署才接受 POST；缺少生成模型或执行配置时在创建 Run 前返回 503 capability_unavailable。
-进程启动扫描 queued 和可接管运行，保证已受理任务不会只存在于内存。周期性唤醒负责派发已请求的工作，
-首版不周期性选择新制品。
+API 在短事务中保存精确请求、请求者身份和 Run，并推进所属 `(binding, scope_id)` 的 requested generation；提交后
+唤醒本地 Supervisor。OceanBase 后台通过既有发现机制读取跨进程请求；SQLite 不新增空闲数据库轮询。受理事务失败
+不留下 Run 或孤立调度意图。相同幂等请求的重放不再次推进调度代次。
+
+Scope Worker 只选择不晚于 claimed request generation 的 Run。排队期间的唤醒可以合并，但各 Run 的输入、身份、
+结果和预算分别保留；运行期间新增请求不能被当前调用确认。一次尝试完成后，Run 结果或有预算的重试状态与 Scope
+完成确认一致提交。尚有 Run 且没有更新的已接受调用时，原子登记一个后继调用；因此关闭自动周期也能完成全部显式请求。
+普通 Source dirty 保留给 Experience 的业务周期，不能用 Dream 的完成状态代表已消费这些 Source。
+
+Supervisor 管理子进程、按 Family 的 Worker 额度、Scope single-flight、超时和故障接管。`global` 共享一个控制器
+任期，`dedicated` 按 Family 分开；两种模式都使用 Experience 与 Skill 各自的 Worker 配置。
+`experience_max_workers` 和 `skill_max_workers` 默认均为 1，对应 Scope Worker timeout 默认均为 600 秒。
+这些是执行资源上限；每个 DreamRun 的总时间、模型次数和证据预算独立生效，子进程按该 Run 的预算构建生成器。
+前台同步生成的 `generation_concurrency` 不表示后台子进程的全局配额。
+
+Run 的确定性失败和预算耗尽是合法业务终态：持久化 failed 后确认调用，不抛给 Supervisor 无限重复生成。
+未完成事务、Worker crash 或失主由 Supervisor 恢复；恢复读取同一 Run、固定快照、累计尝试和绝对截止时间。
+Candidate、归属记录、Run 终态及调用确认在同一事务内提交；旧任期的任何写事务都必须整体失败。
+审核等待不占 Worker，终态 Run 不重新调用模型。
+
+OceanBase 支持 `all` 及 `api` / `background` 分离部署；SQLite 保持单宿主 `all`，两种 Supervisor mode 都可用。
+API 可通过 `artifact_processing_families` 声明 Experience/Skill 能力而不配置执行模型；实际模型与 Worker 资源由后台
+配置。执行端必须能重建生成器和授权适配器，不能依赖父进程内存闭包。Dream 执行使用原请求者的当前权限，
+不会借用后台服务 Principal 扩大证据读取或写入权限。
+
+`dream_enabled` 控制新请求准入；`dream_max_pending_per_scope` 限制同 Scope 未完成 Run 总数。缺少所属 Family 的
+处理能力时，新请求返回 `503 capability_unavailable`，已有结果仍按当前查询权限读取和重放。
+`/v1/scopes/{scope_id}/dream` 的 create/get/list 及现有 Review 接口负责业务交互，不增加通用 Job 查询 API。
 
 初始服务端预算如下，部署者可以收紧；API 调用方不能放宽：
 
@@ -474,7 +504,7 @@ fencing 属于后续扩展；接入时必须同时检查 Supervisor 的 holder_i
 GET 一个 failed run 返回 200 和结构化 error，不把运行失败伪装成查询请求失败。错误与日志只记录稳定 code、
 身份、计数和用量，不记录证据正文、完整 prompt 或凭据。proposal 与 reason 始终按不可信内容展示。
 
-实施时新增 Dream OpenAPI operation/schema、生成的 Python Client、Runtime 入口、Run repository、dispatcher、
+实施时新增 Dream OpenAPI operation/schema、生成的 Python Client、Runtime 入口、Run repository、Supervisor Family 适配、
 Memory resolver、Family generation 适配，以及 Candidate/Artifact 条目引用和 Inbox 溯源展示。复用现有
 MemoryCitation schema；扩展 Experience propose、Candidate revise/get/list、Artifact exact read 的引用契约，
 并让 ArtifactDraft/Repository 传递和保存条目引用。已有引用参数的语义保持；条目引用在当前 Candidate version 中保存。
@@ -484,7 +514,8 @@ MemoryCitation schema；扩展 Experience propose、Candidate revise/get/list、
 跨 Scope 发布副本沿现有 publication_source 回到原 Revision 的条目溯源，不把 MemoryCitation 重新解释为目标
 Scope 的引用。读取原 Scope 证据仍需独立授权；Dream 首版不会展开跨 Scope 的证据正文。
 
-新增迁移必须同时覆盖 SQLite 与 OceanBase。既有数据无需重写；Memory flush、Experience incubation、Handoff、
+Dream 表按本设计直接创建，不为未发布的 Dream 数据结构提供迁移兼容。已有 Candidate/Artifact 表的条目引用字段
+按增量 schema 更新覆盖 SQLite 与 OceanBase。既有数据无需重写；Memory flush、Experience incubation、Handoff、
 基础 Artifact 管理、PreparedContext 和 Skill 分发的既有行为保持。OpenAPI 与生成绑定和实现一同更新。
 
 ## 验收
@@ -506,15 +537,31 @@ Scope 的引用。读取原 Scope 证据仍需独立授权；Dream 首版不会�
 | 已足够完整／证据不足 | succeeded + no_change／needs_evidence，没有 Candidate |
 | 模型伪造引用或错误 Family | failed，无 Candidate 和 Artifact 写入 |
 | 相同 key 重放／相同 key 改请求 | 同一 Run／409 |
-| 崩溃后接管，旧 Worker 迟到 | 最多一个结果提交；旧 generation 无法写入 |
+| Supervisor 接管，旧 Worker 迟到 | 最多一个结果提交；旧任期或尝试 generation 无法写入 |
+| 多个 Run 合并唤醒／生成中又有请求到达 | 每个 Run 分别执行；不吞掉新代次，关闭自动周期也能完成后继请求 |
+| Dream 与 Experience Source 孵化共用 Family | Dream 完成不推进 Source Cursor，不清除普通 Source dirty |
+| API 无模型、后台配置模型 | OceanBase 的 global/dedicated 模式均可跨进程受理、生成、审核 |
 | Candidate 事务中途失败／提交后响应丢失 | 整体回滚可重试／恢复已有终态且不重复产物 |
 | 生成中或审核前 target 前进 | 运行冲突／审批冲突，不覆盖新 head |
 | 排队后授权撤回或证据不可用 | 不继续读取或提交未获授权的内容 |
 | derive_skill 成功 | pending Skill，通过既有审核与包校验；不自动执行或分发 |
 | pending、rejected 和 DreamRun 文本命中查询 | 不进入 Artifact search 或 PreparedContext |
 
-SQLite 与 OceanBase 使用同一套持久化、租约、原子提交和审核行为测试。另以真实配置的模型完成端到端验收，
+SQLite 与 OceanBase 使用同一套持久化、Supervisor 任期隔离、原子提交和审核行为测试。另以真实配置的模型完成端到端验收，
 确认错误和 usage 可见，不把 mock 测试当成实际生成效果。
+
+真实验收入口使用 `.env` 的推理配置和 OceanBase 连接，在隔离数据库中执行本地故障注入任务，形成 Memory 证据，
+经真实 HTTP、Supervisor 子进程和 LLM 完成 Experience 与 Skill 的生成、审核、召回和条目停用检查，结束后清理数据库：
+
+```bash
+uv run python -m tests.e2e.artifact_dream_real --env-file .env \
+  --case sqlite-global --output /tmp/dream-sqlite-global.json
+uv run python -m tests.e2e.artifact_dream_real --env-file .env \
+  --case oceanbase-split-dedicated --output /tmp/dream-oceanbase-split-dedicated.json
+```
+
+完整矩阵还包括 `sqlite-dedicated`、`oceanbase-global`、`oceanbase-dedicated` 和 `oceanbase-split-global`。
+Memory 条目提取使用确定性适配器；Dream 生成使用配置的真实模型。能力验收不代表候选质量或后续任务收益的统计证明。
 
 效果评估按时间分开历史输入与后续保留任务，比较无梦境、普通摘要和本设计三组，记录候选接受率、审核修改量、
 错误概括、后续任务完成情况以及前后台总 token 成本。后续任务答案不能进入梦境输入。首版交付必须包含至少一个

@@ -12,13 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Durable Dream idempotency, keyset paging, leases, and fencing."""
+"""Durable Dream idempotency, keyset paging and Supervisor-owned execution attempts."""
 
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import and_, func, insert, or_, select, true, update
+from sqlalchemy import and_, func, insert, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncConnection
 
 from powercontext.builtin.dream.models import (
@@ -95,7 +95,7 @@ class DreamRepository:
                 status=run.status,
                 accepted_at=ticks(run.accepted_at),
                 generation=0,
-                lease_expires_at=None,
+                request_generation=record.request_generation,
                 payload=_payload(record),
             )
         )
@@ -164,92 +164,61 @@ class DreamRepository:
         )
         return int(value or 0)
 
-    async def ready(
+    async def next_pending(
         self,
         connection: AsyncConnection,
+        scope_id: str,
+        operation: str,
         *,
-        limit: int,
-        trusted_runtime_only: bool = False,
-    ) -> tuple[tuple[str, str], ...]:
-        now = await database_now(connection)
-        rows = (
-            await connection.execute(
-                select(RUNS.c.scope_id, RUNS.c.run_id)
-                .where(
-                    RUNS.c.principal_key == content_digest(b"runtime")[7:] if trusted_runtime_only else true(),
-                    or_(
-                        RUNS.c.status == "queued",
-                        and_(RUNS.c.status == "running", RUNS.c.lease_expires_at <= ticks(now)),
-                    ),
-                )
-                .order_by(RUNS.c.accepted_at, RUNS.c.run_id)
-                .limit(limit)
-            )
-        ).all()
-        return tuple((str(row.scope_id), str(row.run_id)) for row in rows)
+        through_generation: int | None = None,
+    ) -> DreamRecord | None:
+        statement = select(RUNS.c.payload).where(
+            RUNS.c.scope_id == scope_id,
+            RUNS.c.operation == operation,
+            RUNS.c.status.in_(("queued", "running")),
+        )
+        if through_generation is not None:
+            statement = statement.where(RUNS.c.request_generation <= through_generation)
+        payload = await connection.scalar(
+            statement.order_by(RUNS.c.request_generation, RUNS.c.accepted_at, RUNS.c.run_id).limit(1)
+        )
+        return None if payload is None else _decode(payload)
 
     async def claim(
         self,
         connection: AsyncConnection,
-        scope_id: str,
-        run_id: str,
+        record: DreamRecord,
         *,
-        owner: str,
-        lease_seconds: float,
-    ) -> DreamRecord | None:
+        model_config_id: str | None,
+    ) -> DreamRecord:
+        """Start an attempt inside the caller's fenced Scope invocation."""
+
         now = await database_now(connection)
-        eligible = and_(
-            RUNS.c.scope_id == scope_id,
-            RUNS.c.run_id == run_id,
-            or_(
-                RUNS.c.status == "queued",
-                and_(RUNS.c.status == "running", RUNS.c.lease_expires_at <= ticks(now)),
-            ),
-        )
-        # This conditional write serializes claimants on both SQLite and OceanBase.
-        result = await connection.execute(update(RUNS).where(eligible).values(generation=RUNS.c.generation + 1))
-        if result.rowcount != 1:
-            return None
-        record = await self.get(connection, scope_id, run_id, current=True)
         deadline = record.deadline_at or now + timedelta(seconds=record.run.budget.timeout_seconds)
-        if now >= deadline or record.run.attempt_count >= record.run.budget.max_model_calls:
-            exhausted = record.model_copy(
-                update={
-                    "generation": record.generation + 1,
-                    "lease_owner": None,
-                    "lease_expires_at": None,
-                    "run": record.run.model_copy(
-                        update={
-                            "status": "failed",
-                            "error": "budget_exceeded",
-                            "completed_at": now,
-                        }
-                    ),
-                }
-            )
-            await self._store(connection, exhausted)
-            return exhausted
         run = record.run.model_copy(
             update={
                 "status": "running",
                 "started_at": record.run.started_at or now,
-                "attempt_count": record.run.attempt_count + 1,
+                "model_config_id": record.run.model_config_id or model_config_id,
             }
         )
+        if now >= deadline or run.attempt_count >= run.budget.max_model_calls:
+            run = run.model_copy(update={"status": "failed", "error": "budget_exceeded", "completed_at": now})
+        else:
+            run = run.model_copy(update={"attempt_count": run.attempt_count + 1})
         claimed = record.model_copy(
             update={
                 "run": run,
                 "generation": record.generation + 1,
-                "lease_owner": owner,
                 "deadline_at": deadline,
-                "lease_expires_at": min(deadline, now + timedelta(seconds=lease_seconds)),
             }
         )
         await self._store(connection, claimed)
         return claimed
 
     async def lock_owned(self, connection: AsyncConnection, record: DreamRecord) -> None:
-        now = await database_now(connection)
+        """Protect one attempt; the enclosing transaction must also fence its Supervisor."""
+
         result = await connection.execute(
             update(RUNS)
             .where(
@@ -257,44 +226,19 @@ class DreamRepository:
                 RUNS.c.run_id == record.run.run_id,
                 RUNS.c.status == "running",
                 RUNS.c.generation == record.generation,
-                RUNS.c.lease_expires_at > ticks(now),
             )
             .values(generation=RUNS.c.generation)
         )
         if result.rowcount != 1:
-            raise DreamError("lease_lost")
+            raise DreamError("attempt_conflict")
 
     async def checkpoint(self, connection: AsyncConnection, record: DreamRecord) -> None:
         await self.lock_owned(connection, record)
-        if record.run.status == "running":
-            current = await self.get(connection, record.run.scope_id, record.run.run_id, current=True)
-            record = record.model_copy(update={"lease_expires_at": current.lease_expires_at})
         await self._store(connection, record)
-
-    async def renew(
-        self,
-        connection: AsyncConnection,
-        record: DreamRecord,
-        *,
-        lease_seconds: float,
-    ) -> DreamRecord:
-        await self.lock_owned(connection, record)
-        now = await database_now(connection)
-        if record.deadline_at is None or now >= record.deadline_at:
-            raise DreamError("budget_exceeded")
-        current = await self.get(connection, record.run.scope_id, record.run.run_id, current=True)
-        renewed = current.model_copy(
-            update={
-                "lease_expires_at": min(record.deadline_at, now + timedelta(seconds=lease_seconds)),
-            }
-        )
-        await self._store(connection, renewed)
-        return renewed
 
     async def finish(self, connection: AsyncConnection, record: DreamRecord, run: DreamRun) -> None:
         await self.lock_owned(connection, record)
-        terminal = record.model_copy(update={"run": run, "lease_owner": None, "lease_expires_at": None})
-        await self._store(connection, terminal)
+        await self._store(connection, record.model_copy(update={"run": run}))
 
     async def _store(self, connection: AsyncConnection, record: DreamRecord) -> None:
         await connection.execute(
@@ -306,7 +250,7 @@ class DreamRepository:
             .values(
                 status=record.run.status,
                 generation=record.generation,
-                lease_expires_at=None if record.lease_expires_at is None else ticks(record.lease_expires_at),
+                request_generation=record.request_generation,
                 payload=_payload(record),
             )
         )

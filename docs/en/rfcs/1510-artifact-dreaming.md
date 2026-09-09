@@ -7,7 +7,8 @@
   [Standard Skill lifecycle](1351_standard_skill_package_lifecycle.md),
   [Access control](1396_handoff_access_control.md),
   [Source and Artifact REST API](1437_source_artifact_rest_api.md),
-  [Topic Memory and background processing](1417_topic_memory.md)
+  [Topic Memory and background processing](1417_topic_memory.md),
+  [Artifact Processing Supervisor](1515_artifact_processing_supervisor.md)
 
 # Summary
 
@@ -428,7 +429,7 @@ normalizing references:
 
 - the same key and request return the original run without execution; queued/running return 202 and terminal runs 200;
 - the same key with a different request returns 409 idempotency_conflict;
-- an accepted run pins its policy and model configuration identity; replay cannot switch to new configuration;
+- admission pins policy and budget; first execution pins model configuration identity, which retries and takeover preserve;
 - replaying a failed run's key returns that failure; an explicit retry uses a new key;
 - the first release does not guarantee semantic deduplication across different keys. Automatic discovery requires a
   stable work key and suppression of previously rejected proposals before release.
@@ -437,22 +438,25 @@ After validating identity, request shape, and current Scope read permission, loo
 admission checks. Return a matching record under current query authorization. An advanced target, removed model
 configuration, or full capacity does not prevent replay of the existing result or trigger generation.
 
-A new DreamRun table stores normalized request, manifest, generation configuration identity, budgets, status, attempt,
-lease, and result. Add a nullable serialized memory_citations column to both pc_artifact_candidate_versions and
+The pc_dream_runs table stores normalized request, manifest, generation configuration identity, budgets, status, attempt,
+request generation, and result. Admission commits the Run and its Family invocation intent in one transaction. Add a nullable serialized memory_citations column to both pc_artifact_candidate_versions and
 pc_artifacts, decoding old rows as empty collections. Candidates and Artifacts retain their existing tables and relations.
 No Memory copy table or entry-evidence relation table is needed. Idempotency, status, and results reside in the authoritative
 database; committed entry provenance does not depend on Run retention or logs.
 
-Run states are `queued | running | succeeded | failed`. Workers claim work through a lease with a monotonically
-increasing generation. Takeover requires lease expiry, and an old worker cannot commit. The first execution records an
-absolute deadline that retries and takeover do not reset.
+Run states are `queued | running | succeeded | failed`. The Supervisor term is the sole execution authority. A monotonic
+Run attempt generation protects against stale attempt updates without a separate Run lease or heartbeat. First execution
+records an absolute deadline and model configuration identity; retries and takeover reset neither. Before execution,
+model_config_id is null. The persisted input manifest remains immutable.
 
 Model calls, content projection, and necessary package preparation happen outside the write transaction. Success uses one
 short transaction:
 
-1. Check lease generation, run state, current authorization, entry anchors and current active state, source availability, and target head.
+1. Check the Supervisor holder, generation, term validity and request generation in the same transaction, then check
+   Run attempt generation, state, current authorization, exact active entries, source availability and target head.
 2. Create at most one Candidate through a Review writer bound to the same transaction.
-3. Persist outcome, exact Candidate reference, and completed_at; mark the run succeeded.
+3. Persist Candidate ownership, outcome, exact Candidate reference and completed_at; mark the Run succeeded and
+   acknowledge the Scope invocation. Atomically retain or request a successor invocation for remaining Runs.
 
 No change and insufficient evidence also persist reasoned terminal results without creating Candidates. Any failure rolls
 back the whole transaction. A Candidate must not exist without a corresponding confirmed run result. If the transaction
@@ -463,7 +467,7 @@ the output and Review page should identify its historical baseline. If the targe
 fails with artifact_conflict. If it advances after Candidate persistence, existing approval CAS prevents publication.
 
 A timeout, transient network error, or worker crash allows at most one additional attempt within the total budget.
-Deterministic input errors, revocation, target conflict, and invalid model output fail immediately. Lease recovery and
+Deterministic input errors, revocation, target conflict, and invalid model output fail immediately. Supervisor takeover and
 internal provider retries count toward the total attempt/call budget. Unconfirmed usage is unknown, not zero cost.
 
 Approval of a Dream-origin Candidate must recheck the availability and admissibility of the evidence actually referenced
@@ -476,24 +480,54 @@ provenance and appear as unavailable during later use; automatic cascading retra
 
 ## Execution ownership, budgets, and existing processors
 
-DreamRun represents a user request with a specific result. Topic Memory Pending/Source Cursor records represent new
-Sources that need processing. Their progress records remain separate. Dream uses the Runtime scheduler lifecycle to wake
-persisted queued runs, with database Run leases and generations preventing duplicate commits. It does not create another
-global leader-election service or substitute APScheduler's in-process exclusion for database leases.
+Dream executes through the [Artifact Processing Supervisor](1515_artifact_processing_supervisor.md), with no independent
+scheduler, polling dispatcher or Run lease. DreamRun is a business request record, not an Artifact Family or generic Job history.
 
-Dream generation is available only with `artifact_processing_role=all`. The split `api` and `background` roles serve
-Topic Memory's ArtifactProcessingSupervisor and do not accept new Dream work. SQLite supports a single all process with
-restart recovery; multiple OceanBase all replicas coordinate through database Run leases and generations.
+| Dream operation | Output Family | Supervisor binding |
+| --- | --- | --- |
+| refine_experience | experience | The existing canonical Experience incubation binding |
+| derive_skill | skill | skill.dream.v1 |
 
-Dream and Topic Memory currently enforce separate execution concurrency limits. Integrating Dream with the Supervisor's
-shared quota and fencing is a future extension. That integration must check the Supervisor holder_id, scheduling
-generation, lease validity, and Run lease generation together before enabling the corresponding split deployment.
+Each Family retains one binding. The Experience processor first selects the oldest pending Dream within the claimed
+request generation and executes one attempt; otherwise it runs its existing Source incubation. A Dream invocation never
+advances or clears the Experience Source Cursor. Skill Dream has no automatic Source scan. Neither operation discovers
+new artifacts to refine automatically or gains permission to approve Candidates from a schedule.
 
-Only deployments capable of executing work accept POST. Missing generation models or execution configuration return
-503 capability_unavailable before creating a Run. Startup scans queued and recoverable runs so admitted work never exists
-only in memory. Periodic wakeups dispatch requested work; the first release does not periodically select new artifacts.
+The API transaction stores exact request inputs, requester identity and Run while advancing the output Family's Scope
+request generation. It wakes the local Supervisor after commit. OceanBase uses existing cross-process discovery; SQLite
+adds no idle database polling. A rolled-back admission leaves neither a Run nor an orphaned intent. Idempotent replay
+never increments the scheduling request generation.
 
-Initial server-owned budgets follow. Deployers may tighten them; API callers cannot relax them:
+Workers select only Runs accepted at or before their claimed generation. Wakeups may coalesce, while every Run retains
+its own inputs, principal, result and budget. Later requests cannot be acknowledged by an earlier invocation. An attempt
+commits its terminal result or bounded retry state together with invocation acknowledgement. Remaining Runs atomically
+retain or create a successor request, so explicit work completes with automatic scheduling disabled. Ordinary Source
+dirty state remains owned by Experience incubation and is not cleared when Dream finishes.
+
+The Supervisor owns subprocesses, per-Family Worker capacity, Scope single-flight, timeouts and takeover. Global mode
+shares one controller term; dedicated mode separates terms by Family. Both modes use experience_max_workers and
+skill_max_workers, each defaulting to 1, with respective Scope Worker timeouts defaulting to 600 seconds. These execution
+limits are separate from each Run's cumulative model, evidence and elapsed-time budgets. The child constructs its Dream
+generator using the selected Run's budget. The foreground generation_concurrency semaphore is not a global subprocess quota.
+
+Deterministic errors and budget exhaustion finish the Run as failed and acknowledge the invocation; they never cause
+unlimited model retries. The Supervisor recovers incomplete transactions, crashed Workers and lost leadership using the
+same Run, fixed input, cumulative attempts and absolute deadline. Candidate, ownership, Run outcome and invocation
+acknowledgement commit atomically. Every stale-term write transaction fails in full. Review waiting consumes no Worker,
+and terminal Runs never invoke the model again.
+
+OceanBase supports all and split api/background roles. SQLite retains one all-role host with either Supervisor mode.
+The API may declare Experience/Skill through artifact_processing_families without configuring a generation model;
+background instances supply execution resources. Child generators and authorization adapters must be reconstructable,
+without relying on parent-process closures. Dream always checks the original requester's current permissions rather
+than borrowing a background service principal's evidence or write access.
+
+The dream_enabled setting controls new admission, and dream_max_pending_per_scope bounds unfinished Runs per Scope.
+Missing output-Family capability returns 503 capability_unavailable for new work; existing results remain readable and
+replayable under current query authorization. The /v1/scopes/{scope_id}/dream create/get/list operations and existing
+Review APIs remain the business interfaces; no generic Job API is added.
+
+Initial server-side budgets may be tightened by the deployment, never relaxed by API callers:
 
 | Budget | First-release limit |
 | --- | --- |
@@ -531,7 +565,7 @@ contain stable codes, identities, counts, and usage rather than evidence bodies,
 and reasons are always rendered as untrusted content.
 
 Implementation adds Dream OpenAPI operations/schemas, generated Python Client bindings, Runtime entry points, a Run
-repository, dispatcher, Memory resolver, Family generation adapters, Candidate/Artifact entry citations, and Inbox
+repository, Supervisor Family adapters, Memory resolver, Family generation adapters, Candidate/Artifact entry citations, and Inbox
 provenance display. Reuse the existing MemoryCitation schema and extend Experience propose, Candidate revise/get/list,
 and Artifact exact read citation contracts. ArtifactDraft/Repository must carry and persist entry citations. Existing
 reference parameters retain their semantics; entry citations are stored in the current Candidate version.
@@ -542,7 +576,9 @@ A cross-Scope published copy follows existing publication_source provenance to t
 MemoryCitations must not be reinterpreted in the destination Scope. Reading original evidence still requires separate
 authorization. First-release Dreaming does not expand evidence bodies across Scopes.
 
-Migrations must cover SQLite and OceanBase. Existing data needs no rewrite. Existing Memory flush, Experience incubation,
+Dream tables are created directly from this design, without migration compatibility for unpublished Dream schemas.
+Entry citation columns in existing Candidate/Artifact tables use additive schema updates on SQLite and OceanBase.
+Existing data needs no rewrite. Existing Memory flush, Experience incubation,
 Handoff, basic Artifact management, PreparedContext, and Skill distribution behavior remains. OpenAPI and generated
 bindings are updated together with the implementation.
 
@@ -566,14 +602,32 @@ bindings are updated together with the implementation.
 | Model invents a reference or returns the wrong Family | failed without Candidate or Artifact writes |
 | Replay same key / change request under the same key | Same Run / 409 |
 | Takeover after a crash and a late old worker | At most one committed result; old generation cannot write |
+| Coalesced wakeups or requests arriving during generation | Each Run executes independently; newer generations survive and successors run without an automatic schedule |
+| Dream shares the Experience Family with Source incubation | Dream completion neither advances the Source Cursor nor clears ordinary Source dirty |
+| Model-free API with model-configured background processes | OceanBase global/dedicated modes support cross-process admission, generation, and review |
 | Failure within Candidate transaction / response lost after commit | Full rollback and retry / recovery of existing terminal state without duplicate output |
 | Target advances during generation or before approval | Run conflict / approval conflict without overwriting the new head |
 | Authorization revoked or evidence unavailable after queuing | No continued unauthorized read or commit |
 | derive_skill succeeds | Pending Skill with existing review and package validation; no automatic execution or distribution |
 | Queries match pending, rejected, or DreamRun text | Excluded from Artifact search and PreparedContext |
 
-SQLite and OceanBase share persistence, lease, atomic commit, and review behavior tests. End-to-end acceptance must also
+SQLite and OceanBase share persistence, Supervisor fencing, atomic commit, and review behavior tests. End-to-end acceptance must also
 use a real configured model and verify visible errors and usage; mock tests do not establish actual generation quality.
+
+The real acceptance entrypoint reads inference and OceanBase configuration from `.env`, runs local tasks with explicit
+fault injection to create Memory evidence, and uses real HTTP, Supervisor subprocesses, and the LLM for Experience/Skill
+generation, review, recall, and entry deactivation checks. It cleans up its isolated databases on exit:
+
+```bash
+uv run python -m tests.e2e.artifact_dream_real --env-file .env \
+  --case sqlite-global --output /tmp/dream-sqlite-global.json
+uv run python -m tests.e2e.artifact_dream_real --env-file .env \
+  --case oceanbase-split-dedicated --output /tmp/dream-oceanbase-split-dedicated.json
+```
+
+The complete matrix also includes `sqlite-dedicated`, `oceanbase-global`, `oceanbase-dedicated`, and
+`oceanbase-split-global`. Memory extraction uses a deterministic adapter; Dream generation uses the configured real model.
+Capability acceptance does not establish statistical evidence of Candidate quality or later task improvements.
 
 For effectiveness, separate historical inputs from later held-out tasks by time. Compare no dreaming, ordinary summaries,
 and this design, recording acceptance, reviewer edits, incorrect generalizations, later task outcomes, and total foreground

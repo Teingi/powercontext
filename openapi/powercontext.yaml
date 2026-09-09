@@ -5227,6 +5227,7 @@ components:
           type: string
         model_config_id:
           type: string
+          nullable: true
       required:
       - scope_id
       - run_id
