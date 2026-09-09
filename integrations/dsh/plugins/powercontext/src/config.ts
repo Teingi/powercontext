@@ -29,6 +29,7 @@ export interface PluginConfig {
 
 export interface ResolvedConfig {
   contextAssembly?: Record<string, unknown>
+  sources: { baseUrl: ConfigSource; authorization: ConfigSource; scopeId: ConfigSource }
   baseUrl: string
   authorization: string | undefined
   scopeId: string | undefined
@@ -40,7 +41,10 @@ export interface ResolvedConfig {
   flushMaxCalls: number
 }
 
+export type ConfigSource = 'environment' | 'plugin' | 'default'
+
 const DEFAULTS: ResolvedConfig = {
+  sources: { baseUrl: 'default', authorization: 'default', scopeId: 'default' },
   baseUrl: 'http://127.0.0.1:8000',
   authorization: undefined,
   scopeId: undefined,
@@ -98,6 +102,11 @@ export function resolveConfig(
   }
   return {
     contextAssembly: contextAssembly(envString(env, 'POWERCONTEXT_DSH_CONTEXT_ASSEMBLY'), config.contextAssembly),
+    sources: {
+      baseUrl: envString(env, 'POWERCONTEXT_DSH_BASE_URL') ? 'environment' : config.baseUrl ? 'plugin' : 'default',
+      authorization: envString(env, 'POWERCONTEXT_DSH_AUTHORIZATION') ? 'environment' : optionalText(config.authorization) ? 'plugin' : 'default',
+      scopeId: envString(env, 'POWERCONTEXT_DSH_SCOPE_ID') ? 'environment' : optionalText(config.scopeId) ? 'plugin' : 'default',
+    },
     baseUrl: stripSlash(envString(env, 'POWERCONTEXT_DSH_BASE_URL') ?? config.baseUrl ?? DEFAULTS.baseUrl),
     authorization: envString(env, 'POWERCONTEXT_DSH_AUTHORIZATION') ?? optionalText(config.authorization),
     scopeId: envString(env, 'POWERCONTEXT_DSH_SCOPE_ID') ?? optionalText(config.scopeId),

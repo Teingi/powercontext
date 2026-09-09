@@ -29,18 +29,6 @@ interface PluginConfig {
   flushOnCapture?: boolean;
   flushMaxCalls?: number;
 }
-interface ResolvedConfig {
-  contextAssembly?: Record<string, unknown>;
-  baseUrl: string;
-  authorization: string | undefined;
-  scopeId: string | undefined;
-  timeoutMs: number;
-  requestTimeoutMs: number;
-  maxBytes: number;
-  capturePrompts: boolean;
-  flushOnCapture: boolean;
-  flushMaxCalls: number;
-}
 //#endregion
 //#region src/index.d.ts
 declare const name = "powercontext-dsh";
@@ -51,7 +39,7 @@ declare const Config: {
     version: 1;
     vendor: string;
     validate(value: unknown): {
-      value: ResolvedConfig;
+      value: PluginConfig;
       issues?: undefined;
     } | {
       issues: {
