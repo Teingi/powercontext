@@ -25,14 +25,13 @@ from pydantic import BaseModel, Field
 
 from powercontext.client import PowerContextClient
 from powercontext.http import (
-    ContextAssembly,
     PrepareContextRequest,
     RememberMemoryRequest,
     ScopeBindingKey,
     SearchMemoryRequest,
 )
 
-from .plugin import STATE_KEY, open_client
+from .plugin import STATE_KEY, ContextAssembly, open_client
 from .scope import resolve_scope_id
 
 
