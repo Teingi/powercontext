@@ -86,6 +86,7 @@ from powercontext.builtin.persistence.oceanbase.topic_memory_index import (
     OceanBaseTopicMemoryFTSIndex,
     OceanBaseTopicMemoryVectorIndex,
 )
+from powercontext.builtin.persistence.scope_search_schema import ensure_scope_search_schema
 from powercontext.builtin.persistence.seekdb.profile import SeekDBConfig, SeekDBProfile
 from powercontext.builtin.persistence.skill_distribution_schema import ensure_skill_distribution_schema
 from powercontext.builtin.persistence.sqlite.experience_index import SQLiteExperienceFTSIndex
@@ -656,6 +657,7 @@ async def open_builtin_contexts(
             async with profile.database.transaction() as connection:
                 await ensure_skill_distribution_schema(connection)
                 await ensure_dream_schema(connection)
+                await ensure_scope_search_schema(connection)
                 # A Topic child reuses its parent's schema. It never reads or
                 # writes Memory/Experience projections; rebuilding their FTS
                 # indexes here would take the shared SQLite write lock once
@@ -710,6 +712,7 @@ async def open_builtin_contexts(
         async with profile.database.transaction() as connection:
             await ensure_skill_distribution_schema(connection)
             await ensure_dream_schema(connection)
+            await ensure_scope_search_schema(connection)
             if not _topic_memory_worker:
                 await index.initialize(connection)
                 await experience_index.initialize(connection)
