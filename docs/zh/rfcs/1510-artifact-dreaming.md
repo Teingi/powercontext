@@ -7,7 +7,7 @@
   [标准 Skill 生命周期](1351_standard_skill_package_lifecycle.md)、
   [访问控制](1396_handoff_access_control.md)、
   [Source 与 Artifact 基础 API](1437_source_artifact_rest_api.md)、
-  [Topic Memory 与后台处理](0000_topic_memory.md)
+  [Topic Memory 与后台处理](1417_topic_memory.md)
 
 # Summary
 

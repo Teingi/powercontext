@@ -7,7 +7,7 @@
   [Standard Skill lifecycle](1351_standard_skill_package_lifecycle.md),
   [Access control](1396_handoff_access_control.md),
   [Source and Artifact REST API](1437_source_artifact_rest_api.md),
-  [Topic Memory and background processing](0000_topic_memory.md)
+  [Topic Memory and background processing](1417_topic_memory.md)
 
 # Summary
 
