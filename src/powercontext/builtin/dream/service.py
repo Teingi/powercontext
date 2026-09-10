@@ -46,7 +46,7 @@ from powercontext.builtin.dream.models import (
     ListDreamRunsRequest,
 )
 from powercontext.builtin.evidence.models import EvidenceResolutionError, ResolvedEvidence
-from powercontext.builtin.evidence.resolver import EvidenceAuthorizer, EvidenceReference, EvidenceResolver
+from powercontext.builtin.evidence.resolver import EvidenceAuthorizer, EvidenceReference, EvidenceResolver, evidence_id
 from powercontext.builtin.evidence.selection import select_evidence
 from powercontext.builtin.inference.errors import (
     InferenceTimeoutError,
@@ -272,7 +272,7 @@ class DreamService:
         generated = await self.generator.generate(
             DreamGenerationInput(
                 operation=run.operation,
-                replaces_experience=run.target is not None,
+                target_evidence_id=None if run.target is None else evidence_id(run.target),
                 evidence=resolved.projection,
             )
         )

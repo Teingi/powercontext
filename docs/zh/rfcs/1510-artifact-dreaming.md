@@ -240,6 +240,10 @@ Run manifest 保存“引用锚点 → 条目／Experience → 根 Source 组”
 Builtin Runtime 提供固定、内部的 Dream pipeline，复用 Family-owned typed generation 和 Review writer。
 首版不增加公开 planner registry 或可执行 pipeline DSL。
 
+模型输入中的 `target_evidence_id` 标识证据投影里待替换的精确 Experience Revision。存在 target 时，其他
+Experience 只提供上下文和支持材料，模型只能针对该目标提出替换；没有 target 时该字段为 null，表示创建新制品。
+该标识由 Runtime 从请求的 target 构建，模型不能自行选择另一个替换目标。
+
 生成器只返回下列三种强类型结果之一：
 
 | outcome | 内容 |
@@ -273,6 +277,9 @@ memory_citations；其中间条目仅作溯源，模型直接证据仍是所选 
 32 项上限约束直接引用，包括显式 MemoryCitation 所需的根 Source 依赖。仅通过 Artifact 引用可达的
 Source 继续保留在该 Artifact 的 lineage 中，审核不会把它们复制到 Candidate 的直接引用。
 当前权限以及直接、传递 Memory 条目的有效性仍须校验，批准时通过 Memory head 锁防止并发停用绕过检查。
+Review 沿本地制品保存的 lineage 逐级遍历，包括 Skill 的历史 Revision 和上游 Experience；提案、修订和批准均
+重新校验其间接引用的 Memory 条目及当前读取权限。此遍历不受 Dream 输入 Family 限制，也不把 Skill 正文加入
+Dream 的证据投影。Prompt 仍只代表生成配置，跨 Scope 发布制品的边界不被隐式展开。
 
 - Experience propose 与 Candidate revise 请求接受该可选字段；revise 省略或设为 null 时保留当前集合，显式数组完整替换，
   `[]` 表示移除。来源依赖重新解析和校验，不能保留条目引用却移除其必要根来源。现有审核端点不增加。

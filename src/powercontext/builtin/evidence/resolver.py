@@ -134,7 +134,10 @@ class EvidenceResolver:
             if self.authorize is not None:
                 await self.authorize(ref)
             try:
-                node, _, children = await self._read(connection, ref, state, direct=direct, locked=locked)
+                if isinstance(ref, ArtifactRef):
+                    node, children = await self._read_review_artifact(connection, ref)
+                else:
+                    node, _, children = await self._read(connection, ref, state, direct=direct, locked=locked)
             except RepositoryNotFoundError as error:
                 raise EvidenceResolutionError("reference_not_found" if direct else "evidence_unavailable") from error
             except (InvalidMemoryCitationError, MemoryEntryNotFoundError) as error:
@@ -150,6 +153,26 @@ class EvidenceResolver:
             state.edges.update((node.evidence_id, evidence_id(child)) for child in children)
             pending.extend((child, False) for child in children)
         return state
+
+    async def _read_review_artifact(
+        self, connection: AsyncConnection, ref: ArtifactRef
+    ) -> tuple[EvidenceNode, tuple[EvidenceReference, ...]]:
+        """Follow local Review lineage independently of Dream's supported input Families."""
+
+        artifact = await self.artifacts.get(connection, self.scope_id, ref)
+        children: tuple[EvidenceReference, ...] = ()
+        if ref.family != "prompt" and artifact.lineage.publication_source is None:
+            children = (*artifact.lineage.sources, *artifact.lineage.artifacts, *artifact.lineage.memory_citations)
+        return (
+            EvidenceNode(
+                evidence_id=evidence_id(ref),
+                kind="unresolved",
+                artifact=ref,
+                digest=content_digest(artifact.model_dump_json().encode()),
+                role="lineage_only",
+            ),
+            children,
+        )
 
     async def resolve(
         self,

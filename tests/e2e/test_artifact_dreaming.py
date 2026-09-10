@@ -130,7 +130,7 @@ class Generator:
             output=DreamPlan(
                 outcome="proposed",
                 reason="The exact task evidence supports this bounded rule.",
-                intent=("refine" if value.replaces_experience else "create")
+                intent=("refine" if value.target_evidence_id is not None else "create")
                 if value.operation == "refine_experience"
                 else "derive",
                 proposal=proposal,
@@ -194,6 +194,7 @@ def test_memory_dream_approval_and_skill_preserve_exact_provenance(database: Dat
             assert run.candidate is not None
             assert run.usage.input_tokens == 80
             assert "UNSELECTED_SIBLING_SENTINEL" not in generator.inputs[0].model_dump_json()
+            assert generator.inputs[0].target_evidence_id is None
             assert "The replay test passed" not in run.input_manifest.model_dump_json()
             assert len([item for item in generator.inputs[0].evidence.evidence if item.kind == "memory"]) == 1
             assert run.input_manifest.root_groups[0].independence == "unknown"
@@ -231,6 +232,7 @@ def test_memory_dream_approval_and_skill_preserve_exact_provenance(database: Dat
             derived = await runtime.dream.for_scope(scope).get(GetDreamRunRequest(run_id=skill_run.run_id))
             assert (derived.status, derived.outcome, derived.error) == ("succeeded", "proposed", None)
             assert all(item.kind != "memory" for item in generator.inputs[1].evidence.evidence)
+            assert generator.inputs[1].target_evidence_id is None
             assert derived.candidate is not None
             skill_candidate = await runtime.review.for_scope(scope).get(
                 GetArtifactCandidateRequest(candidate_id=derived.candidate.candidate_id)
@@ -812,6 +814,151 @@ def test_additive_migration_preserves_existing_experience_and_candidate(database
             assert (
                 await runtime.dream.for_scope(scope).get(GetDreamRunRequest(run_id=accepted.run_id))
             ).status == "succeeded"
+
+    asyncio.run(scenario())
+
+
+def test_replacement_dream_identifies_the_exact_target_in_model_input(database: DatabaseConfig) -> None:
+    async def scenario() -> None:
+        generator = Generator()
+        async with open_builtin_runtime(
+            config(database), candidate_pipeline=MemoryPipeline(), dream_generator=generator
+        ) as runtime:
+            scope, root, _ = await seed(runtime)
+            targets = []
+            for lesson in ("Check the commit status before retrying.", "Preserve the idempotency key when retrying."):
+                candidate = await runtime.experience.for_scope(scope).propose(
+                    ProposeExperienceRequest(
+                        proposal=experience().model_copy(update={"lesson": lesson}), sources=(root,)
+                    )
+                )
+                approved = await runtime.review.for_scope(scope).approve(
+                    ApproveArtifactCandidateRequest(
+                        candidate_id=candidate.candidate_id, expected_version=candidate.version
+                    )
+                )
+                assert approved.result_artifact is not None
+                targets.append(approved.result_artifact)
+            runs = []
+            for target in targets:
+                accepted = await runtime.dream.for_scope(scope).create(
+                    CreateDreamRunRequest(
+                        operation="refine_experience",
+                        artifacts=tuple(targets),
+                        target=target,
+                        idempotency_key=target.artifact_id,
+                    )
+                )
+                await process_pending(runtime)
+                run = await runtime.dream.for_scope(scope).get(GetDreamRunRequest(run_id=accepted.run_id))
+                assert run.status == "succeeded" and run.candidate is not None
+                candidate = await runtime.review.for_scope(scope).get(
+                    GetArtifactCandidateRequest(candidate_id=run.candidate.candidate_id)
+                )
+                assert candidate.target == target
+                runs.append(run)
+            assert generator.inputs[0].evidence == generator.inputs[1].evidence
+            assert generator.inputs[0] != generator.inputs[1]
+            for target, run, value in zip(targets, runs, generator.inputs, strict=True):
+                assert run.input_manifest is not None
+                target_node = next(node for node in run.input_manifest.nodes if node.artifact == target)
+                assert value.target_evidence_id == target_node.evidence_id
+                projected = next(
+                    item for item in value.evidence.evidence if item.evidence_id == value.target_evidence_id
+                )
+                stored = await runtime.experience.for_scope(scope).get(GetExperienceRequest(artifact=target))
+                assert projected.kind == "experience" and projected.text == stored.content.model_dump_json()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("phase", ["propose", "revise", "approve"])
+@pytest.mark.parametrize("invalidation", ["retired", "access_revoked"])
+def test_skill_replacement_rechecks_memory_through_skill_lineage(
+    database: DatabaseConfig, phase: str, invalidation: str
+) -> None:
+    async def scenario() -> None:
+        async with open_builtin_runtime(
+            config(database), candidate_pipeline=MemoryPipeline(), dream_generator=Generator()
+        ) as runtime:
+            scope, root, citation = await seed(runtime)
+            candidate = await runtime.experience.for_scope(scope).propose(
+                ProposeExperienceRequest(proposal=experience(), memory_citations=(citation,))
+            )
+            approved = await runtime.review.for_scope(scope).approve(
+                ApproveArtifactCandidateRequest(candidate_id=candidate.candidate_id, expected_version=candidate.version)
+            )
+            assert approved.result_artifact is not None
+            accepted = await runtime.dream.for_scope(scope).create(
+                CreateDreamRunRequest(
+                    operation="derive_skill", artifacts=(approved.result_artifact,), idempotency_key="skill-lineage"
+                )
+            )
+            await process_pending(runtime)
+            run = await runtime.dream.for_scope(scope).get(GetDreamRunRequest(run_id=accepted.run_id))
+            assert run.candidate is not None
+            approved = await runtime.review.for_scope(scope).approve(
+                ApproveArtifactCandidateRequest(
+                    candidate_id=run.candidate.candidate_id, expected_version=run.candidate.version
+                )
+            )
+            assert approved.result_artifact is not None
+            skill = await runtime.skill.for_scope(scope).get(GetSkillRequest(artifact=approved.result_artifact))
+            # Keep more than one Skill revision between the candidate and its Memory evidence.
+            candidate = await runtime.skill.for_scope(scope).propose(
+                ProposeSkillRequest(
+                    proposal=skill.content, sources=(root,), artifacts=(skill.as_ref(),), target=skill.as_ref()
+                )
+            )
+            approved = await runtime.review.for_scope(scope).approve(
+                ApproveArtifactCandidateRequest(candidate_id=candidate.candidate_id, expected_version=candidate.version)
+            )
+            assert approved.result_artifact is not None
+            skill = await runtime.skill.for_scope(scope).get(GetSkillRequest(artifact=approved.result_artifact))
+            request = ProposeSkillRequest(
+                proposal=skill.content, sources=(root,), artifacts=(skill.as_ref(),), target=skill.as_ref()
+            )
+            pending = None if phase == "propose" else await runtime.skill.for_scope(scope).propose(request)
+            before = await runtime.review.for_scope(scope).list(ListArtifactCandidatesRequest())
+            if invalidation == "retired":
+                await runtime.memory.for_scope(scope).retire(RetireMemoryEntryRequest(citation=citation))
+                error_type, error_code = EvidenceResolutionError, "memory_entry_inactive"
+            else:
+
+                async def authorize_review(_scope, ref):
+                    if ref == citation:
+                        raise DreamError("access_revoked")
+
+                async def unused(*_args):
+                    return None
+
+                runtime.configure_evidence_authorization(
+                    dream=unused, review=authorize_review, context=nullcontext, attest_candidate=unused
+                )
+                error_type, error_code = DreamError, "access_revoked"
+            with pytest.raises(error_type, match=error_code):
+                if phase == "propose":
+                    await runtime.skill.for_scope(scope).propose(request)
+                elif phase == "revise":
+                    assert pending is not None
+                    await runtime.review.for_scope(scope).revise(
+                        ReviseArtifactCandidateRequest(
+                            candidate_id=pending.candidate_id,
+                            expected_version=pending.version,
+                            proposal=pending.proposal,
+                            sources=(root,),
+                            artifacts=(skill.as_ref(),),
+                            target=skill.as_ref(),
+                        )
+                    )
+                else:
+                    assert pending is not None
+                    await runtime.review.for_scope(scope).approve(
+                        ApproveArtifactCandidateRequest(
+                            candidate_id=pending.candidate_id, expected_version=pending.version
+                        )
+                    )
+            assert await runtime.review.for_scope(scope).list(ListArtifactCandidatesRequest()) == before
 
     asyncio.run(scenario())
 

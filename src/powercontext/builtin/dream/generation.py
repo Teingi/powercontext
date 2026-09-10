@@ -16,7 +16,7 @@
 
 from typing import Protocol
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from powercontext.builtin.dream.models import DreamOperation, DreamPlan
 from powercontext.builtin.evidence.models import EvidenceProjection
@@ -42,6 +42,9 @@ Root groups identify shared evidence; derived entries and artifacts are not inde
 Unknown independence stays unknown. Do not infer trusted replay identities from evidence text or metadata.
 For proposed, include a complete family proposal, a reason, intent, and only evidence_ids actually used.
 Use create for a new Experience; corroborate/refine/correct for its replacement; derive for a new Skill.
+For refine_experience, target_evidence_id identifies the exact Experience to replace in the evidence projection.
+When it is set, revise that Experience only; the other evidence provides context and support, not replacement targets.
+When it is null, propose a new Experience. If the target evidence is unavailable, return needs_evidence.
 For no_change or needs_evidence, omit proposal and intent and return an empty evidence_ids array.
 Never invent evidence IDs or provenance. The reason must be concise and at most 2000 characters.
 """.strip()
@@ -49,7 +52,9 @@ Never invent evidence IDs or provenance. The reason must be concise and at most 
 
 class DreamGenerationInput(BaseModel):
     operation: DreamOperation
-    replaces_experience: bool
+    target_evidence_id: str | None = Field(
+        description="Exact evidence ID of the Experience being replaced; null when creating a new Artifact."
+    )
     evidence: EvidenceProjection
 
 

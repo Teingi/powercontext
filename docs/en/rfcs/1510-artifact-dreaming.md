@@ -271,6 +271,11 @@ the claims. This RFC does not describe semantic requirements as an accuracy guar
 Builtin Runtime provides a fixed internal Dream pipeline, reusing Family-owned typed generation and Review writers.
 The first release adds no public planner registry or executable pipeline DSL.
 
+The model input's `target_evidence_id` identifies the exact Experience Revision to replace in the evidence projection.
+When a target is set, other Experiences provide context and support; only that target may be replaced. A null value
+means creating a new Artifact. Runtime constructs this ID from the request target; the model cannot choose a different
+replacement target.
+
 The generator returns exactly one of these typed results:
 
 | outcome | Content |
@@ -311,6 +316,10 @@ depth, graph, or projection budgets. Their 32-reference limit applies to direct 
 dependencies of explicit Memory citations. Sources reachable only through an Artifact reference remain in that Artifact's
 lineage; review does not copy them into the Candidate's direct references. Current authorization and direct/transitive
 Memory validity checks still apply, with Memory head locks protecting approval against concurrent deactivation.
+Review follows stored local Artifact lineage through historical Skill Revisions and upstream Experiences. Proposal,
+revision, and approval recheck indirectly referenced Memory entries and current read permissions. This traversal is
+independent of Dream's input Family restrictions and does not add Skill bodies to Dream's evidence projection. Prompts
+remain generation configuration, and cross-Scope publication boundaries are not implicitly expanded.
 
 - Experience propose and Candidate revise accept this optional field. On revise, omission or null retains the current set, an
   explicit array replaces it completely, and [] removes it. Re-resolve and validate source dependencies; keeping an entry
