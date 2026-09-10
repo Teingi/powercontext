@@ -1723,6 +1723,7 @@ class PromptKey(StrEnum):
     EXPERIENCE_GENERATE = "experience.generate"
     SKILL_GENERATE = "skill.generate"
     HANDOFF_GENERATE = "handoff.generate"
+    PROFILE_GENERATE = "profile.generate"
 
 
 class SchemaVersion(StrEnum):

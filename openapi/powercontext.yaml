@@ -16,7 +16,7 @@ openapi: 3.0.3
 info:
   title: PowerContext API
   description: Remote PowerContext transport. Runtime behavior is reported by /v1/capabilities.
-  version: 0.2.0
+  version: 1.0.0rc1
 security:
   - BearerAuth: []
   - {}
@@ -3792,7 +3792,7 @@ paths:
           required: true
           schema:
             type: string
-            enum: [memory.extract, memory.rerank, experience.incubate, experience.generate, skill.generate, handoff.generate]
+            enum: [memory.extract, memory.rerank, experience.incubate, experience.generate, skill.generate, handoff.generate, profile.generate]
       requestBody:
         required: true
         content:
@@ -8992,7 +8992,7 @@ components:
           nullable: true
     PromptKey:
       type: string
-      enum: [memory.extract, memory.rerank, experience.incubate, experience.generate, skill.generate, handoff.generate]
+      enum: [memory.extract, memory.rerank, experience.incubate, experience.generate, skill.generate, handoff.generate, profile.generate]
     PromptContent:
       type: object
       additionalProperties: false

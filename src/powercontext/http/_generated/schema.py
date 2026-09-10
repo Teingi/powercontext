@@ -7,7 +7,7 @@ OPENAPI_SCHEMA: dict[str, JsonValue] = {
     "info": {
         "title": "PowerContext API",
         "description": "Remote PowerContext transport. Runtime behavior is reported by /v1/capabilities.",
-        "version": "0.2.0",
+        "version": "1.0.0rc1",
     },
     "paths": {
         "/v1/scopes/{scope_id}/subject-sources": {
@@ -3679,6 +3679,7 @@ OPENAPI_SCHEMA: dict[str, JsonValue] = {
                                 "experience.generate",
                                 "skill.generate",
                                 "handoff.generate",
+                                "profile.generate",
                             ],
                         },
                     },
@@ -7958,6 +7959,7 @@ OPENAPI_SCHEMA: dict[str, JsonValue] = {
                     "experience.generate",
                     "skill.generate",
                     "handoff.generate",
+                    "profile.generate",
                 ],
             },
             "PromptContent": {
