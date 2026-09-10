@@ -6,8 +6,8 @@ description: Configure full memory, connect Codex, and verify Source capture, To
 # Quick Start
 
 Start with installation, discuss a project in Codex, watch its input become Source evidence and an evolving topic,
-then recover the decisions in a new session. These instructions use PowerContext 1.0.0 RC2 for pre-release testing,
-with the Agent plugin from the matching `powercontext-v1.0.0rc2` tag.
+then recover the decisions in a new session. These instructions use the stable PowerContext 1.0.0 release,
+with the Agent plugin from the matching `powercontext-v1.0.0` tag.
 
 You need macOS or Linux, Python 3.11+, Git, [uv](https://docs.astral.sh/uv/getting-started/installation/),
 and an installed Codex CLI. Full memory also needs working Generation and Embedding model APIs:
@@ -18,7 +18,7 @@ and recall; that does not enable automatic Topic Memory.
 ## 1. Install and open the wizard
 
 ```bash
-uv tool install --force "powercontext[cli,server]==1.0.0rc2"
+uv tool install --force "powercontext[cli,server]==1.0.0"
 mkdir -p ~/powercontext-demo
 cd ~/powercontext-demo
 powercontext config init --language en --output .env
@@ -38,8 +38,7 @@ The wizard writes:
 
 | File | Purpose |
 | --- | --- |
-| `.env` | Server settings, database, model credentials, and Server token |
-| `.env` | Server, client, Agent, and model settings used by this installation |
+| `.env` | Server, client, Agent, database, and model settings, including credentials and the Server token |
 | `.env.next-steps.md` | Startup, Scope creation, plugin connection, and checks for your choices |
 
 The final screen shows the Dashboard URL, a newly generated token, and the SSH command when selected. Later, look up
@@ -94,7 +93,7 @@ Reload the client settings and install the matching plugin:
 set -a
 . ./.env
 set +a
-powercontext setup codex --ref powercontext-v1.0.0rc2
+powercontext setup codex --ref powercontext-v1.0.0
 powercontext doctor codex
 codex
 ```
