@@ -28,6 +28,38 @@ export interface Release {
 
 export const releases: Release[] = [
   {
+    version: 'v1.0.0rc2',
+    date: '2026-09-10',
+    title: {
+      en: '1.0.0 RC2: guided setup and reviewed learning workflows',
+      zh: '1.0.0 RC2：配置向导与可审核的经验沉淀',
+    },
+    summary: {
+      en: 'This release candidate adds interactive Server and Agent onboarding, persistent Agent authorization, a Topic Memory dashboard, and reviewed workflows from Memory to Experience and Skill.',
+      zh: '这个候选版本新增 Server 与 Agent 交互式配置向导、Agent 授权持久化、Topic Memory 面板，以及从 Memory 到 Experience、Skill 的审核工作流。',
+    },
+    changes: {
+      en: [
+        'Configure storage, model APIs, memory capabilities, Dashboard access, and Agent connections through powercontext config init, with an environment file and next-step instructions.',
+        'Persist PowerContext Agent authorization during setup so installed integrations can reuse their configured credentials.',
+        'Inspect Topic Memory in the Dashboard, including topic content and its supporting evidence.',
+        'Use Dream workflows to prepare Experience and Skill candidates from saved context, review them, and explicitly approve reusable results.',
+        'Require explicit consent for remote plain-HTTP connections across clients and integrations, with --allow-insecure-http for unattended setup.',
+        'Install package 1.0.0rc2 and update Agent integrations from powercontext-v1.0.0rc2, then restart the Server and open a new Agent session. This is a pre-release for testing.',
+      ],
+      zh: [
+        '通过 powercontext config init 配置存储、模型 API、记忆能力、Dashboard 访问和 Agent 连接，生成环境文件与后续操作说明。',
+        '安装集成时持久化 PowerContext Agent 授权，让已安装的集成复用配置好的凭据。',
+        '在 Dashboard 中查看 Topic Memory，包括主题内容及其证据。',
+        '通过 Dream 工作流从已保存的上下文准备 Experience 和 Skill 候选，审核并显式批准可复用的结果。',
+        '客户端和集成连接远程明文 HTTP 时需要显式同意；非交互安装使用 --allow-insecure-http。',
+        '安装 1.0.0rc2 包，并从 powercontext-v1.0.0rc2 更新 Agent 集成，然后重启 Server、开启新 Agent 会话。这是供测试使用的预发布版本。',
+      ],
+    },
+    installCommand: 'uv tool install --force "powercontext[cli,server]==1.0.0rc2"',
+    githubUrl: 'https://github.com/oceanbase/powercontext/releases/tag/powercontext-v1.0.0rc2',
+  },
+  {
     version: 'v0.2.0',
     date: '2026-09-07',
     title: {
