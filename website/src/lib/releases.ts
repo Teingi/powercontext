@@ -26,75 +26,8 @@ export interface Release {
   githubUrl: string;
 }
 
+// Only stable releases belong here; publish pre-release notes on GitHub Releases.
 export const releases: Release[] = [
-  {
-    version: 'v1.0.0rc2',
-    date: '2026-09-10',
-    title: {
-      en: '1.0.0 RC2: guided setup and reviewed learning workflows',
-      zh: '1.0.0 RC2：配置向导与可审核的经验沉淀',
-    },
-    summary: {
-      en: 'This release candidate adds interactive Server and Agent onboarding, persistent Agent authorization, and reviewed workflows from Memory to Experience and Skill.',
-      zh: '这个候选版本新增 Server 与 Agent 交互式配置向导、Agent 授权持久化，以及从 Memory 到 Experience、Skill 的审核工作流。',
-    },
-    changes: {
-      en: [
-        'Configure storage, model APIs, memory capabilities, Dashboard access, and Agent connections through powercontext config init, with an environment file and next-step instructions.',
-        'Persist PowerContext Agent authorization during setup so installed integrations can reuse their configured credentials.',
-        'Use Dream workflows to prepare Experience and Skill candidates from saved context, review them, and explicitly approve reusable results.',
-        'Require explicit consent for remote plain-HTTP connections across clients and integrations, with --allow-insecure-http for unattended setup.',
-        'Install package 1.0.0rc2 and update Agent integrations from powercontext-v1.0.0rc2, then restart the Server and open a new Agent session. This is a pre-release for testing.',
-      ],
-      zh: [
-        '通过 powercontext config init 配置存储、模型 API、记忆能力、Dashboard 访问和 Agent 连接，生成环境文件与后续操作说明。',
-        '安装集成时持久化 PowerContext Agent 授权，让已安装的集成复用配置好的凭据。',
-        '通过 Dream 工作流从已保存的上下文准备 Experience 和 Skill 候选，审核并显式批准可复用的结果。',
-        '客户端和集成连接远程明文 HTTP 时需要显式同意；非交互安装使用 --allow-insecure-http。',
-        '安装 1.0.0rc2 包，并从 powercontext-v1.0.0rc2 更新 Agent 集成，然后重启 Server、开启新 Agent 会话。这是供测试使用的预发布版本。',
-      ],
-    },
-    installCommand: 'uv tool install --force "powercontext[cli,server]==1.0.0rc2"',
-    githubUrl: 'https://github.com/oceanbase/powercontext/releases/tag/powercontext-v1.0.0rc2',
-  },
-  {
-    version: 'v1.0.0rc1',
-    date: '2026-09-10',
-    title: {
-      en: '1.0.0 RC1: Topic Memory and configurable Agent context',
-      zh: '1.0.0 RC1：主题记忆与可配置的 Agent 上下文',
-    },
-    summary: {
-      en: 'The first 1.0.0 release candidate adds Topic Memory, scoped Prompts and Profiles, unified tags, configurable context assembly, and a personal Dashboard for testing context capture, retrieval, and handoff.',
-      zh: '首个 1.0.0 候选版本新增 Topic Memory、按 Scope 管理的 Prompt 和 Profile、统一标签、可配置的上下文组装，以及个人 Dashboard，用于验证上下文积累、检索和交接。',
-    },
-    changes: {
-      en: [
-        'Extract and maintain Topic Memory from Sources, with background Artifact processing supervisors to manage ongoing updates.',
-        'Configure the Prepared Context text delivered to Agents through optional context assembly.',
-        'Manage Prompts and Profiles within Scopes, tag Artifacts and Memory Entries, and discover Scopes and Sources through the API.',
-        'Save Sources and explicit Memory without a model by default, and load local environment files at Server startup. Automatic extraction and vector retrieval require configured inference services.',
-        'Use the opt-in personal Dashboard to inspect saved context, including Topic Memory and its evidence. The Dashboard is disabled by default and requires authentication when enabled.',
-        'Connect MiniMax, use improved DSH configuration diagnostics and installation guidance, and send MCP authorization headers correctly in Claude Code.',
-        'Fix revoked Scope contributions, raw Skill ZIP path validation, and conditional Artifact reads.',
-        'Follow bilingual workflow guides and Jupyter tutorials, and search the documentation site in English or Chinese.',
-        'Back up databases and configuration before upgrading. Install package 1.0.0rc1 with integrations from powercontext-v1.0.0rc1, then restart the Server and Agent sessions. This is a pre-release for testing.',
-      ],
-      zh: [
-        '从 Source 提取并维护 Topic Memory，通过后台 Artifact 处理监督器管理持续更新。',
-        '通过可选的上下文组装，配置 Agent 实际收到的 Prepared Context 文本。',
-        '在 Scope 内管理 Prompt 和 Profile，为 Artifact 与 Memory Entry 添加标签，并通过 API 查询 Scope 和 Source。',
-        '默认无需模型即可保存 Source 和显式 Memory，启动 Server 时支持读取本地环境文件；自动提取和向量检索仍需配置推理服务。',
-        '通过可选的个人 Dashboard 查看已保存的上下文，包括 Topic Memory 及其证据。Dashboard 默认关闭，启用时需要配置认证。',
-        '新增 MiniMax 集成，完善 DSH 配置诊断和安装指引，并修复 Claude Code 的 MCP 认证头传递。',
-        '修复撤销权限后的 Scope 上下文贡献、Skill ZIP 原始路径校验和 Artifact 条件读取问题。',
-        '提供中英文工作流指南、Jupyter 教程和按语言搜索的网站文档。',
-        '升级前备份数据库与配置。安装 1.0.0rc1 包，并从 powercontext-v1.0.0rc1 安装匹配的集成，再重启 Server 和 Agent 会话。这是供测试使用的预发布版本。',
-      ],
-    },
-    installCommand: 'uv tool install --force "powercontext[cli,server]==1.0.0rc1"',
-    githubUrl: 'https://github.com/oceanbase/powercontext/releases/tag/powercontext-v1.0.0rc1',
-  },
   {
     version: 'v0.2.0',
     date: '2026-09-07',
