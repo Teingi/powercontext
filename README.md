@@ -16,8 +16,8 @@ PowerContext keeps context with the work across conversations. When you return, 
 
 [Website](https://frf12.github.io/powercontext/) · [Installation walkthrough](https://frf12.github.io/powercontext/en/docs/get-started/quickstart/)
 
-The upstream repository provides the guided setup on `master`. The commands and website below use that same
-source version; installing the PyPI release does not install this wizard.
+PowerContext 1.0.0 RC2 includes the guided setup. The commands below install this pre-release and connect
+the matching Agent integration for testing.
 
 ## Pick up where the work left off
 
@@ -30,10 +30,10 @@ You decide what will matter later and what needs to move with the task. PowerCon
 You need Git, [uv](https://docs.astral.sh/uv/getting-started/installation/), and your Agent's CLI.
 Python 3.11+ is required; uv can provision it. macOS and Linux are supported; Windows support is `experimental`.
 
-Install this build and open the interactive configuration wizard in a dedicated directory:
+Install 1.0.0 RC2 and open the interactive configuration wizard in a dedicated directory:
 
 ```bash
-uv tool install --force "powercontext[cli,server] @ git+https://github.com/oceanbase/powercontext.git@master"
+uv tool install --force "powercontext[cli,server]==1.0.0rc2"
 mkdir -p powercontext-config
 cd powercontext-config
 powercontext config init --language en --output .env
@@ -71,7 +71,7 @@ covers Codex and Claude Code, Dashboard login, SSH forwarding, HTTPS prerequisit
 For example, the matching Codex installation is:
 
 ```bash
-powercontext setup codex
+powercontext setup codex --ref powercontext-v1.0.0rc2
 powercontext doctor codex
 ```
 

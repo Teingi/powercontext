@@ -26,6 +26,7 @@ export interface Release {
   githubUrl: string;
 }
 
+// Only stable releases belong here; publish pre-release notes on GitHub Releases.
 export const releases: Release[] = [
   {
     version: 'v0.2.0',

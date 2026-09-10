@@ -87,6 +87,7 @@ def run_release_step(tmp_path: Path):
     ("tag", "version"),
     [
         ("powercontext-v1.0.0rc1", "1.0.0rc1"),
+        ("powercontext-v1.0.0rc2", "1.0.0rc2"),
         ("v1.0.0b2", "1.0.0b2"),
         ("1.0.0a1", "1.0.0a1"),
         ("powercontext-v1.0.0", "1.0.0"),
