@@ -60,7 +60,7 @@ Notebook 中的 A、B 是职责不同、历史独立的 Agent 实例。第二棒
 ## 环境与分发
 
 需要 Linux / Python 3.11+ 的 CPU Notebook 环境及模型 API Key。
-安装固定的 `powercontext[cli,server]==1.0.0` 发布包，服务仅监听本实例的回环地址。
+安装固定的 `powercontext[cli,server]==1.0.0rc1` 发布包，服务仅监听本实例的回环地址。
 在 Notebook 配置格中填写 `RELAY_MODEL_BASE_URL`、`RELAY_MODEL` 和 `RELAY_MODEL_API_KEY`。
 模型名和接口地址已提供默认值，Key 留空；配置不读取 `.env` 或环境变量。
 Key 会随当前 Notebook 保存，发布原文件前需清空 Key 和执行输出。
@@ -90,6 +90,6 @@ Skill 同样经过候选审核，引用正式 Experience 作为依据。
 记录显示实际 Skill 引用与旧聊天条数；参与者核对变更影响表、个人要求、行程和费用，再读取更新后的 Memory。
 批准不会自动执行 Skill，读取与使用记录也不等于证明 Skill 提升了模型效果。
 
-组织者发布前须验证包源可安装 1.0.0，并用另一账号从实际 Notebook 入口完成复制、运行、重启接续和追加要求。
-模型并发与额度按实际人数彩排。本地开发版验证不能代替发布包或运行平台验收。
-现场安排与故障处理见 [讲师手册](../../../examples/workshops/agent-relay/FACILITATOR.md)。
+组织者发布前须验证包源可安装 1.0.0rc1，并用另一账号从实际 Notebook 入口完成复制、运行、重启接续和追加要求。
+模型并发与额度按实际人数彩排。本地发布包验证不能代替实际运行平台验收。
+故障处理与重试说明见 Notebook 的“重试、继续和重新开始”。
