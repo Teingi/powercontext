@@ -154,6 +154,60 @@ def config(database: DatabaseConfig) -> BuiltinConfig:
     return BuiltinConfig(database=database, runtime=RuntimeConfig())
 
 
+@pytest.mark.parametrize("existing", [False, True], ids=["new-config", "enable-skill"])
+def test_wizard_skill_selection_accepts_dream_derivation(tmp_path: Path, existing: bool) -> None:
+    from typer.testing import CliRunner
+
+    from powercontext.builtin.runtime import open_builtin_runtime as open_runtime
+    from powercontext.cli.config import app as config_app
+    from powercontext.server.configuration import server_settings_context
+
+    output = tmp_path / "server.env"
+    choices = "custom\nn\nn\nn\nn\nn\ny\nn\n"
+    if existing:
+        output.write_text(
+            "POWERCONTEXT_SERVER_DATABASE_KIND=sqlite\n"
+            "POWERCONTEXT_SERVER_INFERENCE_GENERATION_MODEL=openai-chat:test-model\n"
+            "OPENAI_API_KEY=example-test-key\n"
+            "POWERCONTEXT_SERVER_RUNTIME_ARTIFACT_PROCESSING_FAMILIES='[\"experience\"]'\n"
+        )
+        answers = "edit\ncapabilities\n" + choices + "done\ny\n"
+    else:
+        answers = "local\n" + choices + "n\nbailian\n\n\nexample-test-key\nnone\ny\ny\n"
+    result = CliRunner().invoke(
+        config_app,
+        ["init", "--language", "en", "--output", str(output)],
+        input=f"sqlite\n{tmp_path / 'dream.db'}\n" + answers,
+    )
+    assert result.exit_code == 0, result.output
+
+    async def scenario(settings) -> None:
+        # Admission uses the generated processing configuration; any background
+        # model request stays local instead of reaching the wizard's provider.
+        inference = settings.inference.model_copy(update={"generation_base_url": "http://127.0.0.1:9/v1"})
+        configuration = BuiltinConfig(database=settings.database, runtime=settings.runtime, inference=inference)
+        async with open_runtime(configuration, candidate_pipeline=MemoryPipeline()) as runtime:
+            scope, _, citation = await seed(runtime)
+            candidate = await runtime.experience.for_scope(scope).propose(
+                ProposeExperienceRequest(proposal=experience(), memory_citations=(citation,))
+            )
+            approved = await runtime.review.for_scope(scope).approve(
+                ApproveArtifactCandidateRequest(candidate_id=candidate.candidate_id, expected_version=candidate.version)
+            )
+            assert approved.result_artifact is not None
+            accepted = await runtime.dream.for_scope(scope).create(
+                CreateDreamRunRequest(
+                    operation="derive_skill", artifacts=(approved.result_artifact,), idempotency_key="wizard-skill"
+                )
+            )
+            assert accepted.status == "queued"
+            stored = await runtime.dream.for_scope(scope).get(GetDreamRunRequest(run_id=accepted.run_id))
+            assert stored.operation == "derive_skill"
+
+    with server_settings_context(env_file=output) as settings:
+        asyncio.run(scenario(settings))
+
+
 async def seed(runtime: BuiltinRuntime):
     assert runtime.scopes is not None
     scope = await runtime.scopes.create(

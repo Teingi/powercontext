@@ -137,6 +137,40 @@ def test_environment_override_controls_prompt_capture(
     assert settings_module.ClaudeCodePluginSettings.from_environment().capture_prompts is False
 
 
+def test_saved_plugin_http_option_only_authorizes_its_own_endpoint(settings_module, monkeypatch, tmp_path):
+    monkeypatch.setenv("POWERCONTEXT_CLIENT_CONFIG_FILE", str(tmp_path / "clients.json"))
+    monkeypatch.setenv("CLAUDE_PLUGIN_OPTION_SERVER_URL", "http://memory.example:8000")
+    monkeypatch.setenv("CLAUDE_PLUGIN_OPTION_ALLOW_INSECURE_HTTP", "true")
+    assert settings_module.ClaudeCodePluginSettings.from_environment().allow_insecure_http is True
+
+    monkeypatch.setenv("POWERCONTEXT_CLAUDE_SERVER_URL", "http://another.example:8000")
+    with pytest.raises(ValueError):
+        settings_module.ClaudeCodePluginSettings.from_environment()
+
+    monkeypatch.setenv("POWERCONTEXT_CLIENT_ALLOW_INSECURE_HTTP", "true")
+    assert settings_module.ClaudeCodePluginSettings.from_environment().server_url == "http://another.example:8000"
+    monkeypatch.setenv("POWERCONTEXT_CLAUDE_ALLOW_INSECURE_HTTP", "false")
+    with pytest.raises(ValueError):
+        settings_module.ClaudeCodePluginSettings.from_environment()
+
+
+@pytest.mark.parametrize(
+    "record",
+    [[], {"version": 1}, {"version": 1, "server_url": "http://127.0.0.1:8000"}],
+)
+def test_claude_settings_ignore_malformed_persisted_authorization_records(
+    settings_module: ModuleType,
+    tmp_path: Path,
+    record: object,
+) -> None:
+    credential = tmp_path / "powercontext" / "credentials.json"
+    credential.parent.mkdir()
+    credential.write_text(json.dumps(record), encoding="utf-8")
+    credential.chmod(0o600)
+
+    assert settings_module._stored_authorization(server_url="http://127.0.0.1:8000", root=tmp_path) is None
+
+
 def test_claude_integration_does_not_embed_machine_specific_windows_paths() -> None:
     roots = (
         REPOSITORY_ROOT / ".claude-plugin",
