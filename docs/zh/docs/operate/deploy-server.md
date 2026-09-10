@@ -5,6 +5,9 @@ description: 使用持久化数据、健康检查、鉴权和安全网络边界�
 
 # 部署 Server
 
+先按[快速开始](../get-started/quickstart.md)从 `oceanbase/powercontext` 的 `master` 分支安装并生成配置。
+本页接着说明长期运行和远程访问。Server 与 Agent 位于不同机器时，分别在对应机器完成安装，插件使用同一仓库和 ref。
+
 Windows 支持为 `experimental`。
 
 `powercontext server run` 是前台进程。在个人 macOS、Linux 或 Windows 工作站上，PowerContext 可以把同一个 Server runner 注册到原生当前用户服务管理器。托管部署仍应使用容器平台或管理员拥有的服务管理器。
@@ -14,7 +17,7 @@ Windows 支持为 `experimental`。
 安装并启动可选的当前用户服务：
 
 ```bash
-powercontext service install
+powercontext service install --env-file /absolute/path/to/.env
 powercontext service status
 ```
 
@@ -33,8 +36,10 @@ powercontext config validate --env-file /path/to/powercontext.env
 powercontext service install --env-file /path/to/powercontext.env
 ```
 
+将示例路径替换为向导生成 `.env` 的绝对路径。先用 `Ctrl-C` 停止同端口的前台 Server，再安装服务。
 安装成功后的摘要会显示实际使用的环境文件路径。若启用了 Bearer 鉴权，请从该文件中的
-`POWERCONTEXT_SERVER_AUTH_TOKEN` 读取令牌；命令不会在终端打印令牌值。默认配置关闭鉴权，因此不会自动生成令牌。
+`POWERCONTEXT_SERVER_AUTH_TOKEN` 读取令牌；命令不会在终端打印令牌值。无模型基础模板关闭鉴权。
+向导选择的 Dashboard 或鉴权访问需要令牌时，会在没有现有令牌的情况下生成令牌。
 
 在 Windows 上，校验前需要移除继承权限，只授予当前用户、`SYSTEM` 和本机 `Administrators` 访问权限，例如：
 
@@ -64,6 +69,43 @@ loopback 地址。
 
 内置命令只提供 HTTP，没有 TLS 选项。HTTPS 必须在 PowerContext 外部终止。
 
+“自定义监听地址和客户端 URL”中的 `0.0.0.0` 表示接受所有网卡上的连接，不是浏览器访问地址，
+也不会启用 HTTPS。PowerContext 客户端只允许环回地址使用明文 HTTP；不能将远程 IP 的
+`http://服务器:8000` 当作客户端连接地址。首次跨设备验收且没有域名、证书和 HTTPS 代理时，使用 SSH 转发。
+
+## 通过 SSH 从另一台电脑访问
+
+在服务器运行向导，选择“从其他设备访问”→“SSH 端口转发”，填写真实的 SSH 主机/别名和客户端转发端口。
+Server 仍监听 `127.0.0.1:8000`。按生成配置启动后，在客户端电脑上执行向导打印的命令，例如：
+
+```bash
+ssh -N -L 18000:127.0.0.1:8000 user@server
+```
+
+把 `user@server` 换成你平时 SSH 使用的地址或别名，保持这个终端运行。随后在客户端浏览器打开
+`http://127.0.0.1:18000/dashboard/home`，用 Server Token 登录。
+这条隧道由 SSH 加密；地址中的 HTTP 只在两端本机环回连接上使用。
+
+在服务器上运行的 Agent 使用 `http://127.0.0.1:8000`；在客户端电脑运行的 Agent 使用
+`http://127.0.0.1:18000`。向导会询问 Agent 在哪一台机器运行。把 `.env`
+安全复制到 Agent 所在机器并加载，检查 `POWERCONTEXT_CLIENT_SERVER_URL` 和各 Agent 的 URL。
+由于其中包含完整安装配置，只应复制到可信机器。Codex 的 MCP URL 还需与其 Hook URL 一致，
+具体见[Codex 连接步骤](../integrations/codex.md)。
+
+如果隧道启动提示端口被占用，选择空闲的本地端口，并同步修改浏览器和客户端地址。SSH 退出后转发停止，
+Server 在远端继续运行。仅在远端 tmux 中启动 Server，不会自动建立到 Mac 的端口转发。
+
+## 使用外部 HTTPS
+
+已经有 Nginx、Caddy、网关或负载均衡时，向导可选“使用 HTTPS 反向代理”，填写其实际对外的完整地址，
+例如 `https://memory.example.com`。同机代理的上游为 `http://127.0.0.1:8000`；跨机器代理需要配置相应监听地址和网络边界。
+
+证书、域名解析、TLS 和代理转发需在该外部组件完成，向导不会安装它们。
+`POWERCONTEXT_SERVER_PUBLIC_URL=https://...` 只声明外部访问地址，不给内置 Server 增加 TLS。
+代理需保留 `/mcp` 流式连接、`Authorization`，并正确传递外部 host 和 scheme，以便 Dashboard 登录检查。
+配置完成后，应从客户端检查外部地址的 `/health/ready`、Dashboard 登录及 MCP；不能只检查服务器本机端口。
+没有现成 HTTPS 服务时，先使用上一节完整的 SSH 流程。
+
 ## 从已安装工具运行
 
 按照[安装和运行](../get-started/install-and-run.md)安装 PowerContext，然后选择持久化数据目录：
@@ -76,20 +118,26 @@ powercontext server run
 运行进程必须能创建和更新该目录。默认 SQLite 数据库和 scheduler 状态都保存在这里。服务管理器每次重启进程时都应
 提供相同的环境变量。
 
-PowerContext 不会自动搜索 `.env` 文件。可以导出变量、由服务管理器或容器平台提供，或者显式传入一个文件：
+当前目录存在 `.env` 时，`server run` 会自动加载。托管部署应导出变量、由服务管理器或容器平台提供，或者显式传入文件，
+避免启动行为依赖工作目录：
 
 ```bash
 powercontext config validate --env-file /etc/powercontext/powercontext.env
 powercontext server run --env-file /etc/powercontext/powercontext.env
 ```
 
-文件可能包含 Provider 凭据或 Bearer token，因此只能允许 Server 运维者读取。文件中的值会覆盖进程中的同名值；
-文件中不存在的旧 `POWERCONTEXT_SERVER_*` 进程变量会被忽略。`config init` 生成的是不含模型的基础配置；需要启用完整
-推理能力时，请阅读[启用提取与向量搜索](../get-started/configure-models.md)并补充模型配置。
+文件可能包含 Provider 凭据或 Bearer token，因此只能允许 Server 运维者读取。对于 `server run`，进程环境变量会覆盖
+文件中的同名值。`config init` 默认打开双语向导：先选择存储、使用场景和能力，再配置 Dashboard/访问方式及必需的模型连接。
+默认语言依次读取 `LC_ALL`、`LC_MESSAGES`、`LANG`，再尝试系统语言偏好；无法判断或不支持的语言回退英语。
+可以在首屏切换中英文，或传入 `--language en`、`--language zh`；加上 `--template` 则保留原来的无模型基础模板。
+
+向导生成配置和后续操作说明，不启动或注册服务、不迁移数据库，也不探测远程存储或模型端点。
+已有本地 SQLite 元数据可以只读检查。保存后，仍需完成下文的部署检查；启用模型能力时，还应完成
+[Memory 提取与向量搜索检查](../get-started/configure-models.md)。
 
 无论使用前台进程、Docker 还是个人服务安装，只要 generation 或 embedding model 未配置，启动或安装输出都会提示
 缺少 model 可能影响部分制品功能，具体影响范围及配置方式请参考
-[官网配置说明](https://powercontext.oceanbase.io/en/docs/reference/configuration/)；两类 model 都已配置时不输出该提示。
+[配置说明](configuration.md)；两类 model 都已配置时不输出该提示。
 
 ## 使用 Docker 运行
 
@@ -141,9 +189,15 @@ docker run --rm \
 
 此后客户端需要发送 `Authorization: Bearer <token>`。liveness 和 readiness endpoint 保持公开，便于编排系统探测；
 API、MCP、metrics 和 `/openapi.json` 需要鉴权。`/docs` 页面外壳保持公开，但在交互式参考页中发起的请求仍需鉴权。
-Server 的网页外壳和静态资源仍保持公开，以便显示登录表单；未提供 token 时不会返回受保护数据。打开 Dashboard、
-Skills、Review 或 Handoff Report 页面后，在表单中输入同一个 token。浏览器会把它保存在当前标签页的 session storage
-中，而不是加入 URL。
+
+个人或演示部署可额外设置 `POWERCONTEXT_SERVER_DASHBOARD_ENABLED=true`，启用同一端口上的
+`/dashboard/home`。它要求上述静态 Bearer 配置；没有 token 时启动会明确失败。
+浏览器登录使用 Server token，不是模型 API key。凭据存入仅限 `/dashboard` 的 HttpOnly、SameSite=Strict
+Cookie，最长八小时；HTTPS 下设置 Secure。反向代理应正确传递外部 scheme 和 host，以通过登录同源检查。
+
+静态 token 的所有持有者具有同一个管理员身份。Dashboard 不支持多成员 RBAC，也不提供账号、SSO、邀请和授权管理。
+注入 Authentication Provider 或 AccessControlService 的部署必须关闭 Dashboard；不兼容的启用配置会在启动时被拒绝。
+关闭 Dashboard 不影响团队的 API 和 MCP。个人启用步骤见[安装和运行](../get-started/install-and-run.md)。
 
 ## 检查部署
 
@@ -171,6 +225,9 @@ curl --fail \
 ```
 
 请求示例见 [HTTP API](../develop/http-api.md)，全部 Server 设置见[配置](configuration.md)。
+
+这些检查证明服务与依赖可用，不证明 Topic Memory 已生成。部署后继续完成
+[Source → Topic 演进 → 新会话召回](../get-started/quickstart.md#4-用普通对话验收-topic-memory)。
 
 ## 保护和备份数据
 
