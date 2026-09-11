@@ -1,6 +1,6 @@
 ---
 title: 安装和运行
-description: 安装 PowerContext 1.0.0 RC2，并运行本地 Server。
+description: 安装 PowerContext 1.0.0，并运行本地 Server。
 ---
 
 # 安装和运行
@@ -22,16 +22,16 @@ Windows 的 CLI、Server 和个人服务支持为试验性；各 Agent Host 仍�
 
 ## 选择版本
 
-本页使用 PowerContext 1.0.0 RC2 预发布版本，供测试使用。包与 Agent 集成保持版本一致：
-Python 包版本为 `1.0.0rc2`，对应 Git tag 为 `powercontext-v1.0.0rc2`。
+本页使用 PowerContext 1.0.0 正式版本。包与 Agent 集成保持版本一致：
+Python 包版本为 `1.0.0`，对应 Git tag 为 `powercontext-v1.0.0`。
 
 ```bash
-uv tool install --force "powercontext[cli,server]==1.0.0rc2"
-powercontext setup codex --ref powercontext-v1.0.0rc2
+uv tool install --force "powercontext[cli,server]==1.0.0"
+powercontext setup codex --ref powercontext-v1.0.0
 ```
 
 宿主支持范围和维护状态见[能力矩阵](../integrations/capabilities.md)。
-标为 `experimental` 的能力在这个候选版本中仍属于试验性能力。
+标为 `experimental` 的能力在此正式版本中仍属于试验性能力。
 
 ## 安装应用
 
@@ -39,13 +39,13 @@ powercontext setup codex --ref powercontext-v1.0.0rc2
 [`uv`](https://docs.astral.sh/uv/)，然后从 PyPI 安装 PowerContext：
 
 ```bash
-uv tool install --force "powercontext[cli,server]==1.0.0rc2"
+uv tool install --force "powercontext[cli,server]==1.0.0"
 ```
 
 如需从源码安装同一版本：
 
 ```bash
-uv tool install --force "powercontext[cli,server] @ git+https://github.com/oceanbase/powercontext.git@powercontext-v1.0.0rc2"
+uv tool install --force "powercontext[cli,server] @ git+https://github.com/oceanbase/powercontext.git@powercontext-v1.0.0"
 ```
 
 Git 安装命令不会留下需要自行管理的仓库工作副本。Git 会沿用本机的凭据配置，包括 credential helper 和 SSH 设置。
@@ -105,7 +105,7 @@ powercontext server run --env-file /path/to/powercontext.env
 后端。安装或替换工具时加入可选的 seekDB extra：
 
 ```bash
-uv tool install --force "powercontext[cli,server,seekdb]==1.0.0rc2"
+uv tool install --force "powercontext[cli,server,seekdb]==1.0.0"
 ```
 
 从 SQLite 切换时，需要从 Server 进程环境中删除 `POWERCONTEXT_SERVER_DATABASE_URL`；seekDB 不接受显式的
@@ -150,10 +150,15 @@ Agent 诊断见[各自的集成文档](../integrations/index.md)；Server 状态
 
 ## 更新或替换安装
 
-升级到 1.0.0 RC2：
+升级已有部署前，先备份数据库和配置。1.0.0 会在 Server 启动时增加持久化处理状态和 Dream 证据字段。
+Server、客户端和 Agent 集成需一起升级。Dashboard 需要显式启用并配置静态 Bearer 认证，
+见[部署 Server](../operate/deploy-server.md)；远程明文 HTTP 连接需要客户端明确同意，
+见[连接远程 Server](../operate/connect-remote-server.md)。
+
+升级到 1.0.0：
 
 ```bash
-uv tool install --force "powercontext[cli,server]==1.0.0rc2"
+uv tool install --force "powercontext[cli,server]==1.0.0"
 ```
 
 使用其他 Git ref 替换现有工具：
@@ -170,7 +175,7 @@ uv tool install --force "powercontext[cli,server] @ git+https://github.com/ocean
 如果应用需要导入异步 Client SDK，应把它加入该应用自己的环境：
 
 ```bash
-uv add "powercontext[client]==1.0.0rc2"
+uv add "powercontext[client]==1.0.0"
 ```
 
 进程内 Python 组合使用 `builtin`，服务使用 `server`，Python SDK 使用 `client`，基于 Server 的命令行使用
