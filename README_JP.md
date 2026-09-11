@@ -14,7 +14,7 @@ PowerContext は、会話をまたいでもコンテキストを作業ととも�
 
 ![あなたと Agent が作業を引き継ぎ、保存されたコンテキストから継続する流れ](docs/assets/readme-workflow.svg)
 
-[Web サイト](https://frf12.github.io/powercontext/en/) · [インストール手順](https://frf12.github.io/powercontext/en/docs/get-started/quickstart/)
+[Web サイト](https://powercontext.oceanbase.io/en/) · [インストール手順](https://powercontext.oceanbase.io/en/docs/get-started/quickstart/)
 
 PowerContext 1.0.0 には対話式セットアップが含まれています。
 以下のコマンドで正式リリースと同じバージョンの Agent 連携をインストールします。
@@ -55,13 +55,13 @@ powercontext doctor codex
 ```
 
 PowerContext ツールと Agent 連携には、常に同じ Git ref を使用してください。
-[Quick Start](https://frf12.github.io/powercontext/en/docs/get-started/quickstart/) で Dashboard、SSH、HTTPS、
+[Quick Start](https://powercontext.oceanbase.io/en/docs/get-started/quickstart/) で Dashboard、SSH、HTTPS、
 Source から Topic 生成・更新、新しいセッションでの検索まで確認できます。
 Python 3.11+ が必要です。macOS と Linux をサポートし、Windows のサポートは `experimental` です。
 
 Codex は `official`、他のホストと Python Agent フレームワークは `community`、Bub は評価専用の `evaluation` です。
 これらは PowerContext 連携のメンテナンス主体と用途を示すタグです。対応機能と利用可能なバージョンは
-[機能一覧](https://frf12.github.io/powercontext/en/docs/integrations/capabilities/)を参照してください。
+[機能一覧](https://powercontext.oceanbase.io/en/docs/integrations/capabilities/)を参照してください。
 
 <table>
 <tr>
@@ -82,7 +82,7 @@ Codex は `official`、他のホストと Python Agent フレームワークは 
 </tr>
 </table>
 
-アプリケーションは、非同期 Python クライアント、HTTP API、MCP、または同一プロセス内の Core SDK から PowerContext を利用できます。入口を選ぶには[インターフェースリファレンス](https://frf12.github.io/powercontext/en/docs/develop/interfaces/)を参照してください。
+アプリケーションは、非同期 Python クライアント、HTTP API、MCP、または同一プロセス内の Core SDK から PowerContext を利用できます。入口を選ぶには[インターフェースリファレンス](https://powercontext.oceanbase.io/en/docs/develop/interfaces/)を参照してください。
 
 Python で段階的に試すには、チーム作業の一連の流れも学べる [22 本の Jupyter チュートリアル（中国語）](examples/jupyter/README.md)をご覧ください。Memory、コンテキストの準備、Handoff、Experience、Skill、実際の Agent を動かしながら学べます。最初の 7 本はモデルや API キーなしで実行できます。
 
@@ -90,7 +90,7 @@ Python で段階的に試すには、チーム作業の一連の流れも学べ�
 
 ![LoCoMo と SWE-bench Pro における PowerContext の結果をまとめた比較図](docs/assets/readme-benchmark-summary.svg)
 
-比較に用いた評価方法、詳細な結果、適用範囲は[公式ベンチマークページ](https://frf12.github.io/powercontext/en/benchmarks/)を参照してください。
+比較に用いた評価方法、詳細な結果、適用範囲は[公式ベンチマークページ](https://powercontext.oceanbase.io/en/benchmarks/)を参照してください。
 
 ## PowerContext を開発する
 
@@ -104,11 +104,11 @@ make test
 
 ## さらに詳しく
 
-- [はじめる](https://frf12.github.io/powercontext/en/docs/get-started/quickstart/)
-- [Agent と接続する](https://frf12.github.io/powercontext/en/docs/integrations/)
-- [コンテキストの管理](https://frf12.github.io/powercontext/en/docs/workflows/)
-- [デプロイと運用](https://frf12.github.io/powercontext/en/docs/operate/)
-- [開発と API](https://frf12.github.io/powercontext/en/docs/develop/)
+- [はじめる](https://powercontext.oceanbase.io/en/docs/get-started/quickstart/)
+- [Agent と接続する](https://powercontext.oceanbase.io/en/docs/integrations/)
+- [コンテキストの管理](https://powercontext.oceanbase.io/en/docs/workflows/)
+- [デプロイと運用](https://powercontext.oceanbase.io/en/docs/operate/)
+- [開発と API](https://powercontext.oceanbase.io/en/docs/develop/)
 
 PowerContext は [PowerMem](https://www.powermem.ai/) の後継プロジェクトです。
 

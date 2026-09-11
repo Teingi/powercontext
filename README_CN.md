@@ -14,7 +14,7 @@ PowerContext 让上下文跟随工作，跨越不同的对话。你回来时，�
 
 ![你和 Agent 交接工作，并基于已存储的上下文继续推进](docs/assets/readme-workflow.svg)
 
-[网站](https://frf12.github.io/powercontext/zh/) · [完整安装流程](https://frf12.github.io/powercontext/zh/docs/get-started/quickstart/)
+[网站](https://powercontext.oceanbase.io/zh/) · [完整安装流程](https://powercontext.oceanbase.io/zh/docs/get-started/quickstart/)
 
 PowerContext 1.0.0 包含交互式配置向导。下面的命令安装这一正式版本，并接入相同版本的 Agent 集成。
 
@@ -38,7 +38,7 @@ cd powercontext-config
 powercontext config init --language zh --output .env
 ```
 
-Python 依赖下载缓慢或失败时，可按[镜像重试步骤](https://frf12.github.io/powercontext/zh/docs/get-started/install-and-run/#使用镜像重试依赖下载)重新安装。
+Python 依赖下载缓慢或失败时，可按[镜像重试步骤](https://powercontext.oceanbase.io/zh/docs/get-started/install-and-run/#使用镜像重试依赖下载)重新安装。
 
 向导会依次询问存储、使用场景、记忆能力、Dashboard、模型 API 和 Agent 连接。
 要体验自动 Memory 提取和 Topic Memory，请选择**完整记忆能力**并准备独立的 Generation、Embedding API 凭据；
@@ -62,7 +62,7 @@ powercontext capabilities
 ```
 
 接着按 `.env.next-steps.md` 创建并绑定 Scope、安装相同版本的插件，再打开新 Agent 会话。
-[完整安装流程](https://frf12.github.io/powercontext/zh/docs/get-started/quickstart/)包含 Codex、Claude Code、Dashboard 登录、
+[完整安装流程](https://powercontext.oceanbase.io/zh/docs/get-started/quickstart/)包含 Codex、Claude Code、Dashboard 登录、
 SSH 隧道、HTTPS 前提及逐项验收。例如，匹配本版本的 Codex 安装命令是：
 
 ```bash
@@ -75,7 +75,7 @@ powercontext doctor codex
 
 Codex 标为 `official`，其他宿主及 Python Agent 框架标为 `community`，Bub 标为 `evaluation`，仅用于评测。
 这些标签表示 PowerContext 集成的维护归属和用途，具体功能及可用状态见
-[能力矩阵](https://frf12.github.io/powercontext/zh/docs/integrations/capabilities/)。
+[能力矩阵](https://powercontext.oceanbase.io/zh/docs/integrations/capabilities/)。
 
 <table>
 <tr>
@@ -96,7 +96,7 @@ Codex 标为 `official`，其他宿主及 Python Agent 框架标为 `community`�
 </tr>
 </table>
 
-应用还可以通过异步 Python Client、HTTP API、MCP 或进程内 Core SDK 使用 PowerContext。请参考[接口说明](https://frf12.github.io/powercontext/zh/docs/develop/interfaces/)选择入口。
+应用还可以通过异步 Python Client、HTTP API、MCP 或进程内 Core SDK 使用 PowerContext。请参考[接口说明](https://powercontext.oceanbase.io/zh/docs/develop/interfaces/)选择入口。
 
 想用 Python 逐步体验？从 [22 篇 Jupyter 教程与完整团队工作流](examples/jupyter/README.md)开始，亲手运行 Memory、上下文、交接、Experience、Skill 和真实 Agent。前七篇不需要模型或 API Key。
 
@@ -104,7 +104,7 @@ Codex 标为 `official`，其他宿主及 Python Agent 框架标为 `community`�
 
 ![PowerContext 在 LoCoMo 和 SWE-bench Pro 上的紧凑对比图](docs/assets/readme-benchmark-summary.svg)
 
-这些对比的评测方法、完整结果和适用边界请见[官网评测页](https://frf12.github.io/powercontext/zh/benchmarks/)。
+这些对比的评测方法、完整结果和适用边界请见[官网评测页](https://powercontext.oceanbase.io/zh/benchmarks/)。
 
 ## 参与构建 PowerContext
 
@@ -118,11 +118,11 @@ make test
 
 ## 进一步了解
 
-- [开始使用](https://frf12.github.io/powercontext/zh/docs/get-started/quickstart/)
-- [接入 Agent](https://frf12.github.io/powercontext/zh/docs/integrations/)
-- [管理上下文](https://frf12.github.io/powercontext/zh/docs/workflows/)
-- [部署与运维](https://frf12.github.io/powercontext/zh/docs/operate/)
-- [开发与 API](https://frf12.github.io/powercontext/zh/docs/develop/)
+- [开始使用](https://powercontext.oceanbase.io/zh/docs/get-started/quickstart/)
+- [接入 Agent](https://powercontext.oceanbase.io/zh/docs/integrations/)
+- [管理上下文](https://powercontext.oceanbase.io/zh/docs/workflows/)
+- [部署与运维](https://powercontext.oceanbase.io/zh/docs/operate/)
+- [开发与 API](https://powercontext.oceanbase.io/zh/docs/develop/)
 
 PowerContext 是 [PowerMem](https://www.powermem.ai/) 的后续项目。
 
