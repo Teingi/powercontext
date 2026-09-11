@@ -14,7 +14,7 @@ PowerContext keeps context with the work across conversations. When you return, 
 
 ![You and agents hand work off and continue with stored context](docs/assets/readme-workflow.svg)
 
-[Website](https://frf12.github.io/powercontext/) · [Installation walkthrough](https://frf12.github.io/powercontext/en/docs/get-started/quickstart/)
+[Website](https://powercontext.oceanbase.io/) · [Installation walkthrough](https://powercontext.oceanbase.io/en/docs/get-started/quickstart/)
 
 PowerContext 1.0.0 includes the guided setup. The commands below install the stable release and connect
 the matching Agent integration.
@@ -39,7 +39,7 @@ cd powercontext-config
 powercontext config init --language en --output .env
 ```
 
-If Python dependency downloads are slow or fail, follow the [mirror retry instructions](https://frf12.github.io/powercontext/en/docs/get-started/install-and-run/#retry-dependency-downloads-with-a-mirror).
+If Python dependency downloads are slow or fail, follow the [mirror retry instructions](https://powercontext.oceanbase.io/en/docs/get-started/install-and-run/#retry-dependency-downloads-with-a-mirror).
 
 The wizard asks about storage, local or remote access, memory capabilities, Dashboard, model APIs, and Agent
 connections. Choose **Full memory capabilities** to test automatic Memory and Topic Memory; this requires separate
@@ -66,7 +66,7 @@ powercontext capabilities
 ```
 
 Continue with `.env.next-steps.md` to create and bind the selected Scopes, install the matching plugins, and launch
-a new Agent session. The [complete walkthrough](https://frf12.github.io/powercontext/en/docs/get-started/quickstart/)
+a new Agent session. The [complete walkthrough](https://powercontext.oceanbase.io/en/docs/get-started/quickstart/)
 covers Codex and Claude Code, Dashboard login, SSH forwarding, HTTPS prerequisites, and observable acceptance checks.
 For example, the matching Codex installation is:
 
@@ -84,7 +84,7 @@ flags or environment variables and asks for explicit consent; automated setup us
 
 Codex is `official`; other hosts and Python Agent frameworks are `community`; Bub is `evaluation` only.
 These tags describe PowerContext integration maintenance and use. See the
-[capability matrix](https://frf12.github.io/powercontext/en/docs/integrations/capabilities/) for supported features and availability.
+[capability matrix](https://powercontext.oceanbase.io/en/docs/integrations/capabilities/) for supported features and availability.
 
 <table>
 <tr>
@@ -105,7 +105,7 @@ These tags describe PowerContext integration maintenance and use. See the
 </tr>
 </table>
 
-Applications can use PowerContext through the async Python client, HTTP API, MCP, or the in-process Core SDK. See the [interface reference](https://frf12.github.io/powercontext/en/docs/develop/interfaces/) to choose an entry point.
+Applications can use PowerContext through the async Python client, HTTP API, MCP, or the in-process Core SDK. See the [interface reference](https://powercontext.oceanbase.io/en/docs/develop/interfaces/) to choose an entry point.
 
 Explore the [22 Chinese Jupyter tutorials and a complete team workflow](examples/jupyter/README.md) to run Memory, context preparation, Handoff, Experience, Skill, and a real Agent step by step. The first seven tutorials need no model or API key.
 
@@ -113,7 +113,7 @@ Explore the [22 Chinese Jupyter tutorials and a complete team workflow](examples
 
 ![Compact comparison of PowerContext results on LoCoMo and SWE-bench Pro](docs/assets/readme-benchmark-summary.svg)
 
-See the [methods, full results, and limitations](https://frf12.github.io/powercontext/en/benchmarks/) behind these comparisons.
+See the [methods, full results, and limitations](https://powercontext.oceanbase.io/en/benchmarks/) behind these comparisons.
 
 ## Build PowerContext
 
@@ -127,11 +127,11 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for the complete development workflow.
 
 ## Learn more
 
-- [Get started](https://frf12.github.io/powercontext/en/docs/get-started/quickstart/)
-- [Connect Agents](https://frf12.github.io/powercontext/en/docs/integrations/)
-- [Manage context](https://frf12.github.io/powercontext/en/docs/workflows/)
-- [Deploy and operate](https://frf12.github.io/powercontext/en/docs/operate/)
-- [Develop with APIs](https://frf12.github.io/powercontext/en/docs/develop/)
+- [Get started](https://powercontext.oceanbase.io/en/docs/get-started/quickstart/)
+- [Connect Agents](https://powercontext.oceanbase.io/en/docs/integrations/)
+- [Manage context](https://powercontext.oceanbase.io/en/docs/workflows/)
+- [Deploy and operate](https://powercontext.oceanbase.io/en/docs/operate/)
+- [Develop with APIs](https://powercontext.oceanbase.io/en/docs/develop/)
 
 PowerContext is the successor to [PowerMem](https://www.powermem.ai/).
 
