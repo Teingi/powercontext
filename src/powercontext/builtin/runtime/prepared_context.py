@@ -27,8 +27,10 @@ from powercontext.builtin.artifacts.experience import Experience, ExperienceSear
 from powercontext.builtin.artifacts.memory.models import MemoryCitation, MemoryHit
 from powercontext.builtin.artifacts.profile.models import Profile
 from powercontext.builtin.artifacts.topic_memory import TopicMemory, TopicMemorySearchHit
+from powercontext.builtin.code.models import CodeItem, CodeQueryResponse
 from powercontext.builtin.runtime.errors import PreparedContextInvariantError
-from powercontext.builtin.runtime.models import PrepareContextRequest, PreparedContext
+from powercontext.builtin.runtime.models import ContextAssembly, PrepareContextRequest, PreparedContext
+from powercontext.builtin.runtime.prepared_code import PreparedCodeSelection, select_code
 from powercontext.builtin.runtime.prepared_text import (
     TRUST_POLICY,
     ContextTextItem,
@@ -58,6 +60,8 @@ class PreparedContextBuild:
 
     context: PreparedContext
     origins: tuple[PreparedContextOrigin, ...]
+    code_items: tuple[CodeItem, ...] = ()
+    code_section_bytes: int = 0
 
 
 @dataclass(frozen=True)
@@ -160,6 +164,9 @@ class PreparedContextBuilder:
         topic_memory_hits: Sequence[TopicMemorySearchHit] = (),
         experience_candidates: Sequence[PreparedExperienceCandidates] = (),
         profile_candidates: Sequence[PreparedProfileCandidate] = (),
+        code_response: CodeQueryResponse | None = None,
+        code_omission: str | None = None,
+        max_entries: int = 8,
     ) -> PreparedContextBuild:
         if sum(len(candidates.hits) for candidates in memory_candidates) > self.memory_candidate_limit:
             raise PreparedContextInvariantError("memory-candidate-limit")
@@ -168,7 +175,7 @@ class PreparedContextBuilder:
         if sum(len(candidates.hits) for candidates in experience_candidates) > self.experience_candidate_limit:
             raise PreparedContextInvariantError("experience-candidate-limit")
 
-        if request.assembly is not None:
+        if request.assembly is not None or request.include_code:
             return self._build_text(
                 request,
                 current_scope_id=current_scope_id,
@@ -176,6 +183,9 @@ class PreparedContextBuilder:
                 experience_candidates=experience_candidates,
                 profile_candidates=profile_candidates,
                 topic_memory_hits=topic_memory_hits,
+                code_response=code_response if request.include_code else None,
+                code_omission=code_omission if request.include_code else None,
+                max_entries=max_entries,
             )
 
         memory_entries = _interleave_groups(
@@ -220,37 +230,31 @@ class PreparedContextBuilder:
         experience_candidates: Sequence[PreparedExperienceCandidates],
         profile_candidates: Sequence[PreparedProfileCandidate],
         topic_memory_hits: Sequence[TopicMemorySearchHit],
+        code_response: CodeQueryResponse | None,
+        code_omission: str | None,
+        max_entries: int,
     ) -> PreparedContextBuild:
-        assembly = request.assembly
+        assembly = request.assembly or (ContextAssembly() if request.include_code else None)
         if assembly is None:
             raise PreparedContextInvariantError("text-assembly-missing")
+        code = select_code(code_response, assembly, max_bytes=request.max_bytes, max_entries=max_entries)
         included: list[ContextTextItem] = []
         origins: list[PreparedContextOrigin] = []
         for section in assembly.sections:
-            if section.family == "profile":
-                entries = self._profile_entries(profile_candidates)
-            elif section.family == "topic-memory":
-                entries = self._topic_memory_entries(topic_memory_hits, scope_id=current_scope_id)
-            else:
-                groups = (
-                    tuple(
-                        tuple(
-                            self._memory_entries(group.memory_ref, (hit,), scope_id=group.scope_id)
-                            for hit in group.hits
-                        )
-                        for group in memory_candidates
-                    )
-                    if section.family == "memory"
-                    else tuple(
-                        tuple(self._experience_entries((hit,), scope_id=group.scope_id) for hit in group.hits)
-                        for group in experience_candidates
-                    )
-                )
-                entries = tuple(chain.from_iterable(_interleave_groups(groups)))
+            entries = self._text_entries(
+                section.family,
+                current_scope_id,
+                memory_candidates,
+                experience_candidates,
+                profile_candidates,
+                topic_memory_hits,
+            )
             seen: set[tuple[str, str, str, int, str | None, str | None]] = set()
             rank = 0
             selected_count = 0
             for entry in entries:
+                if request.include_code and len(included) + len(code.items) >= max_entries:
+                    break
                 item = _text_item(entry)
                 artifact = item.artifact
                 identity = (
@@ -265,20 +269,72 @@ class PreparedContextBuilder:
                     continue
                 seen.add(identity)
                 rank += 1
-                fitted = fit_context_text_item(included, replace(item, recall_rank=rank), assembly, request.max_bytes)
+                fitted = fit_context_text_item(
+                    included,
+                    replace(item, recall_rank=rank),
+                    assembly,
+                    request.max_bytes,
+                    code_section=code.section,
+                )
                 if fitted is not None:
                     included.append(fitted)
                     origins.append(entry.origin)
                     selected_count += 1
                 if selected_count >= section.limit:
                     break
-        if not included:
+        return self._finish_text(request, assembly, included, origins, code, code_omission)
+
+    def _finish_text(
+        self,
+        request: PrepareContextRequest,
+        assembly: ContextAssembly,
+        included: Sequence[ContextTextItem],
+        origins: Sequence[PreparedContextOrigin],
+        code: PreparedCodeSelection,
+        code_omission: str | None,
+    ) -> PreparedContextBuild:
+        if not included and not code.items:
             return PreparedContextBuild(context=self.empty(), origins=())
-        content = render_context_text(included, assembly)
+        content = render_context_text(included, assembly, code_section=code.section)
+        if code_omission and not code.items:
+            diagnostic = "Current code references omitted: " + code_omission
+            annotated = render_context_text(included, assembly, code_section=diagnostic)
+            if len(annotated.encode()) <= request.max_bytes:
+                content = annotated
         return PreparedContextBuild(
             context=PreparedContext(status="ready", content=content, content_bytes=len(content.encode("utf-8"))),
             origins=tuple(origins),
+            code_items=code.items,
+            code_section_bytes=len((code.section or "").encode()),
         )
+
+    def _text_entries(
+        self,
+        family: str,
+        current_scope_id: str | None,
+        memory_candidates: Sequence[PreparedMemoryCandidates],
+        experience_candidates: Sequence[PreparedExperienceCandidates],
+        profile_candidates: Sequence[PreparedProfileCandidate],
+        topic_memory_hits: Sequence[TopicMemorySearchHit],
+    ) -> tuple[_PreparedContextEntry, ...]:
+        if family == "profile":
+            entries = self._profile_entries(profile_candidates)
+        elif family == "topic-memory":
+            entries = self._topic_memory_entries(topic_memory_hits, scope_id=current_scope_id)
+        else:
+            groups = (
+                tuple(
+                    tuple(self._memory_entries(group.memory_ref, (hit,), scope_id=group.scope_id) for hit in group.hits)
+                    for group in memory_candidates
+                )
+                if family == "memory"
+                else tuple(
+                    tuple(self._experience_entries((hit,), scope_id=group.scope_id) for hit in group.hits)
+                    for group in experience_candidates
+                )
+            )
+            entries = tuple(chain.from_iterable(_interleave_groups(groups)))
+        return entries
 
     def _profile_entries(self, candidates: Sequence[PreparedProfileCandidate]) -> tuple[_PreparedContextEntry, ...]:
         entries = []
