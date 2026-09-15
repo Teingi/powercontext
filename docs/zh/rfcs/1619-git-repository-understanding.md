@@ -5,7 +5,7 @@ description: 按任务查询当前仓库，直接补充 PreparedContext；复用
 
 - Proposal Name: `git_repository_understanding`
 - Start Date: 2026-09-15
-- RFC PR: 尚未创建
+- RFC PR: [oceanbase/powercontext#1619](https://github.com/oceanbase/powercontext/pull/1619)
 - Status: Proposed
 - Related RFCs: [Memory 准入](0014_memory_layer_design.md)、[Handoff](0048_handoff_artifact.md)、
   [评估体系](0081_end_to_end_evaluation_architecture.md)、[Scope 与宿主集成](1345_scope_organization_and_agent_integration.md)、

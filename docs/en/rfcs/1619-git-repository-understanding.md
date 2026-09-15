@@ -5,7 +5,7 @@ description: Query the current repository for each task and supplement PreparedC
 
 - Proposal Name: `git_repository_understanding`
 - Start Date: 2026-09-15
-- RFC PR: Not yet created
+- RFC PR: [oceanbase/powercontext#1619](https://github.com/oceanbase/powercontext/pull/1619)
 - Status: Proposed
 - Related RFCs: [Memory admission](0014_memory_layer_design.md), [Handoff](0048_handoff_artifact.md),
   [Evaluation architecture](0081_end_to_end_evaluation_architecture.md),
