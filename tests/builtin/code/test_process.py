@@ -47,7 +47,7 @@ def test_timeout_stops_descendant_after_parent_exit(tmp_path: Path) -> None:
         def running() -> bool:
             try:
                 return state.read_text().split()[2] != "Z"
-            except FileNotFoundError:
+            except (FileNotFoundError, ProcessLookupError):
                 return False
 
         for _ in range(100):

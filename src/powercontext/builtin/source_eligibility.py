@@ -56,7 +56,7 @@ def is_code_query_source(source: Source, /) -> bool:
     if isinstance(content, str):
         try:
             content = json.loads(content)
-        except ValueError:
+        except (ValueError, RecursionError):
             return False
     return isinstance(content, dict) and content.get("schema") == "powercontext.code-query.v1"
 
