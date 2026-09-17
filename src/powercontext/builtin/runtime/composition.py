@@ -104,6 +104,7 @@ from powercontext.builtin.persistence.sqlite.topic_memory_index import (
     SQLiteTopicMemoryVectorIndex,
 )
 from powercontext.builtin.persistence.tables import BUILTIN_TABLES
+from powercontext.builtin.persistence.tag_schema import ensure_topic_memory_tag_schema
 from powercontext.builtin.persistence.topic_memory import TopicMemoryRepository
 from powercontext.builtin.persistence.topic_memory_index import (
     CompositeTopicMemoryIndex,
@@ -761,6 +762,7 @@ async def open_builtin_contexts(
                 await bootstrap_processing_schema(connection, canonical_processing_manifest(config))
                 await assert_processing_schema_ready(connection, canonical_processing_manifest(config))
                 await ensure_skill_distribution_schema(connection)
+                await ensure_topic_memory_tag_schema(connection)
                 await ensure_dream_schema(connection)
                 await ensure_scope_search_schema(connection)
                 # A Topic child reuses its parent's schema. It never reads or
@@ -791,6 +793,8 @@ async def open_builtin_contexts(
                 prompt_registry=prompt_registry,
                 prompt_demonstrators=prompt_demonstrators,
                 handoff_verification_keys=handoff_verification_keys,
+                topic_memory_write_timeout_seconds=config.inference.embedding_timeout_seconds,
+                topic_memory_write_concurrency=config.runtime.generation_concurrency,
                 source_registry=source_registry,
                 cursor_secret=cursor_secret,
                 tracing=tracing,
@@ -819,6 +823,7 @@ async def open_builtin_contexts(
             await bootstrap_processing_schema(connection, canonical_processing_manifest(config))
             await assert_processing_schema_ready(connection, canonical_processing_manifest(config))
             await ensure_skill_distribution_schema(connection)
+            await ensure_topic_memory_tag_schema(connection)
             await ensure_dream_schema(connection)
             await ensure_scope_search_schema(connection)
             if not _topic_memory_worker:
@@ -845,6 +850,8 @@ async def open_builtin_contexts(
             prompt_registry=prompt_registry,
             prompt_demonstrators=prompt_demonstrators,
             handoff_verification_keys=handoff_verification_keys,
+            topic_memory_write_timeout_seconds=config.inference.embedding_timeout_seconds,
+            topic_memory_write_concurrency=config.runtime.generation_concurrency,
             source_registry=source_registry,
             cursor_secret=cursor_secret,
             tracing=tracing,
