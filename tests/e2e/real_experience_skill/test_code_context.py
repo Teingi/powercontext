@@ -42,6 +42,7 @@ from powercontext.http import (
     CodeQueryResponse,
     CodeStatusOperation,
     CodeSymbolsOperation,
+    CreateArtifactRequest,
     CreateScopeRequest,
     CreateSourceRequest,
     FlushMemoryRequest,
@@ -297,9 +298,30 @@ async def _saved_evidence(url: str, scope_id: str, saved: dict[str, Any], report
         assert source.content == saved
         status = await client.query_code(scope_id, CodeQueryRequest(operation=CodeStatusOperation(kind="status")))
         assert status.root.status == "missing"
+        topic_scope = await client.create_scope(
+            CreateScopeRequest(title="Budget history", summary="Topic fallback", idempotency_key="topic-fallback")
+        )
+        topic = await client.create_artifact(
+            topic_scope.scope_id,
+            CreateArtifactRequest.model_validate({
+                "family": "topic-memory",
+                "content": {
+                    "title": "Budget recovery",
+                    "summary": "Budget recovery retains the byte limit.",
+                    "detail": "Use the remembered byte budget when resuming work.",
+                },
+            }),
+        )
+        for include_code in (False, True):
+            prepared = await client.prepare_context(
+                PrepareContextRequest(scope_id=topic_scope.scope_id, query="Budget recovery", include_code=include_code)
+            )
+            assert prepared.status == "ready" and prepared.content is not None
+            assert topic.artifact_id in prepared.content
     checks = report["checks"]
     assert isinstance(checks, list)
     checks.append("saved_evidence_survives_cache_removal")
+    checks.append("topic_memory_survives_unconfigured_code_fallback")
 
 
 async def _database(database: OceanBaseConfig, name: str, *, create: bool) -> None:

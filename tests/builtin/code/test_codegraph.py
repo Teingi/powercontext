@@ -26,7 +26,7 @@ import pytest
 from powercontext.builtin.code.adapter import CodeGraphAdapter
 from powercontext.builtin.code.config import CodeGraphConfig
 from powercontext.builtin.code.errors import UnsupportedCodeCapabilityError
-from powercontext.builtin.code.models import CodeSymbolsOperation, CodeTargetOperation
+from powercontext.builtin.code.models import CodeAffectedTestsOperation, CodeSymbolsOperation, CodeTargetOperation
 
 pytestmark = pytest.mark.anyio
 
@@ -93,6 +93,50 @@ async def test_same_name_definitions_remain_distinct_and_unsafe_relationships_fa
                 max_cache_bytes=10 * 1024 * 1024,
             )
     assert index_digest(tmp_path) == before
+
+
+async def test_symbol_file_filter_applies_before_result_limit(adapter: CodeGraphAdapter, tmp_path: Path) -> None:
+    write_sources(
+        tmp_path,
+        {
+            "alpha.py": "def shared(value):\n    return value + 1\n",
+            "beta.py": "def shared(value):\n    return value * 2\n",
+        },
+    )
+    identity = await adapter.identity(deadline=monotonic() + 10)
+    await adapter.build(tmp_path, identity=identity, deadline=monotonic() + 60)
+    for path in ("alpha.py", "beta.py"):
+        result = await adapter.query(
+            tmp_path,
+            CodeSymbolsOperation(kind="symbols", query="shared", path=path, limit=1),
+            identity=identity,
+            deadline=monotonic() + 5,
+            max_cache_bytes=10 * 1024 * 1024,
+        )
+        assert [item["path"] for item in result["items"]] == [path]
+
+
+async def test_affected_tests_retain_changed_test_starting_nodes(adapter: CodeGraphAdapter, tmp_path: Path) -> None:
+    write_sources(
+        tmp_path,
+        {
+            "budget.py": "def allocate_budget(total):\n    return total // 2\n",
+            "test_budget.py": "from budget import allocate_budget\n\ndef test_budget():\n    assert allocate_budget(8) == 4\n",
+        },
+    )
+    identity = await adapter.identity(deadline=monotonic() + 10)
+    await adapter.build(tmp_path, identity=identity, deadline=monotonic() + 60)
+    for changed in (("budget.py",), ("budget.py", "test_budget.py"), ("test_budget.py", "budget.py")):
+        result = await adapter.query(
+            tmp_path,
+            CodeAffectedTestsOperation(kind="affected_tests", changed_paths=changed),
+            identity=identity,
+            deadline=monotonic() + 5,
+            max_cache_bytes=10 * 1024 * 1024,
+        )
+        assert [item["path"] for item in result["items"]] == ["test_budget.py"]
+        assert result["items"][0]["relationships"][0]["target"]["path"] == "budget.py"
+        assert not result["truncated"]
 
 
 async def test_real_callers_include_root_and_nested_pytest_files_without_import_edges(

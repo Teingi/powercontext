@@ -160,7 +160,6 @@ from powercontext.builtin.runtime.models import (
     CaptureSource,
     CommitConnectorCheckpoint,
     ConnectorCheckpointState,
-    ContextAssembly,
     ExperienceCandidate,
     ExperienceIncubationResult,
     ExternalSkillList,
@@ -769,7 +768,7 @@ class ScopedContextApplication:
 
     async def _prepare(self, request: PrepareContextRequest, scope: ScopeDescriptor, /) -> PreparedContext:
         builder = PreparedContextBuilder()
-        assembly = request.assembly or (ContextAssembly() if request.include_code else None)
+        assembly = request.assembly
         scope_ids = [self.scope_id, *scope.context_references] if assembly is None or assembly.sections else []
         families = (
             {section.family for section in assembly.sections}

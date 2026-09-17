@@ -79,7 +79,8 @@ powercontext code status --scope project:demo --env-file /etc/powercontext/serve
 响应仍为 `powercontext.prepared-context.v1`，宿主校验后原样注入 `content`。
 省略开关或设置 `false` 时维持原行为；开关只接受布尔值。
 
-- `true` 且未提供 assembly 或使用 `{}`：使用默认历史类别并补充代码。
+- `true` 且未提供 `assembly`：保留 Memory、Topic Memory、Experience，并补充代码；历史候选在共享预算内按原有类别轮转顺序选取。
+- `true` 且 `assembly={}`：采用显式装配的默认值，即最多 6 条 Memory、2 条 Experience，并补充代码。
 - `true` 且 `assembly.sections=[]`：只查询当前 Scope 的代码。
 - `false` 且 `assembly.sections=[]`：返回空上下文。
 - `family=code` 无效，代码由独立开关选择。

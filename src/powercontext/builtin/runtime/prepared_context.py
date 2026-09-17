@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import json
+from collections import Counter
 from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from itertools import chain
@@ -29,7 +30,12 @@ from powercontext.builtin.artifacts.profile.models import Profile
 from powercontext.builtin.artifacts.topic_memory import TopicMemory, TopicMemorySearchHit
 from powercontext.builtin.code.models import CodeItem, CodeQueryResponse
 from powercontext.builtin.runtime.errors import PreparedContextInvariantError
-from powercontext.builtin.runtime.models import ContextAssembly, PrepareContextRequest, PreparedContext
+from powercontext.builtin.runtime.models import (
+    ContextAssembly,
+    ContextAssemblySection,
+    PrepareContextRequest,
+    PreparedContext,
+)
 from powercontext.builtin.runtime.prepared_code import PreparedCodeSelection, select_code
 from powercontext.builtin.runtime.prepared_text import (
     TRUST_POLICY,
@@ -234,14 +240,22 @@ class PreparedContextBuilder:
         code_omission: str | None,
         max_entries: int,
     ) -> PreparedContextBuild:
-        assembly = request.assembly or (ContextAssembly() if request.include_code else None)
+        assembly = request.assembly
+        if assembly is None and request.include_code:
+            assembly = ContextAssembly(
+                sections=(
+                    ContextAssemblySection(family="memory", limit=self.entry_limit),
+                    ContextAssemblySection(family="topic-memory", limit=self.topic_memory_entry_limit),
+                    ContextAssemblySection(family="experience", limit=self.experience_entry_limit),
+                )
+            )
         if assembly is None:
             raise PreparedContextInvariantError("text-assembly-missing")
         code = select_code(code_response, assembly, max_bytes=request.max_bytes, max_entries=max_entries)
         included: list[ContextTextItem] = []
         origins: list[PreparedContextOrigin] = []
-        for section in assembly.sections:
-            entries = self._text_entries(
+        groups = tuple(
+            self._text_entries(
                 section.family,
                 current_scope_id,
                 memory_candidates,
@@ -249,39 +263,46 @@ class PreparedContextBuilder:
                 profile_candidates,
                 topic_memory_hits,
             )
-            seen: set[tuple[str, str, str, int, str | None, str | None]] = set()
-            rank = 0
-            selected_count = 0
-            for entry in entries:
-                if request.include_code and len(included) + len(code.items) >= max_entries:
-                    break
-                item = _text_item(entry)
-                artifact = item.artifact
-                identity = (
-                    artifact.scope_id,
-                    artifact.artifact.family,
-                    artifact.artifact.artifact_id,
-                    artifact.artifact.revision,
-                    item.entry_id,
-                    item.entry_version_id,
-                )
-                if identity in seen or not item.content.strip():
-                    continue
-                seen.add(identity)
-                rank += 1
-                fitted = fit_context_text_item(
-                    included,
-                    replace(item, recall_rank=rank),
-                    assembly,
-                    request.max_bytes,
-                    code_section=code.section,
-                )
-                if fitted is not None:
-                    included.append(fitted)
-                    origins.append(entry.origin)
-                    selected_count += 1
-                if selected_count >= section.limit:
-                    break
+            for section in assembly.sections
+        )
+        # Implicit history keeps the same family rotation as preparation without
+        # code. Explicit assembly still fills sections in the requested order.
+        entries = _interleave_groups(groups) if request.assembly is None else tuple(chain.from_iterable(groups))
+        limits: dict[str, int] = {section.family: section.limit for section in assembly.sections}
+        seen: set[tuple[str, str, str, int, str | None, str | None]] = set()
+        ranks: Counter[str] = Counter()
+        selected: Counter[str] = Counter()
+        for entry in entries:
+            if request.include_code and len(included) + len(code.items) >= max_entries:
+                break
+            item = _text_item(entry)
+            artifact = item.artifact
+            family = artifact.artifact.family
+            if selected[family] >= limits[family]:
+                continue
+            identity = (
+                artifact.scope_id,
+                family,
+                artifact.artifact.artifact_id,
+                artifact.artifact.revision,
+                item.entry_id,
+                item.entry_version_id,
+            )
+            if identity in seen or not item.content.strip():
+                continue
+            seen.add(identity)
+            ranks[family] += 1
+            fitted = fit_context_text_item(
+                included,
+                replace(item, recall_rank=ranks[family]),
+                assembly,
+                request.max_bytes,
+                code_section=code.section,
+            )
+            if fitted is not None:
+                included.append(fitted)
+                origins.append(entry.origin)
+                selected[family] += 1
         return self._finish_text(request, assembly, included, origins, code, code_omission)
 
     def _finish_text(

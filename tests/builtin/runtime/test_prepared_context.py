@@ -684,6 +684,32 @@ def test_code_omission_alone_does_not_produce_ready_context() -> None:
     assert build.context.content is None and build.context.content_bytes == 0
 
 
+@pytest.mark.parametrize("with_code", [False, True])
+def test_default_code_context_retains_each_historical_family_under_shared_limit(with_code: bool) -> None:
+    topic = _topic_hit("budget")
+    experience = _experience_hit()
+    result = PreparedContextBuilder().build_scopes_result(
+        request=PrepareContextRequest(query="budget", include_code=True, max_bytes=32768),
+        current_scope_id="current",
+        memory_candidates=(
+            PreparedMemoryCandidates(
+                scope_id="current",
+                memory_ref=MEMORY_REF,
+                hits=tuple(_hit(f"entry-{number}", "Budget constraint") for number in range(8)),
+            ),
+        ),
+        topic_memory_hits=(topic,),
+        experience_candidates=(PreparedExperienceCandidates(scope_id="current", hits=(experience,)),),
+        code_response=_code_response() if with_code else None,
+        code_omission=None if with_code else "code_not_configured",
+        max_entries=6,
+    )
+    assert ArtifactAddress(scope_id="current", artifact=topic.artifact_ref) in result.origins
+    assert ArtifactAddress(scope_id="current", artifact=experience.artifact_ref) in result.origins
+    assert len(result.origins) + len(result.code_items) <= 6
+    assert bool(result.code_items) == with_code
+
+
 @pytest.mark.parametrize("value", [None, 0, 1, "true", "false", [], {}])
 def test_include_code_requires_an_actual_boolean(value: object) -> None:
     with pytest.raises(ValidationError):

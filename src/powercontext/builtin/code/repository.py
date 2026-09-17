@@ -58,6 +58,10 @@ _EXCLUDED_DIRECTORIES = frozenset({
 _CREDENTIAL_NAMES = frozenset({"credentials", "credentials.json", ".git-credentials", "id_rsa", "id_ed25519"})
 
 
+class _NonRegularFileError(OSError):
+    """A captured path is a link, directory, or other non-regular file."""
+
+
 class CapturedFile(CodeValue):
     path: str
     git_mode: str
@@ -230,6 +234,9 @@ def _capture_files(
                 continue
             try:
                 captured = _read_file(descriptor, entry.path, config.limits.max_file_bytes)
+            except _NonRegularFileError:
+                omissions["symlink_or_submodule"] += 1
+                continue
             except FileNotFoundError:
                 omissions["deleted"] += 1
                 worktree_changes[entry.path] = "D"
@@ -335,11 +342,14 @@ def _read_file(root_descriptor: int, path: str, max_bytes: int) -> tuple[bytes, 
             next_descriptor = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=descriptor)
             os.close(descriptor)
             descriptor = next_descriptor
+        metadata = os.stat(parts[-1], dir_fd=descriptor, follow_symlinks=False)
+        if not stat.S_ISREG(metadata.st_mode):
+            raise _NonRegularFileError
         file_descriptor = os.open(parts[-1], os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=descriptor)
         with os.fdopen(file_descriptor, "rb") as stream:
             metadata = os.fstat(stream.fileno())
             if not stat.S_ISREG(metadata.st_mode):
-                raise InvalidCodeRequestError("invalid_code_file")
+                raise _NonRegularFileError
             if metadata.st_size > max_bytes:
                 return None
             content = stream.read(max_bytes + 1)

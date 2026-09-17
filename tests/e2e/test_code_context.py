@@ -47,6 +47,41 @@ from powercontext.server.factory import create_server_app
 from powercontext.server.settings import AccessControlConfig, McpConfig, ServerSettings
 
 
+def test_code_fallback_preserves_default_topic_memory(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    for name in tuple(os.environ):
+        if name.startswith("POWERCONTEXT_"):
+            monkeypatch.delenv(name)
+    settings = ServerSettings(
+        database=SQLiteConfig(url=f"sqlite+aiosqlite:///{tmp_path / 'topics.db'}"),
+        runtime=RuntimeConfig(artifact_processing_families=()),
+        inference=InferenceConfig(),
+        access=AccessControlConfig(mode="disabled"),
+        mcp=McpConfig(enabled=False),
+    )
+    with TestClient(create_server_app(settings=settings, scheduler_path=tmp_path / "scheduler.db")) as client:
+        scope = client.post("/v1/scopes", json={"title": "Budget", "summary": "Budget", "idempotency_key": "budget"})
+        assert scope.status_code == 201, scope.text
+        scope_id = scope.json()["scope_id"]
+        topic = client.post(
+            f"/v1/scopes/{scope_id}/artifacts",
+            json={
+                "family": "topic-memory",
+                "content": {"title": "Budget", "summary": "Budget constraint", "detail": "Preserve the byte budget."},
+            },
+        )
+        assert topic.status_code == 201, topic.text
+        request = {"scope_id": scope_id, "query": "Budget", "max_bytes": 8000}
+        for include_code in (False, True):
+            response = client.post("/v1/context/prepare", json={**request, "include_code": include_code})
+            assert response.status_code == 200, response.text
+            assert response.json()["status"] == "ready"
+            assert topic.json()["artifact_id"] in response.json()["content"]
+        for assembly in ({}, {"sections": []}):
+            response = client.post("/v1/context/prepare", json={**request, "include_code": True, "assembly": assembly})
+            assert response.status_code == 200, response.text
+            assert response.json()["status"] == "empty"
+
+
 @pytest.fixture
 def configured_repository(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[ServerSettings, str, str]:
     executable = os.environ.get("POWERCONTEXT_TEST_CODEGRAPH_EXECUTABLE")

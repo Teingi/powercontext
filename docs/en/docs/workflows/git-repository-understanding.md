@@ -84,7 +84,9 @@ Send to `POST /v1/context/prepare`:
 The response remains `powercontext.prepared-context.v1`; the host validates and injects `content` unchanged.
 Omitting the flag or setting it to `false` preserves previous behavior. Only boolean values are accepted.
 
-- `true` with omitted assembly or `{}`: default historical families plus current code.
+- `true` with omitted `assembly`: Memory, Topic Memory, and Experience plus current code. Historical candidates
+  retain their default family rotation within the shared budget.
+- `true` with `assembly={}`: the explicit assembly defaults, Memory (up to 6) and Experience (up to 2), plus code.
 - `true` with `assembly.sections=[]`: only the current Scope's code.
 - `false` with `assembly.sections=[]`: empty context.
 - `family=code` is invalid; the separate flag selects code.

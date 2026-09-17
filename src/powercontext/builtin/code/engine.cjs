@@ -93,6 +93,7 @@ function isTest(node) {
 
 function traverse(graph, starts, depth, limit, testsOnly) {
   const seen = new Set();
+  const selected = new Set(testsOnly ? [] : starts.map(node => node.id));
   const queue = [];
   let omitted = 0;
   for (const node of starts) {
@@ -114,8 +115,6 @@ function traverse(graph, starts, depth, limit, testsOnly) {
       if (edge.kind !== 'calls') continue;
       const caller = graph.getNode(edge.source);
       if (!caller || caller.language !== 'python' || ambiguous(graph, caller)) { omitted++; continue; }
-      if (seen.has(caller.id)) continue;
-      seen.add(caller.id);
       const path = [...current.path, {
         kind: 'calls',
         method: ['tree-sitter', 'scip', 'heuristic'].includes(edge.provenance) ? edge.provenance : 'unknown',
@@ -123,12 +122,16 @@ function traverse(graph, starts, depth, limit, testsOnly) {
         target: location(current.node),
         call_line: edge.line || null,
       }];
-      queue.push({ node: caller, path });
-      if (!testsOnly || isTest(caller)) {
+      if (!seen.has(caller.id)) {
+        seen.add(caller.id);
+        queue.push({ node: caller, path });
+        if (path.length >= depth && graph.getIncomingEdges(caller.id).some(e => e.kind === 'calls')) truncated = true;
+      }
+      if (!selected.has(caller.id) && (!testsOnly || isTest(caller))) {
+        selected.add(caller.id);
         items.push({ ...definition(caller), kind: testsOnly ? 'test' : 'relationship', relationships: path });
         if (items.length >= limit) return { items, omitted, truncated: true };
       }
-      if (path.length >= depth && graph.getIncomingEdges(caller.id).some(e => e.kind === 'calls')) truncated = true;
     }
   }
   return { items, omitted, truncated };
@@ -136,10 +139,13 @@ function traverse(graph, starts, depth, limit, testsOnly) {
 
 function symbols(graph, operation, limit) {
   const options = { languages: ['python'], kinds: ['function', 'method', 'class', 'variable', 'constant', 'property'], limit };
-  if (operation.path) options.includePatterns = [operation.path];
+  // v1.6.0 ignores includePatterns and applies even its path: query filter
+  // after limiting. Search the finite index before applying our file/result
+  // limits, retaining the engine's text matching and ranking semantics.
+  if (operation.path) options.limit = graph.getStats().nodeCount;
   return graph.searchNodes(operation.query, options).map(result => result.node).filter(node =>
     node.kind !== 'file' && (!operation.path || node.filePath === operation.path)
-  );
+  ).slice(0, limit);
 }
 
 async function main(input) {

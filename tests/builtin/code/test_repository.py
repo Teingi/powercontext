@@ -104,6 +104,26 @@ async def test_tracked_symlinks_and_credentials_are_not_captured(repository: Pat
     assert not captured.dirty
 
 
+@pytest.mark.parametrize("link_target", ["internal", "external", "missing"])
+async def test_untracked_symlinks_are_omitted_without_losing_regular_files(
+    repository: Path, tmp_path: Path, link_target: str
+) -> None:
+    external = tmp_path / "outside.py"
+    external.write_text("EXTERNAL = 'not repository content'\n")
+    target = {"internal": repository / "core.py", "external": external, "missing": tmp_path / "missing.py"}
+    (repository / "linked.py").symlink_to(target[link_target])
+    (repository / "new.py").write_text("VALUE = 1\n")
+    destination = tmp_path / "capture"
+    destination.mkdir()
+    captured = await capture_repository(
+        repository, CodeConfig(include_untracked=True), deadline=monotonic() + 5, destination=destination
+    )
+    assert {file.path for file in captured.files} == {"core.py", "new.py"}
+    assert captured.omissions["symlink_or_submodule"] == 1
+    assert captured.dirty
+    assert not (destination / "linked.py").exists()
+
+
 async def test_aggregate_limit_fails_the_build_instead_of_selecting_a_prefix(repository: Path) -> None:
     (repository / "another.py").write_text("SECOND = 2\n")
     git(repository, "add", "--", "another.py")
