@@ -46,6 +46,7 @@ from powercontext.builtin.artifacts.experience import (
     ExperienceContent,
     ExperienceGenerator,
     ExperienceSearchHit,
+    ExperienceSearchOutcome,
 )
 from powercontext.builtin.artifacts.handoff import (
     ActivateHandoff,
@@ -61,6 +62,7 @@ from powercontext.builtin.artifacts.memory import (
     CandidatePipeline,
     EmbeddingProfile,
     Memory,
+    MemoryQueryEmbedding,
     MemoryReranker,
     MemoryService,
     MemoryWritePlan,
@@ -78,6 +80,7 @@ from powercontext.builtin.artifacts.prompt.service import (
     current_prompt,
     prompt_operation,
 )
+from powercontext.builtin.artifacts.search import AdmissionFloor
 from powercontext.builtin.artifacts.skill import (
     ExternalSkillProvider,
     ExternalSkillRegistryUnavailableError,
@@ -142,6 +145,7 @@ from powercontext.builtin.persistence.memory_index import MemoryIndex, NoMemoryI
 from powercontext.builtin.persistence.processing import ArtifactProcessingPendingRepository
 from powercontext.builtin.persistence.processing_intents import ArtifactProcessingIntentRepository
 from powercontext.builtin.persistence.records import RelationalRecordService
+from powercontext.builtin.persistence.recurrence import RecurrenceRepository
 from powercontext.builtin.persistence.skill_packages import SkillPackageRepository
 from powercontext.builtin.persistence.skill_publications import SkillPublicationRepository
 from powercontext.builtin.persistence.source_definitions import SourceDefinitionManifestRepository
@@ -180,6 +184,7 @@ from powercontext.builtin.runtime.protocols import (
     TraceAttribute,
 )
 from powercontext.builtin.runtime.recall import RelationalRecallTokenEstimator
+from powercontext.builtin.runtime.recurrence import RelationalRecurrenceLedger
 from powercontext.builtin.runtime.statistics import RelationalScopedStatistics
 from powercontext.builtin.scope import ScopeApplication
 from powercontext.builtin.scope.subject_sources import SubjectSourceService
@@ -268,6 +273,7 @@ class _Repositories:
     agent_skill_targets: RemoteAgentSkillTargetRepository
     skill_publications: SkillPublicationRepository
     statistics: StatisticsRepository
+    recurrence: RecurrenceRepository
     processing_pending: ArtifactProcessingPendingRepository
     processing_leases: ArtifactProcessingLeaseRepository
     processing_binding_states: ArtifactProcessingBindingStateRepository
@@ -385,6 +391,18 @@ class _ScopedServices:
             connection=connection,
         )
 
+    def recurrence_ledger(self) -> RelationalRecurrenceLedger:
+        """Return the only writer of the recurrence ledger."""
+
+        return RelationalRecurrenceLedger(
+            database=self.database,
+            scope_id=self.scope_id,
+            sources=self.repositories.sources,
+            artifacts=self.repositories.artifacts,
+            recurrence=self.repositories.recurrence,
+            evidence=self.evidence(),
+        )
+
     def generation(self) -> ReviewedGenerationService:
         return ReviewedGenerationService(
             prompt_context=ScopedPrompts(self.prompts, self.scope_id),
@@ -449,6 +467,8 @@ class _ScopedServices:
             memory_service=memory_service,
             cursors=self.repositories.cursors,
             repository=self.repositories.statistics,
+            recurrence=self.repositories.recurrence,
+            artifacts=self.repositories.artifacts,
             token_estimator=None if self.token_estimator is None else self.token_estimator.profile,
         )
 
@@ -532,6 +552,7 @@ class RelationalContexts:
             agent_skill_targets=RemoteAgentSkillTargetRepository(),
             skill_publications=SkillPublicationRepository(),
             statistics=StatisticsRepository(),
+            recurrence=RecurrenceRepository(),
             processing_pending=ArtifactProcessingPendingRepository(),
             processing_leases=ArtifactProcessingLeaseRepository(),
             processing_binding_states=ArtifactProcessingBindingStateRepository(),
@@ -836,11 +857,28 @@ class RelationalContexts:
     ) -> tuple[ExperienceSearchHit, ...]:
         """Recall relevant approved Experience heads in one scope."""
 
+        return (await self.search_experience_outcome(scope_id, query, limit)).hits
+
+    async def search_experience_outcome(
+        self,
+        scope_id: str,
+        query: str,
+        limit: int,
+        /,
+        *,
+        admission: AdmissionFloor | None = None,
+    ) -> ExperienceSearchOutcome:
+        """Recall Experience heads and include internal admission accounting.
+
+        The outcome carries the admission counts alongside the hits so the recall gate can
+        report retrieved-versus-admitted without a second pass.
+        """
+
         if limit < 1:
             raise ValueError("Experience search limit must be positive")  # noqa: TRY003
         scope = validate_scope_id(scope_id)
         async with self.database.transaction() as connection:
-            return await self.experience_index.search(connection, scope, query, limit)
+            return await self.experience_index.search(connection, scope, query, limit, admission=admission)
 
     async def get_topic_memory(
         self,
@@ -902,9 +940,14 @@ class RelationalContexts:
         mode: TopicMemorySearchMode = "auto",
         query_vector: tuple[float, ...] | None = None,
         embedding_profile: EmbeddingProfile | None = None,
+        admission: AdmissionFloor | None = None,
+        query_embedding: MemoryQueryEmbedding | None = None,
     ) -> TopicMemorySearchResult:
         """Search current active Topic projections in this deployment."""
 
+        if query_embedding is not None:
+            query_vector = query_embedding.query_vector
+            embedding_profile = query_embedding.embedding_profile
         scope = validate_scope_id(scope_id)
         async with self.database.transaction() as connection:
             return await self.repositories.topic_memories.search(
@@ -915,6 +958,7 @@ class RelationalContexts:
                 mode=mode,
                 query_vector=query_vector,
                 embedding_profile=embedding_profile,
+                admission=admission,
             )
 
     async def search_skills(
@@ -1792,6 +1836,21 @@ class _RelationalExperienceIncubator:
                     )
                     candidate_ids.append(candidate.candidate_id)
                     candidates.append(candidate)
+                for proposal in await self._services.recurrence_ledger().record_window(connection, eligible_rows):
+                    target_content = await self._services.repositories.artifacts.get(
+                        connection,
+                        self._services.scope_id,
+                        proposal.target,
+                    )
+                    candidate = await review.propose_experience(
+                        proposal.proposal,
+                        sources=proposal.sources,
+                        artifacts=(target_content.as_ref(),),
+                        target=proposal.target,
+                        reason=proposal.reason,
+                    )
+                    candidate_ids.append(candidate.candidate_id)
+                    candidates.append(candidate)
                 await self._services.repositories.cursors.save(
                     connection,
                     self._services.scope_id,
@@ -1808,7 +1867,7 @@ class _RelationalExperienceIncubator:
                 high_watermark=high_watermark,
                 current_cursor=action.through,
                 source_count=len(eligible_rows),
-                candidate_count=len(plans),
+                candidate_count=len(candidate_ids),
                 candidate_ids=tuple(candidate_ids),
             )
 

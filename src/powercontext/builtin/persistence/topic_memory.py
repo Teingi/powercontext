@@ -26,8 +26,9 @@ from sqlalchemy.ext.asyncio import AsyncConnection
 from powercontext.artifacts import ArtifactAddress, ArtifactRef
 from powercontext.builtin.artifacts.memory import EmbeddingProfile
 from powercontext.builtin.artifacts.memory.canonical import canonical_embedding
-from powercontext.builtin.artifacts.search import analyze_text
+from powercontext.builtin.artifacts.search import AdmissionCounts, AdmissionFloor, analyze_text
 from powercontext.builtin.artifacts.topic_memory import (
+    MAX_TOPIC_MEMORY_CHANNEL_CANDIDATES,
     MAX_TOPIC_MEMORY_QUERY_LENGTH,
     MAX_TOPIC_MEMORY_QUERY_TERMS,
     MAX_TOPIC_MEMORY_SEARCH_LIMIT,
@@ -45,8 +46,8 @@ from powercontext.builtin.artifacts.topic_memory import (
     TopicMemoryStorageInvariantError,
     TopicMemoryUsedSearchMode,
     chunk_topic_memory_detail,
-    fuse_topic_memory_rankings,
 )
+from powercontext.builtin.artifacts.topic_memory.fusion import _fuse_topic_memory_rankings
 from powercontext.builtin.persistence.artifacts import ArtifactRepository
 from powercontext.builtin.persistence.errors import InvalidRepositoryArgumentError
 from powercontext.builtin.persistence.supervision import database_utc_now
@@ -443,8 +444,12 @@ class TopicMemoryRepository:
         mode: TopicMemorySearchMode = "auto",
         query_vector: tuple[float, ...] | None = None,
         embedding_profile: EmbeddingProfile | None = None,
+        admission: AdmissionFloor | None = None,
     ) -> TopicMemorySearchResult:
-        """Search current complete projections and fuse two or four logical channels."""
+        """Search current complete projections and fuse two or four logical channels.
+
+        ``admission=None`` applies the historical fusion-time thresholds bit for bit.
+        """
 
         if not 1 <= limit <= MAX_TOPIC_MEMORY_SEARCH_LIMIT:
             raise InvalidRepositoryArgumentError(
@@ -473,16 +478,25 @@ class TopicMemoryRepository:
         request = TopicMemorySearchRequest(
             query=query,
             analyzed_query=" ".join(query_terms),
-            candidate_limit=min(MAX_TOPIC_MEMORY_SEARCH_LIMIT, max(limit * 4, limit)),
+            candidate_limit=min(MAX_TOPIC_MEMORY_CHANNEL_CANDIDATES, max(limit * 4, 32)),
             mode=used_mode,
             query_vector=query_vector,
             embedding_profile=embedding_profile,
+            admission=admission,
         )
         channels = await self.index.search(connection, scope_id, request)
         await self._check_retrieval_shape(connection)
+        outcome = _fuse_topic_memory_rankings(query, channels, limit, mode=used_mode, admission=admission)
         return TopicMemorySearchResult(
             mode=used_mode,
-            hits=fuse_topic_memory_rankings(query, channels, limit, mode=used_mode),
+            hits=outcome.hits,
+            admission=AdmissionCounts(
+                family=TopicMemory.family,
+                scope_id=scope_id,
+                retrieved=outcome.retrieved,
+                admitted=outcome.admitted,
+                rejected=outcome.rejected,
+            ),
         )
 
     async def _activate(

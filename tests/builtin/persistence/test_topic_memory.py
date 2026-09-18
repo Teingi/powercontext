@@ -25,7 +25,7 @@ from sqlalchemy.ext.asyncio import AsyncConnection
 
 from powercontext.artifacts import ArtifactRef
 from powercontext.builtin.artifacts.memory import EmbeddingProfile
-from powercontext.builtin.artifacts.search import fts_match_query
+from powercontext.builtin.artifacts.search import AdmissionFloor, fts_match_query
 from powercontext.builtin.artifacts.topic_memory import (
     MAX_TOPIC_MEMORY_QUERY_LENGTH,
     MAX_TOPIC_MEMORY_SEARCH_LIMIT,
@@ -464,8 +464,102 @@ def test_search_returns_the_full_public_candidate_limit() -> None:
     asyncio.run(scenario())
 
 
+def test_topic_memory_search_threads_lowered_fts_floor_into_the_backend() -> None:
+    async def scenario() -> None:
+        index = _fts_index()
+        repository = TopicMemoryRepository(index=index)
+        async with SQLiteProfile.open(SQLiteConfig(), tables=BUILTIN_TABLES + index.tables) as profile:
+            async with profile.database.transaction() as connection:
+                await repository.initialize(connection)
+                content = _content("Single term", "alpha")
+                published = await repository.publish_create(
+                    connection,
+                    "scope-a",
+                    "topic-1",
+                    _draft(content),
+                    prepare_topic_memory_projection(content),
+                )
+
+            async with profile.database.transaction() as connection:
+                default = await repository.search(connection, "scope-a", "alpha beta gamma", limit=10)
+                lowered = await repository.search(
+                    connection,
+                    "scope-a",
+                    "alpha beta gamma",
+                    limit=10,
+                    admission=AdmissionFloor(lexical_coverage=0.0, lexical_min_matched_terms=1),
+                )
+
+        assert default.hits == ()
+        assert default.admission is not None
+        assert default.admission.retrieved >= 1
+        assert default.admission.admitted == 0
+        assert tuple(hit.artifact_ref for hit in lowered.hits) == (published.topic.as_ref(),)
+        assert lowered.admission is not None
+        assert lowered.admission.retrieved >= lowered.admission.admitted == 1
+
+    asyncio.run(scenario())
+
+
+def test_default_topic_memory_search_preserves_eligible_candidates_before_truncating_the_pool() -> None:
+    async def scenario() -> None:
+        index = _fts_index()
+        repository = TopicMemoryRepository(index=index)
+        async with SQLiteProfile.open(SQLiteConfig(), tables=BUILTIN_TABLES + index.tables) as profile:
+            async with profile.database.transaction() as connection:
+                await repository.initialize(connection)
+                for position in range(60):
+                    content = TopicMemoryContent(
+                        title=f"Alpha distractor {position}",
+                        summary="alpha single-term distractor",
+                        detail="unrelated detail",
+                    )
+                    await repository.publish_create(
+                        connection,
+                        "scope-a",
+                        f"topic-alpha-distractor-{position:02d}",
+                        _draft(content),
+                        prepare_topic_memory_projection(content),
+                    )
+                for position in range(60):
+                    content = TopicMemoryContent(
+                        title=f"Beta distractor {position}",
+                        summary="beta single-term distractor",
+                        detail="unrelated detail",
+                    )
+                    await repository.publish_create(
+                        connection,
+                        "scope-a",
+                        f"topic-beta-distractor-{position:02d}",
+                        _draft(content),
+                        prepare_topic_memory_projection(content),
+                    )
+                target = TopicMemoryContent(
+                    title="Target",
+                    summary="alpha beta " + ("long summary filler " * 50),
+                    detail="unrelated detail",
+                )
+                published = await repository.publish_create(
+                    connection,
+                    "scope-a",
+                    "topic-target",
+                    _draft(target),
+                    prepare_topic_memory_projection(target),
+                )
+
+            async with profile.database.transaction() as connection:
+                result = await repository.search(connection, "scope-a", "alpha beta gamma", limit=8)
+
+        assert tuple(hit.artifact_ref for hit in result.hits) == (published.topic.as_ref(),)
+        assert result.admission is not None
+        assert result.admission.retrieved > MAX_TOPIC_MEMORY_SEARCH_LIMIT
+        assert result.admission.admitted >= 1
+
+    asyncio.run(scenario())
+
+
 @pytest.mark.parametrize("limit", [21, 25, 30, 100])
-def test_search_rejects_limits_above_the_channel_candidate_contract(limit: int) -> None:
+def test_search_rejects_limits_above_the_public_search_contract(limit: int) -> None:
     async def scenario() -> None:
         repository = TopicMemoryRepository(index=_fts_index())
         async with (

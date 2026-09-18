@@ -854,14 +854,58 @@ class HandoffPromptKey(StrEnum):
     HANDOFF_GENERATE = "handoff.generate"
 
 
-class ExperienceProposal(BaseModel):
+class RepairSurface(StrEnum):
+    EXPERIENCE_CONTENT = "experience_content"
+    WORKING_STATE = "working_state"
+    RECALL_POLICY = "recall_policy"
+    ACCEPTANCE_CHECK = "acceptance_check"
+
+
+class FailureSignature(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
     )
-    situation: Annotated[StrictStr, Field(max_length=8000, min_length=1, pattern=".*\\S.*")]
-    action: Annotated[StrictStr, Field(max_length=8000, min_length=1, pattern=".*\\S.*")]
-    outcome: Annotated[StrictStr, Field(max_length=8000, min_length=1, pattern=".*\\S.*")]
-    lesson: Annotated[StrictStr, Field(max_length=8000, min_length=1, pattern=".*\\S.*")]
+    recall_cue: Annotated[StrictStr, Field(max_length=512, min_length=1, pattern=".*\\S.*")]
+    symptom: Annotated[StrictStr | None, Field(max_length=8000, min_length=1, pattern=".*\\S.*")] = None
+
+
+class FailureVerification(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    condition: Annotated[StrictStr, Field(max_length=8000, min_length=1, pattern=".*\\S.*")]
+    check_subject: Annotated[StrictStr, Field(max_length=512, min_length=1, pattern=".*\\S.*")]
+
+
+class FailureRecord(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    signature: FailureSignature
+    repair_surface: RepairSurface
+    verification: FailureVerification
+
+
+class RecurrenceStreak(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    artifact_ref: ArtifactReference
+    signature_key: StrictStr
+    terminal_recurred_streak: Annotated[StrictInt, Field(ge=0)]
+
+
+class RecurrenceStatistics(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    selected: Annotated[StrictInt, Field(ge=0)]
+    recurred: Annotated[StrictInt, Field(ge=0)]
+    avoided: Annotated[StrictInt, Field(ge=0)]
+    unknown: Annotated[StrictInt, Field(ge=0)]
+    unlinked_handoff_citations: Annotated[StrictInt, Field(ge=0)]
+    needing_review: Annotated[StrictInt, Field(ge=0)]
+    top_revisions: Annotated[list[RecurrenceStreak], Field(max_length=20)]
 
 
 class SkillLifecycleState(StrEnum):
@@ -1522,14 +1566,6 @@ class Family4(StrEnum):
     EXPERIENCE = "experience"
 
 
-class CreateExperienceArtifactRequest(BaseModel):
-    model_config = ConfigDict(
-        extra="forbid",
-    )
-    family: Literal["experience"]
-    content: ExperienceProposal
-
-
 class Family5(StrEnum):
     SKILL = "skill"
 
@@ -1912,13 +1948,6 @@ class ReplaceMemoryArtifactEntry(BaseModel):
         ),
     ]
     text: Annotated[StrictStr, Field(max_length=8192, min_length=1, pattern=".*\\S.*")]
-
-
-class ReplaceExperienceArtifactRequest(BaseModel):
-    model_config = ConfigDict(
-        extra="forbid",
-    )
-    content: ExperienceProposal
 
 
 class SourceTypeReference(BaseModel):
@@ -2900,6 +2929,7 @@ class ScopeStats(BaseModel):
     inventory: InventoryStatistics
     usage: UsageStatistics
     recall: RecallTokenStatistics
+    recurrence: RecurrenceStatistics
 
 
 class ScopedStats(BaseModel):
@@ -3002,22 +3032,15 @@ class EntryChange(BaseModel):
     reason: Annotated[StrictStr | None, Field(...)]
 
 
-class ExperienceArtifact(BaseModel):
+class ExperienceProposal(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
     )
-    memory_citations: Annotated[
-        list[MemoryCitation],
-        Field(
-            description="Exact Memory entry provenance; non-empty only for Experience. Counted toward the combined evidence bound.",
-            max_length=32,
-            validate_default=True,
-        ),
-    ] = []
-    artifact: ArtifactReference
-    content: ExperienceProposal
-    source_refs: list[SourceReference]
-    artifact_refs: list[ArtifactReference]
+    situation: Annotated[StrictStr, Field(max_length=8000, min_length=1, pattern=".*\\S.*")]
+    action: Annotated[StrictStr, Field(max_length=8000, min_length=1, pattern=".*\\S.*")]
+    outcome: Annotated[StrictStr, Field(max_length=8000, min_length=1, pattern=".*\\S.*")]
+    lesson: Annotated[StrictStr, Field(max_length=8000, min_length=1, pattern=".*\\S.*")]
+    failure: FailureRecord | None = None
 
 
 class SkillProposal(BaseModel):
@@ -3494,6 +3517,14 @@ class TopicMemoryArtifact(BaseModel):
     source_refs: list[SourceReference]
 
 
+class CreateExperienceArtifactRequest(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    family: Literal["experience"]
+    content: ExperienceProposal
+
+
 class CreateSkillArtifactRequest(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
@@ -3524,6 +3555,13 @@ class ReplaceMemoryArtifactContent(BaseModel):
         extra="forbid",
     )
     entries: Annotated[list[ReplaceMemoryArtifactEntry], Field(max_length=100, min_length=1)]
+
+
+class ReplaceExperienceArtifactRequest(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    content: ExperienceProposal
 
 
 class ReplaceSkillArtifactRequest(BaseModel):
@@ -3783,6 +3821,24 @@ class PrepareHandoffRequest(BaseModel):
     objective: Annotated[StrictStr, Field(max_length=8192, min_length=1, pattern=".*\\S.*")]
     evidence: Annotated[list[HandoffCitation], Field(max_length=32, min_length=1)]
     max_bytes: Annotated[StrictInt, Field(ge=512, le=32768)] = 8000
+
+
+class ExperienceArtifact(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    memory_citations: Annotated[
+        list[MemoryCitation],
+        Field(
+            description="Exact Memory entry provenance; non-empty only for Experience. Counted toward the combined evidence bound.",
+            max_length=32,
+            validate_default=True,
+        ),
+    ] = []
+    artifact: ArtifactReference
+    content: ExperienceProposal
+    source_refs: list[SourceReference]
+    artifact_refs: list[ArtifactReference]
 
 
 class SkillArtifact(BaseModel):

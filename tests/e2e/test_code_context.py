@@ -47,13 +47,16 @@ from powercontext.server.factory import create_server_app
 from powercontext.server.settings import AccessControlConfig, McpConfig, ServerSettings
 
 
-def test_code_fallback_preserves_default_topic_memory(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize("recall_gate", [False, True])
+def test_code_fallback_preserves_default_topic_memory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, recall_gate: bool
+) -> None:
     for name in tuple(os.environ):
         if name.startswith("POWERCONTEXT_"):
             monkeypatch.delenv(name)
     settings = ServerSettings(
         database=SQLiteConfig(url=f"sqlite+aiosqlite:///{tmp_path / 'topics.db'}"),
-        runtime=RuntimeConfig(artifact_processing_families=()),
+        runtime=RuntimeConfig(artifact_processing_families=(), recall_gate_enabled=recall_gate),
         inference=InferenceConfig(),
         access=AccessControlConfig(mode="disabled"),
         mcp=McpConfig(enabled=False),
@@ -158,8 +161,14 @@ def configured_repository(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tu
     )
 
 
-def test_real_prepare_query_and_no_implicit_persistence(configured_repository, tmp_path: Path) -> None:
+@pytest.mark.parametrize("recall_gate", [False, True])
+def test_real_prepare_query_and_no_implicit_persistence(
+    configured_repository, tmp_path: Path, recall_gate: bool
+) -> None:
     settings, scope_id, other_id = configured_repository
+    settings = settings.model_copy(
+        update={"runtime": settings.runtime.model_copy(update={"recall_gate_enabled": recall_gate})}
+    )
     with TestClient(create_server_app(settings=settings, scheduler_path=tmp_path / "scheduler.db")) as client:
         source_path = f"/v1/scopes/{scope_id}/sources"
         before = client.get(source_path).json()
