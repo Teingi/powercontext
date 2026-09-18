@@ -160,5 +160,3 @@ MCP 参数平铺为 `scope_id`、`operation`、`expected_fingerprint`、`max_byt
 当前范围是显式刷新、单仓库和 Python 静态关系，不含远程 clone/pull、watcher、分布式构建或历史版本查询。
 Tracing 的 `code.prepare` 记录候选、fingerprint、覆盖和省略原因，`context.build` 记录代码入选条数和代码段字节。
 查到候选、实际入选、宿主注入、任务完成是不同证据。含代码的上下文不纳入基于历史 Source 的 token 节省统计。
-
-真实验收及配对评估见[代码上下文验收](../operate/code-context-validation.md)。

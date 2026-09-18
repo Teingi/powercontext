@@ -178,5 +178,3 @@ remote clone/pull, watchers, distributed builds, and historical-version queries 
 Tracing `code.prepare` records candidates, fingerprint, coverage, and omissions; `context.build` records selected
 code count and section bytes. Matches, selection, host injection, and task completion are distinct evidence.
 Context containing code is excluded from token-saving comparisons against historical Sources.
-
-See [Code context validation](../operate/code-context-validation.md) for real acceptance and paired evaluation.
