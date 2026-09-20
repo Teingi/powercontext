@@ -80,7 +80,7 @@ from powercontext.builtin.artifacts.memory.protocols import (
 )
 from powercontext.builtin.artifacts.memory.reranking import MemoryReranker
 from powercontext.builtin.artifacts.prompt.service import ScopedPrompts, current_prompt, prompt_operation
-from powercontext.builtin.artifacts.search import AdmissionCounts, AdmissionFloor, analyze_text
+from powercontext.builtin.artifacts.search import AdmissionCounts, AdmissionFloor, analyze_fts_query, analyze_text
 from powercontext.builtin.inference import (
     EmbeddingModel,
     EmbeddingVector,
@@ -484,7 +484,7 @@ class MemoryService:
         coarse_limit = limit if self._reranker is None else max(limit, self._rerank_candidate_limit)
         request = MemorySearchRequest(
             query=normalized_query,
-            analyzed_query=analyze_text(normalized_query),
+            analyzed_query=analyze_fts_query(normalized_query),
             memories=selected_memories,
             candidate_limit=max(coarse_limit * 4, 32),
             mode=selected_mode,

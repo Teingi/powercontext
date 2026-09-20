@@ -20,11 +20,14 @@ it is temporary and does not create another Memory entry.
 Host tool names differ; see [Connect Agents](../integrations/index.md). The
 [HTTP API](../develop/http-api.md) exposes the complete request schemas and concurrency requirements.
 
-FTS uses every analyzed query term for candidate retrieval. Its default admission threshold requires 25% of distinct
-query terms, with a minimum of two matches and a maximum of six; one- or two-term queries require one match. This
-bounds the effect of extra execution instructions in long prompts while still rejecting weak lexical overlap. The
-same rule applies to direct search and prepared context without enabling the optional recall gate. FTS remains lexical
-retrieval, so matching words alone do not establish semantic relevance.
+FTS uses the same query terms for candidate retrieval and admission. Query normalization excludes common English
+function words in longer queries and recognizes standalone execution instructions accompanying a question, such as
+"Use only supplied context" and "Do not call tools, read files, inspect old sessions, or delegate." Those instructions
+cannot supply evidence for an unrelated fact. Domain-specific directives and unrecognized wording remain searchable;
+this is a conservative lexical rule, not a general intent classifier. The default threshold requires 25% of all
+remaining distinct terms, with a minimum of two matches; one- or two-term queries require one match. Direct search and
+prepared context share this rule, including when the optional recall gate relaxes the threshold. Stored text and
+vector queries are unchanged, and matching words alone do not establish semantic relevance.
 
 ## Automatic context and extraction
 

@@ -75,6 +75,14 @@ def test_execution_constraints_preserve_fts_facts_through_codex_hook(tmp_path, r
         "The validation command for the synthetic Quartz application is `python -m pytest -q`.",
     }
     unrelated = "PostgreSQL advisory locks coordinate leader election."
+    instruction_only = (
+        "Use only supplied context. Do not call tools, read files, inspect old sessions, or delegate.",
+        "Use only the context already supplied to you. If the facts are absent, say unknown.",
+        *(
+            f"Execution guideline {index}. Do not call tools, read files, inspect old sessions, or delegate."
+            for index in range(36)
+        ),
+    )
     question = "For the synthetic Quartz application, what are the deployment codename and validation command?"
     suffix = (
         " Use only the context already supplied to you. Do not call tools, read files, inspect old sessions, or delegate."
@@ -89,7 +97,7 @@ def test_execution_constraints_preserve_fts_facts_through_codex_hook(tmp_path, r
         config["mcpServers"]["powercontext"]["url"] = f"{base_url}/mcp"
         (plugin / ".mcp.json").write_text(json.dumps(config))
         with httpx.Client(base_url=base_url, headers={"Authorization": AUTHORIZATION}, timeout=10) as client:
-            for text in (*sorted(facts), unrelated):
+            for text in (*sorted(facts), unrelated, *instruction_only):
                 remembered = client.post(
                     "/v1/memory/remember", json={"scope_id": scope_id, "kind": "fact", "text": text}
                 )
@@ -116,6 +124,7 @@ def test_execution_constraints_preserve_fts_facts_through_codex_hook(tmp_path, r
                     for content in (prepared.json()["content"], context):
                         assert all(fact in content for fact in facts)
                         assert unrelated not in content
+                        assert all(text not in content for text in instruction_only)
     finally:
         server.should_exit = True
         thread.join(timeout=10)
