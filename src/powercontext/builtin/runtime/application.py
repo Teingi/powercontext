@@ -122,7 +122,6 @@ from powercontext.builtin.dream.service import CandidateAttester, DreamAuthorize
 from powercontext.builtin.evidence.resolver import AuthorizationContext, ScopedEvidenceAuthorizer
 from powercontext.builtin.inference import (
     EmbeddingModel,
-    InferenceTimeoutError,
     InferenceUnavailableError,
     InvalidInferenceOutputError,
 )
@@ -314,6 +313,9 @@ TopicMemorySearchObserver = Callable[[str, bool], None]
 
 logger = logging.getLogger(__name__)
 
+# Leave room for database reads and assembly within the default one-second Hook request.
+_CONTEXT_TOPIC_EMBEDDING_TIMEOUT_SECONDS = 0.25
+
 _MEMORY_CAPTURE_STAGE = "memory.capture"
 _MEMORY_CAPTURE_SOURCE_COUNT = "powercontext.memory.capture.source_count"
 _MEMORY_SEARCH_STAGE = "memory.search"
@@ -360,8 +362,8 @@ class TopicMemoryRecallOutcome:
     Produced and consumed entirely inside the Runtime layer, which is why it lives here rather
     than under ``artifacts/**``. ``query_embedding`` is the vector this search resolved (or
     reused); a later expansion round can hand it back so the next search does not re-embed. It
-    stays ``None`` when the search ran without a vector channel, in which case the next round
-    must pay for its own embedding.
+    stays ``None`` when the search ran without a vector channel. Prepare caches that outcome
+    too, so expansion rounds retain FTS after a failed embedding attempt.
     """
 
     hits: tuple[TopicMemorySearchHit, ...] = ()
@@ -904,7 +906,7 @@ class ScopedContextApplication:
         # Caller-owned cache of the query vectors round 0 already paid for, keyed by scope.
         # Expansion rounds read it so a repeat search does not re-embed; round 0 fills it.
         reuse: dict[str, MemoryQueryEmbedding] = {}
-        topic_reuse: dict[str, MemoryQueryEmbedding] = {}
+        topic_reuse: dict[str, MemoryQueryEmbedding | None] = {}
 
         round_zero = await self._recall_round(
             request,
@@ -1010,7 +1012,7 @@ class ScopedContextApplication:
         topic_memory_hits: tuple[TopicMemorySearchHit, ...],
         profile_candidates: Sequence[PreparedProfileCandidate],
         reuse: dict[str, MemoryQueryEmbedding],
-        topic_reuse: dict[str, MemoryQueryEmbedding],
+        topic_reuse: dict[str, MemoryQueryEmbedding | None],
         round_zero: _RecallRoundOutcome,
     ) -> tuple[
         list[PreparedMemoryCandidates],
@@ -1227,7 +1229,7 @@ class ScopedContextApplication:
         *,
         admission: AdmissionFloor | None,
         reuse: dict[str, MemoryQueryEmbedding],
-        topic_reuse: dict[str, MemoryQueryEmbedding],
+        topic_reuse: dict[str, MemoryQueryEmbedding | None],
     ) -> _RecallRoundOutcome:
         memory_candidates: list[PreparedMemoryCandidates] = []
         experience_candidates: list[PreparedExperienceCandidates] = []
@@ -1263,11 +1265,12 @@ class ScopedContextApplication:
                 builder.topic_memory_candidate_limit,
                 admission=admission,
                 reuse=topic_reuse.get(self.scope_id),
+                allow_embedding=self.scope_id not in topic_reuse or topic_reuse[self.scope_id] is not None,
             )
             if TOPIC_MEMORY_FAMILY in families
             else TopicMemoryRecallOutcome()
         )
-        if topic_outcome.query_embedding is not None:
+        if TOPIC_MEMORY_FAMILY in families:
             topic_reuse[self.scope_id] = topic_outcome.query_embedding
         return _RecallRoundOutcome(
             memory=tuple(memory_candidates),
@@ -1392,6 +1395,7 @@ class ScopedContextApplication:
         *,
         admission: AdmissionFloor | None,
         reuse: MemoryQueryEmbedding | None,
+        allow_embedding: bool,
     ) -> TopicMemoryRecallOutcome:
         configured = self._runtime._topic_memory_search is not None
         bounded_query = _bounded_topic_memory_recall_query(query)
@@ -1410,6 +1414,8 @@ class ScopedContextApplication:
                         SearchTopicMemoryRequest(query=bounded_query, limit=limit),
                         admission=admission,
                         query_embedding=reuse,
+                        embedding_timeout_seconds=_CONTEXT_TOPIC_EMBEDDING_TIMEOUT_SECONDS,
+                        allow_embedding=allow_embedding,
                     )
                 )
             )
@@ -2539,6 +2545,8 @@ class ScopedTopicMemoryApplication:
         *,
         admission: AdmissionFloor | None = None,
         query_embedding: MemoryQueryEmbedding | None = None,
+        embedding_timeout_seconds: float | None = None,
+        allow_embedding: bool = True,
     ) -> TopicMemorySearchResult:
         search = self._runtime._topic_memory_search
         if search is None:
@@ -2556,7 +2564,10 @@ class ScopedTopicMemoryApplication:
             self.scope_id,
             embedding_purpose=ModelUsagePurpose.TOPIC_MEMORY_RECALL,
         ):
-            embedding = self._runtime._topic_memory_embedding_model
+            embedding = self._runtime._topic_memory_embedding_model if allow_embedding else None
+            browse = self._runtime._topic_memory_browse
+            if embedding is not None and browse is not None and not await browse(self.scope_id, limit=1, after=None):
+                embedding = None
             if embedding is None:
                 result = await search(
                     self.scope_id,
@@ -2573,6 +2584,7 @@ class ScopedTopicMemoryApplication:
                     search,
                     admission,
                     query_embedding,
+                    embedding_timeout_seconds,
                 )
         observer = self._runtime._topic_memory_search_observer
         if observer is not None:
@@ -2599,6 +2611,7 @@ class ScopedTopicMemoryApplication:
         search: TopicMemorySearch,
         admission: AdmissionFloor | None,
         query_embedding: MemoryQueryEmbedding | None,
+        embedding_timeout_seconds: float | None,
     ) -> tuple[TopicMemorySearchResult, bool]:
         if query_embedding is not None and query_embedding.embedding_profile == embedding.profile:
             result = await search(
@@ -2612,10 +2625,11 @@ class ScopedTopicMemoryApplication:
             )
             return result.model_copy(update={"query_embedding": query_embedding, "embedding_calls": 0}), False
         try:
-            embedded = await embedding.embed((request.query,))
+            async with asyncio.timeout(embedding_timeout_seconds):
+                embedded = await embedding.embed((request.query,))
             if len(embedded.vectors) != 1:
                 raise InvalidInferenceOutputError("embed", "provider returned the wrong vector count")
-        except (InferenceUnavailableError, InferenceTimeoutError) as error:
+        except (InferenceUnavailableError, TimeoutError) as error:
             used_fallback = True
             log_safely(
                 logger,
@@ -2625,9 +2639,7 @@ class ScopedTopicMemoryApplication:
                     "event": "topic_memory.search.embedding_fallback",
                     "outcome": "fallback",
                     "mode": "fts",
-                    "error_code": (
-                        "inference_timeout" if isinstance(error, InferenceTimeoutError) else "inference_unavailable"
-                    ),
+                    "error_code": ("inference_timeout" if isinstance(error, TimeoutError) else "inference_unavailable"),
                     "unit": "topic-memory",
                 },
             )
