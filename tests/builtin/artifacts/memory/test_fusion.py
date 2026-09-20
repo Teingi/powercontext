@@ -155,6 +155,23 @@ def test_fts_keeps_domain_constraints_and_explicit_policy_queries(query, text) -
     assert admit_fts_candidates(query, (candidate,)) == (candidate,)
 
 
+@pytest.mark.parametrize(
+    "query",
+    [
+        '"AND" "OR" precedence',
+        "'AND' 'OR' precedence",
+        "`AND` `OR` precedence",
+        "“AND” “OR” precedence",
+        "‘AND’ ‘OR’ precedence",  # noqa: RUF001 - quoted identifiers use typographic single quotes.
+    ],
+)
+def test_quoted_function_words_remain_lexical_evidence(query) -> None:
+    operators = channel_hit("operators", text="AND binds more tightly than OR.")
+    arithmetic = channel_hit("arithmetic", text="Multiplication has precedence over addition.")
+
+    assert admit_fts_candidates(query, (operators, arithmetic)) == (operators,)
+
+
 def test_vector_admission_converts_unit_l2_distance_to_cosine_threshold() -> None:
     boundary = (2.0 * (1.0 - 0.3)) ** 0.5
     accepted = channel_hit("accepted", distance=boundary)

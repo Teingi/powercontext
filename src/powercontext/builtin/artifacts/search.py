@@ -156,20 +156,22 @@ def analyze_fts_query(value: str) -> str:
 
     Recognize only standalone, generic English execution instructions accompanying other
     query content. Preserve quoted text, domain-specific directives and unknown phrasing.
-    Function words cannot supply the sole overlap during a relaxed recall-gate round.
+    Unquoted function words cannot supply the sole overlap during a relaxed recall-gate round.
     """
 
     content: list[str] = []
+    quoted_terms: set[str] = set()
     for index, part in enumerate(_QUOTED_QUERY_TEXT.split(unicodedata.normalize("NFC", value).casefold())):
         if index % 2:
             content.append(part)
+            quoted_terms.update(analyze_text(part).split())
         else:
             sentences = re.split(r"(?<=[.!?])\s+|\n+", part)
             content.extend(sentence for sentence in sentences if not _is_execution_sentence(sentence))
     # A search consisting solely of a directive may be looking up that very policy.
     terms = analyze_text(" ".join(content) if any(sentence.strip() for sentence in content) else value).split()
     if len(set(terms)) > _FTS_SHORT_QUERY_MAX_TERMS:
-        meaningful = [term for term in terms if term not in _QUERY_FUNCTION_WORDS]
+        meaningful = [term for term in terms if term in quoted_terms or term not in _QUERY_FUNCTION_WORDS]
         if meaningful:
             terms = meaningful
     return " ".join(terms)
