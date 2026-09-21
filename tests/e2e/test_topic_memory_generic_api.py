@@ -357,7 +357,8 @@ def test_legacy_tags_survive_transactional_upgrade_and_repeated_startup(tmp_path
             in connection.execute("SELECT sql FROM sqlite_master WHERE name = 'pc_artifact_tags'").fetchone()[0]
         )
         assert connection.execute("SELECT * FROM pc_artifact_tags").fetchall() == rows
-    for _ in range(2):
+    configuration_tags = {}
+    for restart in range(2):
         with TestClient(_app(tmp_path)) as client:
             current = client.get(path)
             assert current.json() == tagged.json()
@@ -371,6 +372,31 @@ def test_legacy_tags_survive_transactional_upgrade_and_repeated_startup(tmp_path
                 ).status_code
                 == 200
             )
+            if restart == 0:
+                for request in (
+                    {"family": "profile", "content": {"content": "# Preserve labels"}},
+                    {
+                        "family": "prompt",
+                        "prompt_key": "memory.extract",
+                        "content": {
+                            "schema_version": "powercontext.prompt.v1",
+                            "mode": "auto",
+                            "instructions": "",
+                            "demonstrations": [],
+                        },
+                    },
+                ):
+                    configuration = client.post(f"/v1/scopes/{scope}/artifacts", json=request)
+                    assert configuration.status_code == 201, configuration.text
+                    tag_path = configuration.headers["Location"] + "/tags"
+                    empty = client.get(tag_path)
+                    saved = client.put(
+                        tag_path, headers={"If-Match": empty.headers["ETag"]}, json={"tags": ["Release"]}
+                    )
+                    assert saved.status_code == 200, saved.text
+                    configuration_tags[tag_path] = saved.json()
+            for tag_path, saved_tags in configuration_tags.items():
+                assert client.get(tag_path).json() == saved_tags
     with sqlite3.connect(database) as connection:
         ddl = connection.execute("SELECT sql FROM sqlite_master WHERE name = 'pc_artifact_tags'").fetchone()[0]
         assert "ck_pc_artifact_tags_family" not in ddl

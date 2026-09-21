@@ -7,7 +7,7 @@ OPENAPI_SCHEMA: dict[str, JsonValue] = {
     "info": {
         "title": "PowerContext API",
         "description": "Remote PowerContext transport. Runtime behavior is reported by /v1/capabilities.",
-        "version": "1.0.0",
+        "version": "1.1.0",
     },
     "paths": {
         "/v1/scopes/{scope_id}/code/query": {
@@ -8465,8 +8465,8 @@ OPENAPI_SCHEMA: dict[str, JsonValue] = {
             },
             "TaggableArtifactFamily": {
                 "type": "string",
-                "enum": ["memory", "experience", "skill", "handoff", "topic-memory"],
-                "description": "Artifact families supporting logical tags; Prompt configurations are excluded.",
+                "enum": ["memory", "experience", "skill", "handoff", "profile", "prompt", "topic-memory"],
+                "description": "All readable Artifact families support logical tags on persisted Artifacts.",
             },
             "TagMatch": {"type": "string", "enum": ["all", "any"]},
             "TagTargetType": {"type": "string", "enum": ["artifact", "memory_entry"]},
@@ -8554,9 +8554,10 @@ OPENAPI_SCHEMA: dict[str, JsonValue] = {
                     "families": {
                         "items": {"$ref": "#/components/schemas/TaggableArtifactFamily"},
                         "type": "array",
-                        "maxItems": 5,
+                        "maxItems": 7,
                         "minItems": 1,
                         "uniqueItems": True,
+                        "description": "Restrict matching families. Omit to query all supported Artifact families.",
                     },
                     "target_types": {
                         "items": {"$ref": "#/components/schemas/TagTargetType"},
@@ -8996,8 +8997,26 @@ OPENAPI_SCHEMA: dict[str, JsonValue] = {
             },
             "SourceTypeReference": {
                 "properties": {
-                    "source_type": {"type": "string", "enum": ["content"]},
-                    "source_id": {"type": "string", "maxLength": 256, "minLength": 1, "pattern": "^[\\x21-\\x7E]+$"},
+                    "source_type": {
+                        "type": "string",
+                        "description": "Stable Source type, including dynamically registered Source names.",
+                    },
+                    "source_id": {
+                        "type": "string",
+                        "maxLength": 256,
+                        "minLength": 1,
+                        "description": "Source "
+                        "identity "
+                        "as "
+                        "accepted "
+                        "at "
+                        "ingestion, "
+                        "including "
+                        "Unicode "
+                        "and "
+                        "interior "
+                        "spaces.",
+                    },
                 },
                 "additionalProperties": False,
                 "type": "object",

@@ -207,6 +207,10 @@ def _annotate_mcp_component(
         # The OpenAPI projection weakens required fields inside this union.
         # Preserve each operation's generated request contract for MCP clients.
         component.parameters = _code_query_parameters(component.parameters["properties"]["scope_id"])
+    if route.operation_id == GET_HANDOFF_REPORT.operation_id:
+        # This operation returns either a JSON object or Markdown text. MCP's
+        # object output schema would require structured content for both formats.
+        component.output_schema = None
     if route.operation_id in _MCP_READ_ONLY_OPERATION_IDS:
         component.annotations = ToolAnnotations(
             readOnlyHint=True,

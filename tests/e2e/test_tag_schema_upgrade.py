@@ -124,20 +124,41 @@ def test_real_legacy_tags_survive_repeated_server_startup(backend, topic_family,
                     assert current.json() == tagged.json()
                     assert current.headers["ETag"] == tagged.headers["ETag"]
                     if restart:
-                        topic = await http.post(
-                            f"/v1/scopes/{scope_id}/artifacts",
-                            json={
+                        for request in (
+                            {
                                 "family": "topic-memory",
                                 "content": {"title": "New", "summary": "New", "detail": "New"},
                             },
+                            {"family": "profile", "content": {"content": "# Preserve labels"}},
+                            {
+                                "family": "prompt",
+                                "prompt_key": "memory.extract",
+                                "content": {
+                                    "schema_version": "powercontext.prompt.v1",
+                                    "mode": "auto",
+                                    "instructions": "",
+                                    "demonstrations": [],
+                                },
+                            },
+                        ):
+                            artifact = await http.post(f"/v1/scopes/{scope_id}/artifacts", json=request)
+                            assert artifact.status_code == 201, artifact.text
+                            tag_path = artifact.headers["Location"] + "/tags"
+                            empty = await http.get(tag_path)
+                            assigned = await http.put(
+                                tag_path, headers={"If-Match": empty.headers["ETag"]}, json={"tags": ["Release"]}
+                            )
+                            assert assigned.status_code == 200, assigned.text
+                        found = await http.post(
+                            f"/v1/scopes/{scope_id}/artifact-tags/query", json={"tags": ["release"]}
                         )
-                        assert topic.status_code == 201, topic.text
-                        topic_path = topic.headers["Location"] + "/tags"
-                        empty = await http.get(topic_path)
-                        assigned = await http.put(
-                            topic_path, headers={"If-Match": empty.headers["ETag"]}, json={"tags": ["Release"]}
-                        )
-                        assert assigned.status_code == 200, assigned.text
+                        assert found.status_code == 200, found.text
+                        assert {item["target"]["family"] for item in found.json()["items"]} == {
+                            "experience",
+                            "topic-memory",
+                            "profile",
+                            "prompt",
+                        }
             async with (
                 open_profile(database, tables=()) as profile,
                 profile.database.transaction() as connection,

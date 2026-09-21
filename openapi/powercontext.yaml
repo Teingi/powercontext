@@ -16,7 +16,7 @@ openapi: 3.0.3
 info:
   title: PowerContext API
   description: Remote PowerContext transport. Runtime behavior is reported by /v1/capabilities.
-  version: 1.0.0
+  version: 1.1.0
 security:
   - BearerAuth: []
   - {}
@@ -9144,8 +9144,8 @@ components:
             handoff receipts, are rejected and must be created through their dedicated workflow.
     TaggableArtifactFamily:
       type: string
-      description: Artifact families supporting logical tags; Prompt configurations are excluded.
-      enum: [memory, experience, skill, handoff, topic-memory]
+      description: All readable Artifact families support logical tags on persisted Artifacts.
+      enum: [memory, experience, skill, handoff, profile, prompt, topic-memory]
     TagMatch:
       type: string
       enum: [all, any]
@@ -9218,9 +9218,10 @@ components:
         families:
           type: array
           minItems: 1
-          maxItems: 5
+          maxItems: 7
           uniqueItems: true
           items: {$ref: '#/components/schemas/TaggableArtifactFamily'}
+          description: Restrict matching families. Omit to query all supported Artifact families.
         target_types:
           type: array
           minItems: 1
@@ -9639,12 +9640,12 @@ components:
       properties:
         source_type:
           type: string
-          enum: [content]
+          description: Stable Source type, including dynamically registered Source names.
         source_id:
           type: string
           minLength: 1
           maxLength: 256
-          pattern: '^[\x21-\x7E]+$'
+          description: Source identity as accepted at ingestion, including Unicode and interior spaces.
     SourceReference:
       type: object
       additionalProperties: false
