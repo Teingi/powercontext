@@ -224,6 +224,47 @@ def test_dashboard_question_explains_authentication_and_keeps_mcp_enabled() -> N
     assert state.values[SERVER + "MCP_ENABLED"] == "true"
 
 
+def test_fresh_local_setup_defaults_to_no_authentication() -> None:
+    state = Wizard(WizardUI("en"), {}, {})
+
+    result = _run_network(state, "\n\n")
+
+    assert result.exit_code == 0, result.output
+    assert state.values[SERVER + "DASHBOARD_ENABLED"] == "false"
+    assert state.values[SERVER + "ACCESS_MODE"] == "disabled"
+    assert SERVER + "AUTH_TOKEN" not in state.values
+    assert CLIENT + "API_TOKEN" not in state.client
+
+
+@pytest.mark.parametrize("dashboard", ["true", "false"])
+def test_existing_local_authentication_is_preserved_when_accepting_defaults(dashboard: str) -> None:
+    values = {
+        SERVER + "DASHBOARD_ENABLED": dashboard,
+        SERVER + "ACCESS_MODE": "enforced",
+        SERVER + "AUTH_TOKEN": "existing-test-token",
+    }
+    state = Wizard(WizardUI("en"), dict(values), dict(values))
+
+    result = _run_network(state, "\n\n")
+
+    assert result.exit_code == 0, result.output
+    assert state.values[SERVER + "DASHBOARD_ENABLED"] == dashboard
+    assert state.values[SERVER + "ACCESS_MODE"] == "enforced"
+    assert state.client[CLIENT + "API_TOKEN"] == "existing-test-token"
+
+
+def test_enabling_dashboard_opts_into_authentication() -> None:
+    state = Wizard(WizardUI("en"), {}, {})
+
+    result = _run_network(state, "y\n\n")
+
+    assert result.exit_code == 0, result.output
+    assert state.values[SERVER + "DASHBOARD_ENABLED"] == "true"
+    assert state.values[SERVER + "ACCESS_MODE"] == "enforced"
+    assert state.values[SERVER + "AUTH_TOKEN"]
+    assert state.client[CLIENT + "API_TOKEN"] == state.values[SERVER + "AUTH_TOKEN"]
+
+
 def test_ssh_preserves_server_address_and_exposes_forwarded_client_address() -> None:
     state = Wizard(WizardUI("en"), {}, {}, scenario="remote")
 

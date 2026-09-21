@@ -578,7 +578,7 @@ def _network(state: Wizard) -> None:
     dashboard = ui.confirm(
         "Enable the browser Dashboard? This also enables authenticated access and creates or retains a Server token.",
         "开启浏览器 Dashboard？这会同时启用访问认证，并生成或沿用 Server Token。",
-        default=state.values.get(f"{SERVER}DASHBOARD_ENABLED", "true") == "true",
+        default=state.values.get(f"{SERVER}DASHBOARD_ENABLED", "false") == "true",
     )
     ui.say(
         "Dashboard, HTTP API, and MCP share the same Server listener and port.",
@@ -1622,11 +1622,11 @@ def _codex_endpoint_steps(state: Wizard) -> list[str]:
     }
     return [
         state.ui.text(
-            "Codex: setup codex applies the following connection. On Windows it also configures the current user's "
-            "Codex authorization environment. If you change the connection manually, rerun setup codex, then restart "
-            "Codex.",
-            "Codex：setup codex 会应用下方连接；在 Windows 上还会配置当前用户的 Codex 鉴权环境。"
-            "如果手工修改连接，请重新运行 setup codex，然后重启 Codex。",
+            "Codex: setup codex applies the following connection and installs a credential helper so new sessions "
+            "can use saved authorization without exporting it. If you change the connection manually, rerun setup "
+            "codex, then restart Codex. Preserve the generated http_headers_helper when editing the installed file.",
+            "Codex：setup codex 会应用下方连接并安装凭据 helper，新会话无需重复导出授权变量。"
+            "如果手工修改连接，请重新运行 setup codex，然后重启 Codex；编辑已安装文件时保留生成的 http_headers_helper。",
         ),
         "",
         "```json",

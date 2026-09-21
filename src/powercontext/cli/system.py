@@ -21,6 +21,7 @@ import os
 import re
 import shlex
 import subprocess
+import sys
 from contextlib import suppress
 from dataclasses import asdict, dataclass
 from enum import StrEnum
@@ -1109,8 +1110,6 @@ def install_codex_plugin(*, source: str, ref: str, server_url: str | None = None
     marketplace_name = _required_string(marketplace, "marketplaceName")
 
     plugin = _run_codex_json("plugin", "add", f"{PLUGIN_NAME}@{marketplace_name}")
-    if server_url is not None:
-        _configure_codex_endpoint(marketplace_name, _required_string(plugin, "version"), server_url)
     from powercontext.cli.authorization import (
         configure_codex_desktop_authorization,
         configure_stored_authorization,
@@ -1126,6 +1125,7 @@ def install_codex_plugin(*, source: str, ref: str, server_url: str | None = None
         value=setup_authorization_value("codex"),
     )
     authorization = read_stored_authorization(credential_path("codex"), server_url=authorization_server_url)
+    _configure_codex_endpoint(marketplace_name, _required_string(plugin, "version"), authorization_server_url)
     if authorization.authorization is not None:
         try:
             configure_codex_desktop_authorization(authorization.authorization)
@@ -1141,7 +1141,9 @@ def install_codex_plugin(*, source: str, ref: str, server_url: str | None = None
 
 
 def _configure_codex_endpoint(marketplace: str, plugin_version: str, server_url: str) -> None:
-    """Keep the installed native MCP URL and hook URL identical."""
+    """Keep the installed native MCP and Hook endpoint and saved credential source identical."""
+
+    from powercontext.cli.authorization import credential_path
 
     if any(part in {"", ".", ".."} or "/" in part or "\\" in part for part in (marketplace, plugin_version)):
         raise SetupError("Invalid Codex plugin cache location")  # noqa: TRY003
@@ -1153,6 +1155,23 @@ def _configure_codex_endpoint(marketplace: str, plugin_version: str, server_url:
         if not isinstance(entry, dict) or entry.get("type") != "http":
             raise ValueError("Expected an HTTP MCP server")  # noqa: TRY003, TRY301
         entry["url"] = server_url.rstrip("/") + "/mcp/"
+        # Codex filters the helper environment, including CODEX_HOME. Pass only the
+        # absolute credential path; the helper shares the Hook's URL-bound reader.
+        helper = [
+            "uv",
+            "run",
+            "--frozen",
+            "--quiet",
+            "--project",
+            str(path.parent.resolve()),
+            "python",
+            str((path.parent / "mcp_headers.py").resolve()),
+            "--credential-file",
+            str(credential_path("codex").absolute()),
+        ]
+        entry["http_headers_helper"] = (
+            subprocess.list2cmdline(helper) if sys.platform == "win32" else shlex.join(helper)
+        )
         _write_bytes_atomically(path, (json.dumps(config, indent=2) + "\n").encode())
     except (OSError, ValueError, KeyError, TypeError) as error:
         raise SetupError(  # noqa: TRY003
@@ -1475,7 +1494,7 @@ def run_codex_diagnostics() -> dict[str, Diagnostic]:
     diagnostics["mcp_configuration"] = Diagnostic(
         status=DiagnosticStatus.OK if configuration_ok else DiagnosticStatus.FAILED,
         detail=(
-            f"enabled with environment-backed authorization; auth_status={server.get('auth_status', 'unknown')}"
+            f"native HTTP MCP enabled with environment overrides; auth_status={server.get('auth_status', 'unknown')}"
             if configuration_ok and server is not None
             else "PowerContext native MCP entry is missing, disabled, or lacks environment-backed authorization; "
             "reinstall the current plugin"
@@ -1492,7 +1511,10 @@ def run_codex_diagnostics() -> dict[str, Diagnostic]:
         )
         return diagnostics
 
-    authorization_diagnostic, native_authorization = _resolve_codex_native_authorization(mcp_url)
+    credential_helper = isinstance(transport, dict) and bool(transport.get("http_headers_helper"))
+    authorization_diagnostic, native_authorization = _resolve_codex_native_authorization(
+        mcp_url, credential_helper=credential_helper
+    )
     diagnostics["authorization"] = authorization_diagnostic
     if not authorization_diagnostic.ok:
         diagnostics["mcp_tools"] = Diagnostic(
@@ -1509,7 +1531,7 @@ def run_codex_diagnostics() -> dict[str, Diagnostic]:
     tools = native_server.get("tools")
     tool_names = set(tools) if isinstance(tools, dict) else set()
     missing = sorted(_CODEX_REQUIRED_MCP_TOOLS - tool_names)
-    if native_authorization is None:
+    if native_authorization is None and not credential_helper:
         failure_hint = (
             "; check Server availability and, for an authenticated Server, set "
             "POWERCONTEXT_CODEX_AUTHORIZATION while rerunning `powercontext setup codex`"
@@ -1534,18 +1556,21 @@ def _codex_authorization_checks(
     process_state: str,
     process_authorization: str | None,
     desktop_authorization: str | None,
+    credential_helper: bool = False,
 ) -> dict[str, str]:
     if stored_authorization is None:
         setup_managed_state = stored_state
     elif process_authorization is not None:
         setup_managed_state = "matches_current_process" if stored_authorization == process_authorization else "stale"
+    elif credential_helper:
+        setup_managed_state = "available_to_host"
     elif desktop_authorization is not None:
         setup_managed_state = "matches_desktop_restart" if stored_authorization == desktop_authorization else "stale"
     else:
         setup_managed_state = "configured_but_unavailable_to_host"
 
     if desktop_authorization is None:
-        desktop_restart_state = "not_configured"
+        desktop_restart_state = "not_configured" if sys.platform == "win32" else "not_applicable"
     elif process_authorization is None:
         desktop_restart_state = "configured"
     else:
@@ -1594,7 +1619,9 @@ def _codex_desktop_authorization_detail(*, matches_stored: bool, stored_issue: s
     return "; ".join(detail_parts)
 
 
-def _resolve_codex_native_authorization(mcp_url: str) -> tuple[Diagnostic, str | None]:
+def _resolve_codex_native_authorization(
+    mcp_url: str, *, credential_helper: bool = False
+) -> tuple[Diagnostic, str | None]:
     """Resolve the redacted Codex host authorization state for one MCP URL."""
 
     from powercontext.cli.authorization import (
@@ -1632,6 +1659,7 @@ def _resolve_codex_native_authorization(mcp_url: str) -> tuple[Diagnostic, str |
         process_state=process_state,
         process_authorization=comparable_process_authorization,
         desktop_authorization=desktop_authorization,
+        credential_helper=credential_helper,
     )
     stored_issue = _codex_stored_authorization_issue(authorization.status, checks["setup_managed"])
 
@@ -1658,6 +1686,16 @@ def _resolve_codex_native_authorization(mcp_url: str) -> tuple[Diagnostic, str |
             None,
         )
 
+    if credential_helper and expected_authorization is not None:
+        return (
+            Diagnostic(
+                status=DiagnosticStatus.OK,
+                detail="native MCP credential helper will read the setup-managed credential; no authorization export is required",
+                checks=checks,
+            ),
+            None,
+        )
+
     if desktop_authorization is not None:
         return (
             Diagnostic(
@@ -1676,7 +1714,10 @@ def _resolve_codex_native_authorization(mcp_url: str) -> tuple[Diagnostic, str |
         "no host authorization is configured; the native probe will verify an unauthenticated connection"
         if authorization_ok
         else (
-            "setup-managed credential is not available to the Codex host; rerun `powercontext setup codex`"
+            "setup-managed credential is not available to the Codex host; upgrade Codex to a version supporting "
+            "http_headers_helper and rerun `powercontext setup codex` with the matching PowerContext plugin, "
+            "then restart Codex; "
+            "for an older installation, set POWERCONTEXT_CODEX_AUTHORIZATION before launching Codex"
             if authorization.status == "configured"
             else f"stored credential state is {authorization.status}; rerun `powercontext setup codex`"
         )

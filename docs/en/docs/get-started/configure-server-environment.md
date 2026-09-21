@@ -23,6 +23,10 @@ then asks about Dashboard and access settings and only the model connections nee
 memory uses explicit Agent-saved memories and full-text recall without a separate model API; automatic processing
 and semantic retrieval require their respective model settings. Existing files can be reused or adjusted by module.
 
+A fresh local setup leaves Dashboard and authentication disabled. Enable Dashboard to opt into authenticated
+access, or set `POWERCONTEXT_SERVER_ACCESS_MODE=enforced` and `POWERCONTEXT_SERVER_AUTH_TOKEN` explicitly.
+Remote setup enables authentication. Existing Dashboard and authentication settings are preserved when accepting defaults.
+
 Agent configuration selects one Agent at a time and can then add another; configured choices are removed from the
 menu. Each Agent can independently use the default Scope, bind an existing Scope, or plan a new isolated Scope.
 Planned titles use `codex-<random>` or `claude-code-<random>`, but the real `scope_id` is the opaque value returned

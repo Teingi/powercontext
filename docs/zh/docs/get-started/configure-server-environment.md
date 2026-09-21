@@ -21,6 +21,10 @@ powercontext config init --output .env
 基础记忆通过 Agent 显式保存和全文召回，不要求独立模型 API；自动处理和语义检索分别需要对应的模型配置。
 已有环境文件可以直接沿用，也可以按模块调整。
 
+首次本地配置默认关闭 Dashboard 和认证。需要时启用 Dashboard，或显式设置
+`POWERCONTEXT_SERVER_ACCESS_MODE=enforced` 和 `POWERCONTEXT_SERVER_AUTH_TOKEN` 开启认证。
+远程配置会启用认证；修改已有配置时，接受默认选项会保留已有 Dashboard 和认证设置。
+
 配置 Agent 时每次选择一个 Agent；完成后可以继续添加，已配置项不会再次出现。每个 Agent 可分别使用默认 Scope、绑定已有
 Scope，或计划创建独立 Scope。独立 Scope 使用 `codex-<随机串>`、`claude-code-<随机串>` 形式的标题，但真正的
 `scope_id` 必须使用 Server 创建后返回的不透明 ID，向导不会把标题冒充为 ID。

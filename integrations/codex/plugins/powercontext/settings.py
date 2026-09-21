@@ -56,6 +56,7 @@ class _McpEndpoint(BaseModel):
     url: str
     required: bool
     env_http_headers: dict[str, str]
+    http_headers_helper: str | None = None
 
     @model_validator(mode="after")
     def validate_url(self) -> _McpEndpoint:
@@ -200,8 +201,10 @@ def _server_url_from_mcp_configuration() -> str:
     return _http_base_url(configuration.mcp_servers["powercontext"].url, allow_insecure_http=True)
 
 
-def _stored_authorization(server_url: str) -> str | None:
-    path = Path(os.environ.get("CODEX_HOME", Path.home() / ".codex")).expanduser() / "powercontext" / "credentials.json"
+def _stored_authorization(server_url: str, *, credential_file: Path | None = None) -> str | None:
+    path = credential_file or (
+        Path(os.environ.get("CODEX_HOME", Path.home() / ".codex")).expanduser() / "powercontext" / "credentials.json"
+    )
     try:
         if path.is_symlink() or not path.is_file() or (os.name != "nt" and stat.S_IMODE(path.stat().st_mode) & 0o077):
             return None
@@ -223,6 +226,8 @@ def _stored_authorization(server_url: str) -> str | None:
             scheme.casefold() != "bearer"
             or not separator
             or not credential
+            or not credential.isascii()
+            or not credential.isprintable()
             or any(character.isspace() for character in credential)
         ):
             return None
