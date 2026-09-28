@@ -55,6 +55,11 @@ jobs:
               )
           PY
 
+      - name: Verify synchronized release references
+        env:
+          VERSION: ${{ github.event.release.tag_name }}
+        run: make version-check
+
       - name: Build release distributions
         run: |
           uv build --out-dir dist
