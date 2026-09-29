@@ -1,22 +1,151 @@
-# PowerContext × Jev / Laya：跨会话编码与决策示例
+# PowerContext with Jev and Laya: project-aware coding decisions
 
-通过本地 API 保存上一轮确认的项目约定，再让新的进程召回记忆。随后用同一个生成模型分别编写两份金额转换函数：一份只收到当前任务，另一份还收到 PowerContext 实际召回的上下文。可选用 Jev / Laya 审核两份代码，运行独立测试比较实际表现，再把结果保存为下一轮可召回的记忆。
+PowerContext gives a model the project history it needs to make a useful decision. This example saves a team's coding rules, recalls them in a fresh process, and supplies that evidence to Jev through PowerContext's existing `DecisionModel` interface.
 
-场景是账单导出：`cents(text: str) -> int` 把金额字符串转换为整数分。团队之前约定使用 `Decimal` 和 `ROUND_HALF_UP`，负数退款采用相同的对称舍入规则，非法文本、`NaN` 和 `Infinity` 抛出 `ValueError`。例如，`1.005` 应得到 `101`，`-1.005` 应得到 `-101`。
+The integration has two parts: PowerContext retrieves the relevant context; a small adapter translates a `DecisionRequest` into Jev's System One protocol. Inject the adapter with `open_builtin_runtime(decision_model=...)`, then call the Runtime's decision model. The example needs no changes to PowerContext's core APIs or storage schema, and the code-generation model can be configured independently.
 
-记忆、模型响应、代码和测试结果都来自本次执行。示例不预设哪组获胜；两组可能都通过，也可能都失败。
+The runnable experiment makes this concrete. The same generation model writes an amount-conversion function twice, with and without recalled project rules. Jev, optionally alongside Laya, reviews both implementations against the recalled rules. Independent tests execute the generated code, and the observed results become Memory for the next session.
 
-## 启动 API 服务
+## Architecture
 
-以下命令从仓库根目录执行。需要 Linux / macOS、Python 3.11+、`uv`，以及一个支持 OpenAI Chat Completions 请求格式的真实生成模型服务。
+The example separates context, generation, advisory decisions, and verification:
 
-复制配置模板，填写生成模型及需要启用的审核服务；已有同名配置文件时，请直接补齐变量：
+```mermaid
+flowchart TD
+    Seed["First process: save project rules"] --> DB[("PowerContext Memory / SQLite")]
+    DB --> Recall["Fresh process: prepare context and resolve exact citations"]
+    Task["Current coding task"] --> A["Generation A: task only"]
+    Task --> B["Generation B: task + PreparedContext"]
+    Recall --> B
+    Recall --> Evidence["Complete, citation-checked rules"]
+    A --> Code["Two generated implementations"]
+    B --> Code
+    Evidence --> Request["DecisionRequest: question + code + evidence"]
+    Code --> Request
+    Request --> Runtime["Runtime decision model"]
+    Runtime --> Adapter["SystemOneDecisionModel adapter"]
+    Adapter --> Providers["Jev / optional Laya"]
+    Providers --> Opinions["Advisory verdicts"]
+    Code --> Tests["Independent Python execution: 10 fixed cases"]
+    Opinions --> Report["Report and outcome Memory"]
+    Tests --> Report
+    Report --> DB
+    DB --> Resume["Another fresh process: recall the observed outcome"]
+```
+
+| Component | Responsibility | Implementation |
+| --- | --- | --- |
+| PowerContext Runtime | Store project rules in a Scope, prepare bounded context, resolve exact Memory revisions, and expose the injected decision model | [worker.py](worker.py), [server.py](server.py) |
+| Experiment API | Coordinate explicit steps, persist partial results, and resume an interrupted experiment | [server.py](server.py) |
+| Generation client | Send two independent requests to the same Chat Completions model; add PreparedContext only to the second request | [generation.py](generation.py) |
+| Decision adapter | Translate a provider-neutral request into System One `choice` input and validate the returned verdict and usage | [adapter.py](adapter.py) |
+| Laya input preflight | Check the full decision input against the served checkpoint's tokenizer and sequence limits | [laya.py](laya.py) |
+| Code verifier | Execute each generated function in a separate Python subprocess against the same fixed cases | [scenario.py](scenario.py) |
+
+The local `/api/runs` endpoints belong to this example. They call the Python Runtime from the same checkout; they are not additions to the core PowerContext HTTP API. Each Memory operation opens a fresh Runtime in a separate process against the run's SQLite database.
+
+### Why Jev is easy to connect
+
+PowerContext's `DecisionModel` protocol requires a `policy_id` and one async operation:
+
+```python
+async def evaluate(self, request: DecisionRequest, /) -> DecisionResult:
+    ...
+```
+
+The caller supplies a question, the subject being assessed, and its evidence. The caller receives a `yes`, `no`, or `abstain` result with provider attribution and usage metadata. Jev-specific request and response handling stays inside `SystemOneDecisionModel`:
+
+1. Serialize `decision_kind`, `question`, `subject`, and `evidence` into the System One `state`, preserving the supplied text.
+2. Send one `choice` question with explicit `yes`, `no`, and `abstain` criteria to the configured endpoint.
+3. Validate the response and map it to `DecisionResult`.
+
+This keeps the caller's context and decision flow independent of the provider protocol. Jev and Laya use the same adapter and request contract; Laya additionally needs a checkpoint-specific input budget. The adapters live in this example and can be used as a starting point for an application integration.
+
+The following complete snippet shows the injection point. Run it from the repository root with the builtin dependencies installed and `JEV_ENDPOINT`, `JEV_MODEL`, and `JEV_API_KEY` set in your process environment. It makes one live decision request using explicit sample evidence; the experiment below adds persistent Memory retrieval.
+
+```python
+import asyncio
+import os
+from pathlib import Path
+
+import httpx
+from pydantic import SecretStr
+
+from examples.systemone.adapter import SystemOneConfig, SystemOneDecisionModel
+from powercontext.builtin.persistence.sqlite import SQLiteConfig
+from powercontext.builtin.runtime import BuiltinConfig, DecisionRequest, open_builtin_runtime
+
+
+async def main() -> None:
+    directory = Path(".powercontext/systemone/integration").resolve()
+    directory.mkdir(parents=True, exist_ok=True)
+    config = BuiltinConfig(
+        database=SQLiteConfig(url=f"sqlite+aiosqlite:///{directory / 'runtime.db'}")
+    )
+    provider = SystemOneConfig(
+        provider="jev",
+        endpoint=os.environ["JEV_ENDPOINT"],
+        model=os.environ["JEV_MODEL"],
+        api_key=SecretStr(os.environ["JEV_API_KEY"]),
+    )
+
+    async with httpx.AsyncClient() as client:
+        backend = SystemOneDecisionModel(provider, client)
+        async with open_builtin_runtime(
+            config,
+            decision_model=backend,
+            scheduler_path=directory / "scheduler.db",
+        ) as runtime:
+            model = runtime.decision_model
+            if model is None:
+                raise RuntimeError("The injected decision model is unavailable")
+            result = await model.evaluate(
+                DecisionRequest(
+                    decision_kind="example.coding-test-policy",
+                    question="Should this project's regression test use pytest?",
+                    subject="Add a regression test for the amount converter.",
+                    evidence=("The team uses pytest for Python tests.",),
+                )
+            )
+            print(result.outcome.value, result.used_fallback)
+
+
+asyncio.run(main())
+```
+
+Keep the HTTP client alive for the Runtime's lifetime and call `runtime.decision_model.evaluate(...)`. Runtime injection adds the shared deadline and failure handling: backend errors become `abstain` with `used_fallback=true`, while caller cancellation propagates. Calling the adapter directly exposes its inference errors. A provider's deliberate abstention has `used_fallback=false`.
+
+### How recalled context reaches Jev
+
+Memory retrieval and decision evaluation are explicit application steps. Injecting a decision backend does not automatically retrieve or attach project history.
+
+In this experiment, `worker.py` calls `runtime.context.for_scope(scope_id).prepare(...)`, then resolves each exact citation through `runtime.memory.for_scope(scope_id).get(...)`. It rejects truncated entries or text that differs from the persisted revision. The generation request receives the full PreparedContext. For review, `server.py` extracts the complete, verified Memory text into `DecisionRequest.evidence` and places the generated source in `DecisionRequest.subject`.
+
+Both implementations are reviewed against the same project rules. The controlled input difference is between the two **generation** requests. Jev's review remains advisory; the independent tests establish the observed behavior, and `finish` records an outcome Memory entry for later recall.
+
+## Run the experiment
+
+### Prerequisites and configuration
+
+Use Linux or macOS, Python 3.11+, `uv`, and a generation service that accepts OpenAI Chat Completions requests. Run all commands from the repository root.
+
+Copy the configuration template and fill in your service settings. If the destination already exists, edit it instead of overwriting it:
 
 ```bash
 cp examples/systemone/server.env.example examples/systemone/.env.systemone
 ```
 
-启动：
+| Setting | Purpose |
+| --- | --- |
+| `GENERATION_ENDPOINT` | Complete HTTP(S) Chat Completions URL, such as `https://your-provider.example/v1/chat/completions`; a host or `/v1` base URL is insufficient |
+| `GENERATION_MODEL`, `GENERATION_API_KEY` | Model and credential for generating both implementations |
+| `JEV_ENDPOINT`, `JEV_MODEL`, `JEV_API_KEY` | Optional Jev System One endpoint, model, and dedicated credential |
+| `LAYA_ENDPOINT`, `LAYA_MODEL`, `LAYA_API_KEY` | Optional Laya endpoint, model, and service credential; an unauthenticated loopback service may use an empty key |
+| `LAYA_CHECKPOINT` | Local checkpoint directory matching the model served by Laya |
+
+The template uses `https://zenmux.ai/api/v1/systemone` and `typesafe/jev-latest` for Jev. Its Laya endpoint is `http://127.0.0.1:8891/v1/systemone`, with the `multilingual` model. Credentials are configured separately for each service; the generation credential is not reused for review.
+
+Start the local API:
 
 ```bash
 uv run --extra server \
@@ -26,62 +155,39 @@ uv run --extra server \
   --port 8765
 ```
 
-使用 Laya 时，在 `uv run` 后添加 `--with 'transformers>=4,<6'`，用于本地输入长度检查。仅使用 Jev 或不启用审核时，不需要 Transformers。
+For Laya, add `--with 'transformers>=4,<6'` after `uv run`. Jev-only runs do not need Transformers.
 
-服务监听 `127.0.0.1`。检查配置和已有实验：
+The service binds to `127.0.0.1`. It executes restricted generated amount-conversion functions; the executor is not a general Python sandbox and must not be deployed as a public code-execution service.
+
+Check the local configuration:
 
 ```bash
 curl --fail --silent --show-error http://127.0.0.1:8765/api/status
 ```
 
-`configured` 表示本地配置有效，不代表已经验证远端连通性。服务会执行模型生成的受限金额函数，适合本机运行；执行器不是通用 Python 沙箱，不应作为公共代码执行服务部署。
+`configured` means the local settings are valid; it does not confirm remote connectivity. You can run the save and recall steps before configuring generation. Restart the API after changing configuration.
 
-## 模型配置
+### Create a run and execute its steps
 
-API 服务读取 `server.env.example` 中的变量，也可通过进程环境变量提供。它不使用单次决策命令的 `SYSTEMONE_*` 配置。
+The scenario is invoice export. Implement `cents(text: str) -> int` to convert a monetary string to integer cents. The earlier session established `Decimal` with `ROUND_HALF_UP`, symmetric handling of negative refunds, and `ValueError` for invalid strings, `NaN`, and infinity. For example, `1.005` must produce `101`, and `-1.005` must produce `-101`. The scenario's task and saved policy use Chinese text.
 
-| 配置 | 用途 |
-| --- | --- |
-| `GENERATION_ENDPOINT` | 完整的 HTTP(S) Chat Completions 请求地址，例如 `https://your-provider.example/v1/chat/completions`；不能只填域名或 `/v1`，外部服务建议使用 HTTPS |
-| `GENERATION_MODEL`、`GENERATION_API_KEY` | 用来生成两份代码的模型及其凭据 |
-| `JEV_ENDPOINT`、`JEV_MODEL`、`JEV_API_KEY` | 可选 Jev System One 服务的完整地址、模型及独立凭据 |
-| `LAYA_ENDPOINT`、`LAYA_MODEL`、`LAYA_API_KEY` | 可选 Laya 服务的完整地址、模型及服务凭据；未启用鉴权的本机服务可留空 key |
-| `LAYA_CHECKPOINT` | 与 Laya 服务端实际模型匹配的本地 checkpoint 目录 |
-
-模板中的 Jev 地址为 `https://zenmux.ai/api/v1/systemone`，模型为 `typesafe/jev-latest`。Laya 默认连接 `http://127.0.0.1:8891/v1/systemone`，使用 `multilingual`。示例连接已有的模型服务，不下载模型权重，不启动 Laya 推理服务，也不会把生成模型的密钥自动用于审核服务。
-
-Laya 的 checkpoint 需要包含：
-
-```text
-checkpoint/
-├── rl_agent_config.json
-└── tokenizer/
-    ├── tokenizer_config.json
-    └── ...
-```
-
-`rl_agent_config.json` 中的 `max_len`、`head_max_len` 和 tokenizer 必须与服务端一致。客户端在发送前检查问题头、选项、完整输入和 mask token；可能被服务端截断的请求会被拒绝，而不是裁掉代码后继续审核。远程 Laya 地址要求 HTTPS，本机回环地址允许 HTTP。
-
-配置后重启 API 服务。未配置生成模型时，可以先运行保存与召回步骤。
-
-## 运行一次完整实验
-
-以下命令在另一个 Bash 终端执行。先创建实验，选择已经配置的审核服务：
+In a second Bash terminal, create a run with Jev review enabled:
 
 ```bash
+set -o pipefail
 systemone_api=http://127.0.0.1:8765
 systemone_run_id="$(
   curl --fail --silent --show-error \
     -H 'Content-Type: application/json' \
-    -d '{"providers":["jev","laya"]}' \
+    -d '{"providers":["jev"]}' \
     "$systemone_api/api/runs" |
     python3 -c 'import json, sys; print(json.load(sys.stdin)["id"])'
 )"
 ```
 
-只使用一个审核模型时，提交 `{"providers":["jev"]}` 或 `{"providers":["laya"]}`。不启用审核时，提交 `{"providers":[]}`；仍需显式执行 `review` 步骤，它不会调用任何审核服务。
+Use `{"providers":["jev","laya"]}` to compare both configured reviewers, or `{"providers":["laya"]}` for Laya alone. Use `{"providers":[]}` to run without review providers; the `review` step still needs to be called and records an empty result.
 
-按顺序执行六个步骤。每次请求等待当前步骤完成；下面的循环在 HTTP 请求失败或响应的 `error` 非空时停止：
+Execute the six steps in order. Each request waits for its step to finish:
 
 ```bash
 set -o pipefail
@@ -97,18 +203,18 @@ sys.exit(1 if run["error"] else 0)
 done
 ```
 
-| 步骤 | 实际执行 | 记录中的证据 |
+| Step | Action | Recorded evidence |
 | --- | --- | --- |
-| `seed` | 独立进程创建 Billing Scope，把确认的金额约定写入 SQLite Memory | 写入进程 PID、Scope、Memory revision |
-| `recall` | 关闭写入进程，新进程从同一数据库调用 `context.prepare`，按准确引用回读 Memory | 不同的 PID、完整 PreparedContext、字节数、citations、Scope 隔离对照 |
-| `generate` | 同一生成模型接受两次独立请求；A 只收到任务，B 追加完整 PreparedContext | 两份实际源码、输入请求、耗时及服务返回的 token 用量 |
-| `review` | 每个启用的 Jev / Laya 审核相同的 A、B 两份代码，依据同一份已回读的项目规则 | `yes` / `no` / `abstain`、置信度、降级状态和用量；未启用提供方时结果为空 |
-| `verify` | 两份 `amount.py` 各自在独立 Python 子进程执行相同的 10 个用例 | 每项输入、期望值、实际值或异常，以及通过数 |
-| `finish` | 把实际观察结果写回 Memory，再用新进程召回 | 新 revision、结果摘要、回读内容及引用 |
+| `seed` | Save the confirmed billing rules in SQLite Memory from an independent process | PID, Scope, Memory revision |
+| `recall` | Start a fresh process, prepare context, and read back exact citations | PID, complete PreparedContext, byte count, citations, Scope isolation comparison |
+| `generate` | Call the same model twice: task only, then task plus recalled context | Actual source, full requests, elapsed time, returned token usage |
+| `review` | Ask each enabled Jev/Laya provider to assess both implementations against the recalled rules | Verdict, confidence, fallback flag, policy ID, usage, elapsed time |
+| `verify` | Run each generated `amount.py` in a separate Python subprocess against 10 fixed cases | Input, expected value, actual value or error, pass count |
+| `finish` | Save the observed result as Memory and recall it in another fresh process | New revision, outcome summary, recalled content, citations |
 
-成功完成后的 `phase` 为 `completed`。步骤执行失败时，响应可能仍为 HTTP 200，必须同时检查 `error` 和 `phase`；HTTP 409 表示前置步骤未完成或当前有步骤正在执行。
+A successful run has `phase: "completed"`. Step failures can return HTTP 200 with a nonempty `error`; inspect both fields. HTTP 409 means a preceding step is incomplete or another step is running.
 
-读取完整结果并下载报告：
+Read the full result or download its report:
 
 ```bash
 curl --fail --silent --show-error \
@@ -120,69 +226,71 @@ curl --fail --silent --show-error \
   -o ".powercontext/systemone/experiment-$systemone_run_id.json"
 ```
 
-生成的两次请求使用同一模型、系统提示、当前任务和生成参数，差别仅为 B 追加了召回内容。两次调用不共享消息历史，独立测试用例不会发送给生成模型。完整请求保存在报告中，可以直接核对这项差别。
+### Optional Laya setup
 
-审核阶段的规则来自已经通过精确 citation 回读的完整 Memory 正文；省去的是引用元数据包装，不会裁剪规则或代码。Jev 与 Laya 接收同一组审核材料。它们的意见不会替代测试结果，也不会触发自动修复；测试执行的仍是模型实际生成的源码。
+The example connects to an existing Laya service. It does not download weights or start inference. The configured checkpoint must contain:
 
-### Scope 隔离对照
+```text
+checkpoint/
+├── rl_agent_config.json
+└── tokenizer/
+    ├── tokenizer_config.json
+    └── ...
+```
 
-示例同时创建独立的 Analytics Scope，保存采用 `ROUND_HALF_EVEN` 的相反规则。两个 Scope 没有 `context_references`。召回步骤分别准备上下文，并在各自 Scope 内按精确 citation 读取正文，检查两个项目各自使用自己的规则。
+The tokenizer, `max_len`, and `head_max_len` must match the served checkpoint. Before sending a decision, the client checks the question head, choices, full sequence, and mask-token handling. It rejects input that would be truncated instead of shortening the rules or code. Remote review endpoints require HTTPS; loopback Laya may use HTTP. Prefer HTTPS for external generation services too.
 
-两个 Scope 都应该能读到自己的 Memory，隔离成功不意味着另一个 Scope 返回空结果。默认 Memory 的 `artifact_id` 可以相同，判断身份必须连同 `scope_id` 一起看。
+## Read the evidence
 
-### 怎样解释结果
+The two generation requests use the same model, system prompt, task, and parameters. Only the second receives PreparedContext, and the requests share no conversation history. Fixed verification cases are never sent to the generator. The report retains both complete generation requests so this difference can be inspected.
 
-`used_fallback=true` 表示本次判断发生降级，常见原因包括超时、服务错误、无效响应或 Laya 输入预算拒绝；这不算模型成功作答。`abstain` 且 `used_fallback=false` 表示模型主动弃权。置信度只是提供方元数据，不能证明代码正确。
+A separate Analytics Scope stores a conflicting `ROUND_HALF_EVEN` rule. Neither Scope has `context_references` to the other. Recall prepares context and resolves citations separately in each Scope. Both projects should retrieve their own Memory; isolation does not mean the other project must return nothing. An `artifact_id` may be identical across Scopes, so include `scope_id` when comparing identities.
 
-测试检查舍入临界值、负数退款、普通金额和非法输入。语法超出示例支持的金额函数范围、运行超时或异常，也会记录实际失败。单次实验可以显示这次上下文对代码的影响，以及审核意见是否与测试相符；它不能推出模型的普遍准确率或长期收益。
+A fallback verdict is not a successful model answer. Timeouts, provider failures, invalid responses, or Laya input-budget rejection can produce `used_fallback=true`. Confidence is provider metadata, not proof of correctness. Review does not repair the code: verification executes the actual generated source.
 
-## 记录、重试与清理
+Tests cover rounding boundaries, negative refunds, ordinary amounts, and invalid input. Unsupported syntax, execution timeouts, and exceptions are recorded as failures. Neither implementation is guaranteed to win; both may pass or fail. A single run demonstrates this workflow and its observed results, not general model accuracy or long-term benefit.
 
-运行记录保存在 `--data-dir/<run-id>/` 下。`GET /api/status` 列出最近的实验；持有 run ID 时可通过 `GET /api/runs/<id>` 读取记录，并调用步骤接口继续。服务重启时使用相同的数据目录即可读取已有实验。
+## Persistence, retries, and cleanup
 
-每次实验的 `run.json` 保留实际生成请求、完整 PreparedContext、精确引用、模型输出、审核结果、测试结果与接续证据；两份代码保存为 `without_memory/amount.py` 和 `with_memory/amount.py`。报告保存模型输入和输出，不保存认证请求头或 API key。
+Each run lives under `--data-dir/<run-id>/`. Its `run.json` retains full generation requests, PreparedContext, exact citations, generated source, reviews, verification, and continuation evidence. Verification saves the source as `without_memory/amount.py` and `with_memory/amount.py`. Reports contain model inputs and outputs but omit authentication headers and API keys.
 
-一次完整实验有两次代码生成，每个启用的审核模型另有两次判断。模型服务可能计费；报告记录服务实际返回的 token 用量和耗时，未返回的用量不会被当成零。
+`GET /api/status` lists recent runs. Given a run ID, `GET /api/runs/<id>` reads its state, and the step endpoints continue it. Restart with the same data directory to recover existing runs.
 
-生成、审核和测试分别在每组完成后保存结果。失败时可重新调用尚未完成的步骤，已经保存的组不会重复执行；`used_fallback=true` 也会作为一次已完成的判断保存，不自动重试。服务在响应保存前中断或超时，请求仍可能已经计费，再次执行可能产生额外调用。修正连接或凭据后先重启服务，再继续实验；要更换生成模型，请新建实验，避免两组混用模型。
+A complete run makes two generation requests and two decisions per enabled reviewer. Providers may charge for these calls. Usage fields preserve returned token counts; absent token usage remains unknown.
 
-停止服务后，删除本次运行目录即可清理对应数据库、源码和报告；不再需要任何记录时，删除自己指定的整个数据目录。`.powercontext/` 和本地 `.env.systemone` 已被 Git 忽略。
+Generation, review, and verification save each group's result when it completes. Retrying a failed step reuses saved groups. A fallback decision is also saved as completed and is not automatically retried. If the service stops before saving a response, the provider may already have processed and billed the request; retrying can repeat that call. After fixing credentials or connectivity, restart the API and resume. Create a new run when changing the generation model.
 
-## 只验证一次决策调用
+After stopping the service, remove the selected run directory to delete its databases, source, and run record. Delete any downloaded `experiment-<run-id>.json` reports separately. Remove the whole data directory only when none of its runs are needed. `.powercontext/` and local `.env.systemone` files are ignored by Git.
 
-需要单独排查 Jev / Laya 连接时，可以使用命令行入口。以 Jev 为例，创建独立的决策配置文件；如果 `.env_jev` 已存在，直接编辑它，跳过复制命令：
+## Check a single decision
+
+Use the standalone CLI to diagnose Jev/Laya connectivity without running the full experiment. It reads `SYSTEMONE_*` variables, independently of the API server's `GENERATION_*`, `JEV_*`, and `LAYA_*` settings.
+
+If `.env_jev` does not already exist:
 
 ```bash
 cp examples/systemone/jev.env.example examples/systemone/.env_jev
 ```
 
-填写其中的 `SYSTEMONE_*` 配置，在 Bash 中加载后运行：
+Fill in its credential, then load the file and run:
 
 ```bash
 set -a
 source examples/systemone/.env_jev
 set +a
 uv run --extra builtin python -m examples.systemone.decision \
-  --data-dir .powercontext/systemone/decision
+  --data-dir .powercontext/systemone/decision \
+  --question "Should this project's regression test use pytest?" \
+  --subject "Add a regression test for the amount converter." \
+  --evidence "The team uses pytest for Python tests."
 ```
 
-调用 Laya 时，改用 `laya.env.example` 中的 `SYSTEMONE_*` 配置，并在命令中添加 `--with 'transformers>=4,<6'` 和 `--checkpoint /absolute/path/to/served-checkpoint`。该命令只输出一次判断的 JSON，不执行完整的编码、记忆和测试闭环；API 服务的 `.env.systemone` 与这里的决策配置相互独立。`.env_jev` 已被 Git 忽略。
+For Laya, use the `SYSTEMONE_*` settings in [laya.env.example](laya.env.example), point them at your actual service, and add `--with 'transformers>=4,<6'` to `uv run` plus `--checkpoint /absolute/path/to/served-checkpoint` to the Python command. The CLI outputs one decision as JSON and exits nonzero on fallback. Its complete integration code is in [decision.py](decision.py). Local `.env_jev` is ignored by Git.
 
-## 代码入口与本地验证
-
-| 文件 | 职责 |
-| --- | --- |
-| `server.py` | 本地实验 API、分步执行和报告 |
-| `worker.py` | 各独立进程中的 Memory 写入、召回与精确引用验证 |
-| `generation.py` | 两组独立生成请求及完整请求记录 |
-| `scenario.py` | 项目约定、代码执行边界与独立测试用例 |
-| `adapter.py`、`laya.py` | Jev / Laya 协议适配、Runtime 降级与 Laya 输入预算检查 |
-| `decision.py` | 单次决策命令行入口 |
-
-PowerContext 通过当前仓库的 Python Runtime 直接调用；模型服务通过各自的 HTTP 接口访问。所有适配与实验代码均在示例目录内，使用同一 checkout 的最新 Runtime 契约。
+## Local validation
 
 ```bash
 uv run python -m pytest -q tests/examples/systemone tests/e2e/test_systemone_example.py
 ```
 
-自动化测试覆盖本地行为及受控模型响应。确认真实服务连通、模型生成质量和审核效果，需要填写真实配置后执行 API 实验或决策命令。
+These tests exercise the local API through ASGITransport, real SQLite Memory operations in separate processes, and generated-code execution in subprocesses. External model responses are simulated. Use live provider configuration and the API experiment or decision CLI to validate real connectivity, generation quality, and review behavior.
