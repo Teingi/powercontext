@@ -236,7 +236,6 @@ import resource
 import sys
 from pathlib import Path
 
-resource.setrlimit(resource.RLIMIT_AS, (256 * 1024 * 1024, 256 * 1024 * 1024))
 resource.setrlimit(resource.RLIMIT_CPU, (2, 2))
 resource.setrlimit(resource.RLIMIT_FSIZE, (0, 0))
 resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
