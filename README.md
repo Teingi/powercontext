@@ -16,7 +16,7 @@ PowerContext keeps context with the work across conversations. When you return, 
 
 [Website](https://powercontext.oceanbase.io/) · [Installation walkthrough](https://powercontext.oceanbase.io/en/docs/get-started/quickstart/)
 
-PowerContext 1.2.0 includes the guided setup. The commands below install the stable release and connect
+PowerContext 1.2.0 includes the guided setup. The commands below install this version and connect
 the matching Agent integration.
 
 ## Pick up where the work left off

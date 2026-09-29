@@ -22,7 +22,7 @@ Windows 的 CLI、Server 和个人服务支持为试验性；各 Agent Host 仍�
 
 ## 选择版本
 
-本页使用 PowerContext 1.2.0 正式版本。包与 Agent 集成保持版本一致：
+本页使用 PowerContext 1.2.0。包与 Agent 集成保持版本一致：
 Python 包版本为 `1.2.0`，对应 Git tag 为 `powercontext-v1.2.0`。
 
 ```bash
@@ -31,7 +31,7 @@ powercontext setup codex --ref powercontext-v1.2.0
 ```
 
 宿主支持范围和维护状态见[能力矩阵](../integrations/capabilities.md)。
-标为 `experimental` 的能力在此正式版本中仍属于试验性能力。
+标为 `experimental` 的能力在此版本中仍属于试验性能力。
 
 ## 安装应用
 

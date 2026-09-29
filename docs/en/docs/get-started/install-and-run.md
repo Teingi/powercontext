@@ -24,7 +24,7 @@ Embedded seekDB is unavailable on Windows.
 
 ## Choose a version
 
-These instructions use the stable PowerContext 1.2.0 release. Keep the package and Agent integration on
+These instructions use PowerContext 1.2.0. Keep the package and Agent integration on
 the same version: package `1.2.0` and Git tag `powercontext-v1.2.0`.
 
 ```bash

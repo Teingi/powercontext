@@ -6,7 +6,7 @@ description: 通过配置向导安装完整记忆能力，接入 Codex，并验�
 # 快速开始
 
 本页从安装开始，带你完成一次真实的记忆体验：在 Codex 中讨论项目，看到原始输入进入 Source、主题记忆生成并演进，
-再在新会话中找回决策。以下命令使用 PowerContext 1.2.0 正式版本，Agent 插件使用对应的
+再在新会话中找回决策。以下命令使用 PowerContext 1.2.0，Agent 插件使用对应的
 `powercontext-v1.2.0` tag。
 
 需要 macOS 或 Linux、Python 3.11+、Git、[uv](https://docs.astral.sh/uv/getting-started/installation/) 和已安装的 Codex CLI。

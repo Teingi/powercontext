@@ -6,7 +6,7 @@ description: Configure full memory, connect Codex, and verify Source capture, To
 # Quick Start
 
 Start with installation, discuss a project in Codex, watch its input become Source evidence and an evolving topic,
-then recover the decisions in a new session. These instructions use the stable PowerContext 1.2.0 release,
+then recover the decisions in a new session. These instructions use PowerContext 1.2.0,
 with the Agent plugin from the matching `powercontext-v1.2.0` tag.
 
 You need macOS or Linux, Python 3.11+, Git, [uv](https://docs.astral.sh/uv/getting-started/installation/),

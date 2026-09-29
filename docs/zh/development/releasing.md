@@ -22,6 +22,8 @@ git diff
 ```
 
 `version-bump` 更新纳入管理的文件，并从 OpenAPI 契约重新生成 Python API 元数据。
+它也接受 `1.3.0a1`、`1.3.0b1` 和 `1.3.0rc1` 等预发布版本。纳入管理的安装说明只指明所选版本，
+不将其统一称为正式版本。
 `version-check` 以 `openapi/powercontext.yaml` 中的 `info.version` 为准检查一致性，不修改文件。
 也可以传入包版本或 tag 写法，核对明确的发布目标：
 

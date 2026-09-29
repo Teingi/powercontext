@@ -17,7 +17,7 @@ PowerContext は、会話をまたいでもコンテキストを作業ととも�
 [Web サイト](https://powercontext.oceanbase.io/en/) · [インストール手順](https://powercontext.oceanbase.io/en/docs/get-started/quickstart/)
 
 PowerContext 1.2.0 には対話式セットアップが含まれています。
-以下のコマンドで正式リリースと同じバージョンの Agent 連携をインストールします。
+以下のコマンドでこのバージョンの PowerContext と、対応する Agent 連携をインストールします。
 
 ## 作業の続きをそのまま引き継ぐ
 

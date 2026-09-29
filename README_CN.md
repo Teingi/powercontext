@@ -16,7 +16,7 @@ PowerContext 让上下文跟随工作，跨越不同的对话。你回来时，�
 
 [网站](https://powercontext.oceanbase.io/zh/) · [完整安装流程](https://powercontext.oceanbase.io/zh/docs/get-started/quickstart/)
 
-PowerContext 1.2.0 包含交互式配置向导。下面的命令安装这一正式版本，并接入相同版本的 Agent 集成。
+PowerContext 1.2.0 包含交互式配置向导。下面的命令安装这一版本，并接入相同版本的 Agent 集成。
 
 ## 从当前进展继续
 

@@ -24,6 +24,8 @@ git diff
 ```
 
 `version-bump` updates the managed files and regenerates Python API metadata from the OpenAPI contract.
+It also accepts prerelease versions such as `1.3.0a1`, `1.3.0b1`, and `1.3.0rc1`. Managed installation instructions
+name the selected version without describing it as a stable release.
 `version-check` checks consistency against `info.version` in `openapi/powercontext.yaml` without changing files.
 To check a specific release target, supply its package version or tag spelling:
 

@@ -77,7 +77,7 @@ def snapshot(repo: Path) -> dict[Path, bytes]:
 
 def test_release_updates_installation_references_and_preserves_history(release_repo: Path) -> None:
     preserved = {relative: (release_repo / relative).read_bytes() for relative in HISTORICAL_AND_INDEPENDENT_FILES}
-    for version in ("1.2.0", "1.3.0rc1", "1.3.0"):
+    for version in ("1.2.0", "1.3.0a1", "1.3.0b1", "1.3.0rc1", "1.3.0", "1.2.0"):
         result = run_release(release_repo, "--write", "--version", version)
         assert result.returncode == 0, result.stderr
         assert f"  version: {version}\n" in (release_repo / "openapi/powercontext.yaml").read_text(encoding="utf-8")
@@ -87,6 +87,11 @@ def test_release_updates_installation_references_and_preserves_history(release_r
             assert set(re.findall(r"powercontext-v([^\s\"`]+)", content)) == {version}, relative
             if relative.startswith(("README", "docs/")):
                 assert f"PowerContext {version}" in content, relative
+            if re.search(r"(?:a|b|rc)[0-9]+$", version):
+                assert "stable release" not in content, relative
+                assert f"stable PowerContext {version}" not in content, relative
+                assert "正式版本" not in content, relative
+                assert "正式リリース" not in content, relative
 
         english = (release_repo / "docs/en/docs/get-started/install-and-run.md").read_text(encoding="utf-8")
         chinese = (release_repo / "docs/zh/docs/get-started/install-and-run.md").read_text(encoding="utf-8")
