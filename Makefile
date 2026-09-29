@@ -198,11 +198,16 @@ version-bump: ## Synchronize release references: make version-bump VERSION=X.Y.Z
 	@uv run python scripts/release_version.py --write
 	@$(MAKE) api-generate
 	@$(MAKE) version-check
+	@echo "Before publishing a stable release, add its website release notes and run make release-check."
 
 .PHONY: version-check
 version-check: ## Check release references and generated API code; optionally assert VERSION=X.Y.Z or a release tag.
 	@uv run python scripts/release_version.py --check
 	@$(MAKE) api-generate-check js-api-generate-check
+
+.PHONY: release-check
+release-check: version-check docs-install ## Check version references and require matching bilingual notes for a stable release.
+	@cd website && node --import tsx --test tests/releases.test.ts
 
 .PHONY: clean-build
 clean-build: ## Clean build artifacts

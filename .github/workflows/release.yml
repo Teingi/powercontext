@@ -55,10 +55,13 @@ jobs:
               )
           PY
 
-      - name: Verify synchronized release references
+      - name: Set up website tools
+        uses: jdx/mise-action@c37c93293d6b742fc901e1406b8f764f6fb19dac # v2
+
+      - name: Verify synchronized release references and release notes
         env:
           VERSION: ${{ github.event.release.tag_name }}
-        run: make version-check
+        run: make release-check
 
       - name: Build release distributions
         run: |

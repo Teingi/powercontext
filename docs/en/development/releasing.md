@@ -37,6 +37,18 @@ make version-check VERSION=powercontext-v1.2.0
 The tag spelling selects the expected version; it does not prove that the tag exists or that the current checkout
 builds that version. Review the diff before committing. Generated Python files must be regenerated, not edited by hand.
 
+For a stable release, prepend a bilingual entry to `website/src/lib/releases.ts` with the actual changes, release date,
+installation command, and GitHub Release URL. Preserve all existing entries, then run:
+
+```bash
+make release-check VERSION=1.2.0
+```
+
+`release-check` runs `version-check`, installs the website dependencies, and verifies that the first website entry
+matches the target version, contains English and Chinese notes, and uses matching installation and release links.
+It requires the repository's Node/pnpm environment. Alpha, beta, and RC versions skip the website-entry check because
+the website lists stable releases only. `make docs-test` also runs this check as part of the website tests.
+
 ## Version inventory
 
 ### Automatically synchronized
@@ -75,12 +87,13 @@ PowerContext release number.
 | Component | Version locations and review scope |
 | --- | --- |
 | Claude Code plugin | `integrations/claude-code/plugins/powercontext/.claude-plugin/plugin.json` and `.claude-plugin/marketplace.json` must agree when publishing a plugin update. Review contract tests that assert the manifest version. |
-| Codex plugin | `integrations/codex/plugins/powercontext/.codex-plugin/plugin.json` and its sibling `pyproject.toml` describe the plugin and its runtime package. Review both and refresh the plugin's `uv.lock` for a plugin release. |
+| Codex plugin | `integrations/codex/plugins/powercontext/.codex-plugin/plugin.json` and its sibling `pyproject.toml` describe the plugin and its runtime package. Review both and refresh the plugin's `uv.lock` for a plugin release. `plugin_version.py` derives the hook and scope-binding User-Agent version from the manifest. |
 | Portable Agent Plugin | `integrations/agent-plugin/powercontext/plugin.json`. Its package version is separate from the Agent Plugins schema version. |
 | Hermes plugins | `integrations/hermes/plugins/{powercontext,powercontext-command}/plugin.yaml`. |
 | MiniMax and ZCode plugins | `integrations/minimax/plugins/powercontext/.minimax-plugin/plugin.json` and `integrations/zcode/plugins/powercontext/.zcode-plugin/plugin.json`. |
 | JavaScript plugins | `integrations/{dsh,opencode,pi}/plugins/powercontext/package.json` and `integrations/openclaw/plugins/memory-powercontext/package.json`. The OpenClaw discovery manifest has no separate version field. |
 | WorkBuddy integration | Its hooks and transport scripts carry User-Agent strings; there is no plugin manifest version to align with the Server. |
+| Skill Receiver | `RECEIVER_VERSION` in `src/powercontext/client/skill_receiver.py` supplies the default receiver identity version reported during enrollment, reconciliation, and receipts. It is independent of the Server version. |
 | Python integrations | `integrations/{bub,langchain,langgraph,opendal,pydantic-ai}/pyproject.toml` contain separate distribution versions. Dependency constraints express compatibility, not the current main release. |
 | Evaluation and harness packages | `evaluation/pyproject.toml`, `evaluation/web/package.json`, and `e2e/bub/pyproject.toml` have their own package versions. |
 | Protocols and dependencies | Agent Plugins schema versions, persisted format versions, OpenAPI specification version, API paths, host minimum versions, and third-party dependencies change only with their own contracts. |
@@ -113,7 +126,7 @@ installation pins are synchronized.
 Run the checks for the complete release changes, including generated contracts and documentation:
 
 ```bash
-make version-check VERSION=1.2.0
+make release-check VERSION=1.2.0
 make contract-test
 make check
 make test
@@ -136,7 +149,15 @@ Its output must equal the package version represented by the tag. Do not use a p
 that the tag produces the correct version. Install the built distribution in an isolated environment and verify
 the CLI, Server, MCP, and SQLite behavior using `scripts/ci_release_smoke.py --version <package-version>`.
 
-The repository's `.github/workflows/release.yml` runs when a GitHub Release is **published**. It checks the tag against
-Hatch VCS, builds and checks distributions, publishes to PyPI, attaches artifacts, and invokes release verification.
+The repository's `.github/workflows/release.yml` runs when a GitHub Release is **published**. Before building and
+publishing to PyPI, it runs `release-check` and checks the tag against Hatch VCS. It then builds and checks
+distributions, publishes to PyPI, attaches artifacts, and invokes release verification.
 Pushing a tag alone does not trigger that workflow. Creating the tag and publishing the GitHub Release are separate
 release actions after preparation and review.
+
+After the release tag exists, review the availability declarations in `integrations/capabilities.toml`. A `released`
+entry must name an existing `release_tag` that contains the declared implementation and evidence; it is separate
+from the plugin's own version. Keep experimental support experimental unless its support contract has changed.
+Fetch the referenced tags in local and CI checkouts before running integration manifest checks, regenerate the
+bilingual capability matrix with `make integration-manifest-docs`, and update related integration overview and
+evaluation guidance. Do not create or move a release tag just to make an availability check pass.

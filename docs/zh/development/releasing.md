@@ -35,6 +35,17 @@ make version-check VERSION=powercontext-v1.2.0
 tag 写法用于指定预期版本，不证明该 tag 已存在，也不证明当前检出构建出的包已经是该版本。
 提交前检查差异；生成的 Python 文件必须通过生成命令更新，不能手工修改。
 
+正式发布时，在 `website/src/lib/releases.ts` 顶部新增双语条目，填写实际变化、发布日期、安装命令及 GitHub
+Release 链接。保留所有已有条目，然后运行：
+
+```bash
+make release-check VERSION=1.2.0
+```
+
+`release-check` 先运行 `version-check`，安装网站依赖，再检查网站首条记录是否匹配目标版本、是否包含中英文说明，
+以及安装命令和发布链接是否使用同一版本。此命令需要仓库指定的 Node/pnpm 环境。网站只列正式版本，因此 alpha、
+beta 和 RC 跳过网站条目检查。`make docs-test` 也会通过网站测试运行此项检查。
+
 ## 版本位置清单
 
 ### 自动同步的版本
@@ -72,12 +83,13 @@ OpenAPI 版本描述待发布的 API 契约，不覆盖 Hatch VCS。打 tag 前�
 | 组件 | 版本位置及检查范围 |
 | --- | --- |
 | Claude Code 插件 | 发布插件更新时，`integrations/claude-code/plugins/powercontext/.claude-plugin/plugin.json` 与 `.claude-plugin/marketplace.json` 的版本必须一致；同时检查断言 manifest 版本的契约测试。 |
-| Codex 插件 | `integrations/codex/plugins/powercontext/.codex-plugin/plugin.json` 与同级 `pyproject.toml` 分别描述插件及其 Runtime 包，插件发布时一起检查，并刷新插件的 `uv.lock`。 |
+| Codex 插件 | `integrations/codex/plugins/powercontext/.codex-plugin/plugin.json` 与同级 `pyproject.toml` 分别描述插件及其 Runtime 包，插件发布时一起检查，并刷新插件的 `uv.lock`。`plugin_version.py` 从 manifest 派生 Hook 和 Scope 绑定请求的 User-Agent 版本。 |
 | 通用 Agent Plugin | `integrations/agent-plugin/powercontext/plugin.json`；其包版本与 Agent Plugins schema 版本相互独立。 |
 | Hermes 插件 | `integrations/hermes/plugins/{powercontext,powercontext-command}/plugin.yaml`。 |
 | MiniMax 和 ZCode 插件 | `integrations/minimax/plugins/powercontext/.minimax-plugin/plugin.json` 与 `integrations/zcode/plugins/powercontext/.zcode-plugin/plugin.json`。 |
 | JavaScript 插件 | `integrations/{dsh,opencode,pi}/plugins/powercontext/package.json` 与 `integrations/openclaw/plugins/memory-powercontext/package.json`；OpenClaw 的发现 manifest 没有独立版本字段。 |
 | WorkBuddy 集成 | Hook 和传输脚本包含 User-Agent 字符串，没有需要与 Server 对齐的插件 manifest 版本。 |
+| Skill Receiver | `src/powercontext/client/skill_receiver.py` 中的 `RECEIVER_VERSION` 提供注册、协调及回执上报时默认使用的 Receiver 身份版本，独立于 Server 版本。 |
 | Python 集成包 | `integrations/{bub,langchain,langgraph,opendal,pydantic-ai}/pyproject.toml` 有各自的发行版本；依赖范围表示兼容性，不是当前主发布版本。 |
 | 评测及 harness 包 | `evaluation/pyproject.toml`、`evaluation/web/package.json`、`e2e/bub/pyproject.toml` 有各自的包版本。 |
 | 协议及依赖 | Agent Plugins schema 版本、持久化格式版本、OpenAPI 规范版本、API 路径、宿主最低版本及第三方依赖仅随自身契约更新。 |
@@ -107,7 +119,7 @@ DSH README 中说明某项能力已包含在 `1.1.0` 的文字同样属于历史
 针对本次发布的完整变化运行检查，包括生成的契约和文档：
 
 ```bash
-make version-check VERSION=1.2.0
+make release-check VERSION=1.2.0
 make contract-test
 make check
 make test
@@ -129,6 +141,13 @@ uvx --from hatchling --with hatch-vcs hatchling version
 在独立环境中安装构建产物，并运行 `scripts/ci_release_smoke.py --version <package-version>`，验证 CLI、
 Server、MCP 和 SQLite 行为。
 
-仓库的 `.github/workflows/release.yml` 在 GitHub Release **发布**时触发，检查 tag 与 Hatch VCS 版本一致性，
-构建和检查发行包、发布到 PyPI、上传附件并执行发布验证。仅推送 tag 不会触发该工作流。
+仓库的 `.github/workflows/release.yml` 在 GitHub Release **发布**时触发，在构建和发布 PyPI 包前运行
+`release-check`，并检查 tag 与 Hatch VCS 版本一致性。随后构建和检查发行包、发布到 PyPI、上传附件并执行发布验证。
+仅推送 tag 不会触发该工作流。
 创建 tag、发布 GitHub Release 是准备与审阅完成之后的独立发布操作。
+
+发布 tag 存在后，检查 `integrations/capabilities.toml` 中的可用性声明。`released` 条目必须指定已存在的
+`release_tag`，且该 tag 应包含声明的实现及证据；这与插件自身版本是不同的概念。支持契约未改变时，试验性集成
+继续保持试验性。在本地和 CI 检出中获取所引用的 tag 后再运行集成 manifest 检查，使用
+`make integration-manifest-docs` 重新生成双语能力矩阵，并同步相关集成概览和评测说明。不要仅为通过可用性检查
+而创建或移动发布 tag。
