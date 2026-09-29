@@ -32,12 +32,12 @@ export const releases: Release[] = [
     version: 'v1.2.0',
     date: '2026-09-29',
     title: {
-      en: 'Understand repository code · Bound Memory growth · Assess write evidence · Extend Agent workflows',
-      zh: '理解仓库代码 · 限制 Memory 增长 · 判断写入证据 · 扩展 Agent 工作流',
+      en: 'Understand repository code · Bound Memory growth · Assess write evidence · Generate Experiences and import Skills in Codex',
+      zh: '理解仓库代码 · 限制 Memory 增长 · 判断写入证据 · 在 Codex 中生成经验、导入技能',
     },
     summary: {
-      en: 'PowerContext 1.2.0 adds optional native repository understanding, Memory capacity controls and an evidence-based write gate, expands Codex workflows, and introduces an experimental ZCode integration. It also adds paired continuation evaluation with Codex and Bub and automates release-version maintenance.',
-      zh: 'PowerContext 1.2.0 新增可选的原生仓库代码理解、Memory 容量控制和基于证据的写入门控，扩展 Codex 工作流，并加入试验性 ZCode 集成，同时提供 Codex 与 Bub 的续接任务对照评测和发布版本维护命令。',
+      en: 'PowerContext 1.2.0 adds optional native repository understanding, Memory capacity controls and an evidence-based write gate, and introduces an experimental ZCode integration. In Codex, users can generate Experience and Skill candidates and import external Skills for review. It also adds paired continuation evaluation with Codex and Bub and automates release-version maintenance.',
+      zh: 'PowerContext 1.2.0 新增可选的原生仓库代码理解、Memory 容量控制和基于证据的写入门控，并加入试验性 ZCode 集成。用户可以在 Codex 中生成经验和技能候选，并导入外部技能供审核。本次还提供 Codex 与 Bub 的续接任务对照评测和发布版本维护命令。',
     },
     changes: {
       en: [
